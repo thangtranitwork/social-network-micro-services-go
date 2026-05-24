@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 	"social-network-go/logger"
+	"social-network-go/profiler"
 )
 
 func main() {
@@ -38,6 +39,7 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(profiler.Middleware("file-service"))
 	r.Use(logger.GinMiddleware())
 
 	// Health check
@@ -47,6 +49,13 @@ func main() {
 			"timestamp": time.Now().Format(time.RFC3339),
 			"service":   "file-service",
 		})
+	})
+
+	// Profiler
+	r.GET("/debug/profiler", profiler.Handler)
+	r.POST("/debug/profiler/reset", func(c *gin.Context) {
+		profiler.Reset()
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
 	v1 := r.Group("/v1/files")

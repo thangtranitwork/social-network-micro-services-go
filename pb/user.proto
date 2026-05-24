@@ -8,6 +8,7 @@ service UserService {
     rpc GetCommonUserInfo (UserRequest) returns (UserCommonInfoResponse);
     rpc CheckFriendship (FriendshipRequest) returns (FriendshipResponse);
     rpc GetUsersByIds (UsersByIdsRequest) returns (UsersByIdsResponse);
+    rpc CreateUser (CreateUserRequest) returns (CreateUserResponse);
 }
 
 message UserRequest {
@@ -41,4 +42,17 @@ message UsersByIdsRequest {
 
 message UsersByIdsResponse {
     repeated UserCommonInfoResponse users = 1;
+}
+
+message CreateUserRequest {
+    string user_id = 1;
+    string email = 2;
+    string given_name = 3;
+    string family_name = 4;
+    string birthdate = 5;
+}
+
+message CreateUserResponse {
+    string user_id = 1;
+    string username = 2;
 }

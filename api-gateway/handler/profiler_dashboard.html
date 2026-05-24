@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microservice Performance Profiler Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: #0b0f19;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(31, 41, 234, 0.12) 0, transparent 50%), 
+                radial-gradient(at 100% 100%, rgba(99, 102, 241, 0.12) 0, transparent 50%);
+            min-height: 100vh;
+        }
+        .glass-panel {
+            background: rgba(17, 24, 39, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glow-cyan {
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.15);
+        }
+        .glow-indigo {
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body class="text-gray-100 antialiased p-6">
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-gray-800">
+            <div>
+                <h1 class="text-3xl font-bold bg-gradient-to-r from-cyan-400 via-indigo-400 to-purple-500 bg-clip-text text-transparent flex items-center gap-3">
+                    <svg class="w-8 h-8 text-cyan-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    Microservice Profiler
+                </h1>
+                <p class="text-gray-400 mt-1 font-medium">Distributed tracing diagnostics, heap allocation, and route-by-route latency</p>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <!-- Auto Refresh Selector -->
+                <div class="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm">
+                    <span class="text-gray-400 font-medium">Refresh:</span>
+                    <select id="refreshRate" class="bg-transparent border-none text-cyan-400 outline-none cursor-pointer font-semibold">
+                        <option value="1000" selected>1s</option>
+                        <option value="2000">2s</option>
+                        <option value="5000">5s</option>
+                        <option value="0">Paused</option>
+                    </select>
+                </div>
+
+                <!-- Reset Button -->
+                <button id="btnReset" class="flex items-center gap-2 bg-red-950/40 hover:bg-red-900/50 border border-red-500/30 text-red-300 font-semibold px-4 py-1.5 rounded-lg transition-all active:scale-95 duration-200">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    Reset All Stats
+                </button>
+            </div>
+        </header>
+
+        <!-- KPI Metrics Grid -->
+        <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Goroutines -->
+            <div class="glass-panel rounded-xl p-5 flex items-center justify-between glow-cyan transition-all duration-300 hover:scale-[1.02]">
+                <div class="space-y-1">
+                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold" id="labelGoroutines">Goroutines (Total)</span>
+                    <h3 id="metricGoroutines" class="text-3xl font-bold text-cyan-400 mono">0</h3>
+                </div>
+                <div class="p-3 bg-cyan-950/40 border border-cyan-800/30 rounded-lg">
+                    <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Heap Alloc -->
+            <div class="glass-panel rounded-xl p-5 flex items-center justify-between glow-indigo transition-all duration-300 hover:scale-[1.02]">
+                <div class="space-y-1">
+                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold" id="labelHeapAlloc">Heap Alloc (Total)</span>
+                    <h3 id="metricHeapAlloc" class="text-3xl font-bold text-indigo-400 mono">0 MB</h3>
+                </div>
+                <div class="p-3 bg-indigo-950/40 border border-indigo-800/30 rounded-lg">
+                    <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Total Requests -->
+            <div class="glass-panel rounded-xl p-5 flex items-center justify-between transition-all duration-300 hover:scale-[1.02]">
+                <div class="space-y-1">
+                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold" id="labelRequests">Requests (Total)</span>
+                    <h3 id="metricRequests" class="text-3xl font-bold text-emerald-400 mono">0</h3>
+                </div>
+                <div class="p-3 bg-emerald-950/40 border border-emerald-800/30 rounded-lg">
+                    <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Uptime -->
+            <div class="glass-panel rounded-xl p-5 flex items-center justify-between transition-all duration-300 hover:scale-[1.02]">
+                <div class="space-y-1">
+                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold" id="labelUptime">Max Uptime</span>
+                    <h3 id="metricUptime" class="text-xl font-bold text-amber-400 mono">00:00:00</h3>
+                </div>
+                <div class="p-3 bg-amber-950/40 border border-amber-800/30 rounded-lg">
+                    <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Search and Table Container -->
+        <main class="glass-panel rounded-xl p-6">
+            <!-- Search & Microservices Tabs -->
+            <div class="flex flex-col lg:flex-row gap-4 justify-between items-center mb-6">
+                <!-- Search box -->
+                <div class="relative w-full lg:max-w-xs">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </span>
+                    <input type="text" id="searchFilter" placeholder="Search routes..." class="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-800 rounded-lg outline-none text-gray-200 placeholder-gray-500 focus:border-cyan-500/50 transition-colors">
+                </div>
+
+                <!-- Tabs per Service -->
+                <div class="flex flex-wrap gap-2 items-center justify-start lg:justify-end w-full">
+                    <button class="filter-btn bg-cyan-900/40 border border-cyan-500/30 text-cyan-300 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="all">
+                        All Services
+                    </button>
+                    
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="api-gateway">
+                        Gateway
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-api-gateway"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="auth-service">
+                        Auth
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-auth-service"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="user-service">
+                        User
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-user-service"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="post-service">
+                        Post
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-post-service"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="chat-service">
+                        Chat
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-chat-service"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="file-service">
+                        File
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-file-service"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="notification-service">
+                        Noti
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-notification-service"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="admin-service">
+                        Admin
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-admin-service"></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-gray-800 text-xs uppercase tracking-wider text-gray-400 font-semibold bg-gray-900/30">
+                            <th class="py-3 px-4">Service</th>
+                            <th class="py-3 px-4">Method</th>
+                            <th class="py-3 px-4">Path</th>
+                            <th class="py-3 px-4 text-right">Req Count</th>
+                            <th class="py-3 px-4 text-right">RPS</th>
+                            <th class="py-3 px-4 text-right">Active</th>
+                            <th class="py-3 px-4 text-right">P50</th>
+                            <th class="py-3 px-4 text-right">P90</th>
+                            <th class="py-3 px-4 text-right">P99</th>
+                            <th class="py-3 px-4 text-right">Total Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="statsTableBody" class="divide-y divide-gray-800/40 text-sm font-medium">
+                        <!-- Dynamic Rows -->
+                    </tbody>
+                </table>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let updateTimer = null;
+        let currentFilter = 'all';
+        let latestData = null;
+
+        function formatDuration(ns) {
+            if (ns === 0) return '0';
+            const ms = ns / 1000000;
+            if (ms < 1) {
+                return `${(ns / 1000).toFixed(1)} µs`;
+            }
+            if (ms < 1000) {
+                return `${ms.toFixed(2)} ms`;
+            }
+            return `${(ms / 1000).toFixed(2)} s`;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function getUptimeString(startTimeStr) {
+            if (!startTimeStr) return '00:00:00';
+            const diff = Date.now() - new Date(startTimeStr).getTime();
+            const sec = Math.floor(diff / 1000);
+            if (sec < 0) return '00:00:00';
+            const hrs = Math.floor(sec / 3600).toString().padStart(2, '0');
+            const mins = Math.floor((sec % 3600) / 60).toString().padStart(2, '0');
+            const secs = (sec % 60).toString().padStart(2, '0');
+            return `${hrs}:${mins}:${secs}`;
+        }
+
+        function updateUptimeUI() {
+            if (!latestData) return;
+
+            if (currentFilter === 'all') {
+                // Find the earliest start time among online services
+                let earliest = null;
+                for (const svc of Object.values(latestData)) {
+                    if (svc.online && svc.startTime) {
+                        const t = new Date(svc.startTime).getTime();
+                        if (!earliest || t < earliest) {
+                            earliest = t;
+                        }
+                    }
+                }
+                document.getElementById('metricUptime').textContent = earliest ? getUptimeString(new Date(earliest)) : '00:00:00';
+            } else {
+                const svc = latestData[currentFilter];
+                if (svc && svc.online && svc.startTime) {
+                    document.getElementById('metricUptime').textContent = getUptimeString(svc.startTime);
+                } else {
+                    document.getElementById('metricUptime').textContent = '00:00:00';
+                }
+            }
+        }
+
+        async function fetchStats() {
+            try {
+                const response = await fetch('/debug/profiler');
+                if (!response.ok) throw new Error('Failed to fetch profiler data');
+                latestData = await response.json();
+                
+                renderDashboard();
+            } catch (err) {
+                console.error("Error fetching statistics:", err);
+            }
+        }
+
+        function renderDashboard() {
+            if (!latestData) return;
+
+            let totalGoroutines = 0;
+            let totalHeapAlloc = 0;
+            let totalRequests = 0;
+
+            // Render online status indicators
+            for (const [name, svc] of Object.entries(latestData)) {
+                const statusDot = document.getElementById(`status-${name}`);
+                if (statusDot) {
+                    if (svc.online) {
+                        statusDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 border border-gray-900 shadow-[0_0_8px_rgba(16,185,129,0.5)]';
+                    } else {
+                        statusDot.className = 'w-2.5 h-2.5 rounded-full bg-red-500 border border-gray-900 shadow-[0_0_8px_rgba(239,68,68,0.5)]';
+                    }
+                }
+            }
+
+            const searchVal = document.getElementById('searchFilter').value.toLowerCase();
+            const rows = [];
+
+            if (currentFilter === 'all') {
+                // Calculate aggregated metrics
+                for (const [name, svc] of Object.entries(latestData)) {
+                    if (svc.online && svc.pprof) {
+                        totalGoroutines += svc.pprof.goroutines || 0;
+                        totalHeapAlloc += svc.pprof.heapAlloc || 0;
+                    }
+
+                    if (svc.online && svc.commands) {
+                        for (const [cmdName, stats] of Object.entries(svc.commands)) {
+                            totalRequests += stats.requestCount;
+
+                            let method = 'ANY';
+                            let path = cmdName;
+                            const serviceParts = cmdName.split(':');
+                            if (serviceParts.length > 1) {
+                                const methodPathParts = serviceParts[1].split(' ');
+                                if (methodPathParts.length > 1) {
+                                    method = methodPathParts[0];
+                                    path = methodPathParts[1];
+                                } else {
+                                    path = serviceParts[1];
+                                }
+                            }
+
+                            if (searchVal && !cmdName.toLowerCase().includes(searchVal)) continue;
+
+                            rows.push({
+                                service: name,
+                                method,
+                                path,
+                                startTime: svc.startTime,
+                                ...stats
+                            });
+                        }
+                    }
+                }
+
+                document.getElementById('labelGoroutines').textContent = 'Goroutines (All)';
+                document.getElementById('labelHeapAlloc').textContent = 'Heap Alloc (All)';
+                document.getElementById('labelRequests').textContent = 'Requests (All)';
+                document.getElementById('labelUptime').textContent = 'Max Uptime';
+                document.getElementById('metricGoroutines').textContent = totalGoroutines;
+                document.getElementById('metricHeapAlloc').textContent = formatBytes(totalHeapAlloc);
+                document.getElementById('metricRequests').textContent = totalRequests;
+
+            } else {
+                // Calculate single service metrics
+                const svc = latestData[currentFilter];
+                if (svc && svc.online) {
+                    totalGoroutines = svc.pprof ? (svc.pprof.goroutines || 0) : 0;
+                    totalHeapAlloc = svc.pprof ? (svc.pprof.heapAlloc || 0) : 0;
+
+                    if (svc.commands) {
+                        for (const [cmdName, stats] of Object.entries(svc.commands)) {
+                            totalRequests += stats.requestCount;
+
+                            let method = 'ANY';
+                            let path = cmdName;
+                            const serviceParts = cmdName.split(':');
+                            if (serviceParts.length > 1) {
+                                const methodPathParts = serviceParts[1].split(' ');
+                                if (methodPathParts.length > 1) {
+                                    method = methodPathParts[0];
+                                    path = methodPathParts[1];
+                                } else {
+                                    path = serviceParts[1];
+                                }
+                            }
+
+                            if (searchVal && !cmdName.toLowerCase().includes(searchVal)) continue;
+
+                            rows.push({
+                                service: currentFilter,
+                                method,
+                                path,
+                                startTime: svc.startTime,
+                                ...stats
+                            });
+                        }
+                    }
+                }
+
+                const displayName = currentFilter.replace('-service', '').toUpperCase();
+                document.getElementById('labelGoroutines').textContent = `Goroutines (${displayName})`;
+                document.getElementById('labelHeapAlloc').textContent = `Heap Alloc (${displayName})`;
+                document.getElementById('labelRequests').textContent = `Requests (${displayName})`;
+                document.getElementById('labelUptime').textContent = 'Uptime';
+                document.getElementById('metricGoroutines').textContent = svc && svc.online ? totalGoroutines : 'OFFLINE';
+                document.getElementById('metricHeapAlloc').textContent = svc && svc.online ? formatBytes(totalHeapAlloc) : 'OFFLINE';
+                document.getElementById('metricRequests').textContent = svc && svc.online ? totalRequests : '0';
+            }
+
+            updateUptimeUI();
+            renderTable(rows);
+        }
+
+        function getMethodColorClass(method) {
+            switch (method.toUpperCase()) {
+                case 'GET': return 'text-sky-400 bg-sky-950/40 border border-sky-800/30';
+                case 'POST': return 'text-emerald-400 bg-emerald-950/40 border border-emerald-800/30';
+                case 'PUT': return 'text-amber-400 bg-amber-950/40 border border-amber-800/30';
+                case 'DELETE': return 'text-red-400 bg-red-950/40 border border-red-800/30';
+                case 'PATCH': return 'text-purple-400 bg-purple-950/40 border border-purple-800/30';
+                default: return 'text-gray-400 bg-gray-900 border border-gray-800';
+            }
+        }
+
+        function getServiceColorClass(service) {
+            switch (service) {
+                case 'api-gateway': return 'text-cyan-300 bg-cyan-950/30 border border-cyan-800/20';
+                case 'auth-service': return 'text-purple-300 bg-purple-950/30 border border-purple-800/20';
+                case 'user-service': return 'text-indigo-300 bg-indigo-950/30 border border-indigo-800/20';
+                case 'post-service': return 'text-amber-300 bg-amber-950/30 border border-amber-800/20';
+                case 'chat-service': return 'text-emerald-300 bg-emerald-950/30 border border-emerald-800/20';
+                case 'file-service': return 'text-sky-300 bg-sky-950/30 border border-sky-800/20';
+                case 'notification-service': return 'text-pink-300 bg-pink-950/30 border border-pink-800/20';
+                case 'admin-service': return 'text-orange-300 bg-orange-950/30 border border-orange-800/20';
+                default: return 'text-gray-300 bg-gray-850 border border-gray-850';
+            }
+        }
+
+        function renderTable(rows) {
+            rows.sort((a, b) => b.requestCount - a.requestCount);
+
+            const tbody = document.getElementById('statsTableBody');
+            tbody.innerHTML = '';
+
+            if (rows.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="10" class="py-8 text-center text-gray-500 font-medium">
+                            No API performance traces detected matching criteria.
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            rows.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-900/20 transition-colors';
+
+                const elapsedSeconds = (Date.now() - new Date(r.startTime).getTime()) / 1000;
+                const rps = elapsedSeconds > 0 ? (r.requestCount / elapsedSeconds).toFixed(2) : '0.00';
+
+                tr.innerHTML = `
+                    <td class="py-3.5 px-4">
+                        <span class="px-2.5 py-1 text-xs rounded-full font-semibold uppercase tracking-wider ${getServiceColorClass(r.service)}">
+                            ${r.service.replace('-service', '')}
+                        </span>
+                    </td>
+                    <td class="py-3.5 px-4">
+                        <span class="px-2 py-0.5 text-xs rounded font-bold mono ${getMethodColorClass(r.method)}">
+                            ${r.method}
+                        </span>
+                    </td>
+                    <td class="py-3.5 px-4 text-gray-300 mono break-all">${r.path}</td>
+                    <td class="py-3.5 px-4 text-right mono text-gray-100 font-semibold">${r.requestCount.toLocaleString()}</td>
+                    <td class="py-3.5 px-4 text-right mono text-emerald-400">${rps}</td>
+                    <td class="py-3.5 px-4 text-right mono ${r.pendingCount > 0 ? 'text-amber-400 font-bold' : 'text-gray-500'}">${r.pendingCount}</td>
+                    <td class="py-3.5 px-4 text-right mono text-cyan-300">${formatDuration(r.p50)}</td>
+                    <td class="py-3.5 px-4 text-right mono text-indigo-300">${formatDuration(r.p90)}</td>
+                    <td class="py-3.5 px-4 text-right mono text-pink-400">${formatDuration(r.p99)}</td>
+                    <td class="py-3.5 px-4 text-right mono text-gray-400">${formatDuration(r.totalExecutionTime)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function setupAutoRefresh() {
+            if (updateTimer) clearInterval(updateTimer);
+            const rate = parseInt(document.getElementById('refreshRate').value);
+            if (rate > 0) {
+                updateTimer = setInterval(fetchStats, rate);
+                fetchStats();
+            }
+        }
+
+        // Event Listeners
+        document.getElementById('refreshRate').addEventListener('change', setupAutoRefresh);
+        document.getElementById('searchFilter').addEventListener('input', renderDashboard);
+
+        // Filter Buttons
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.filter-btn').forEach(b => {
+                    b.classList.remove('bg-cyan-900/40', 'border-cyan-500/30', 'text-cyan-300');
+                    b.classList.add('bg-gray-900', 'border-gray-800', 'text-gray-400');
+                });
+                btn.classList.add('bg-cyan-900/40', 'border-cyan-500/30', 'text-cyan-300');
+                btn.classList.remove('bg-gray-900', 'border-gray-800', 'text-gray-400');
+                currentFilter = btn.dataset.filter;
+                renderDashboard();
+            });
+        });
+
+        // Reset Stats
+        document.getElementById('btnReset').addEventListener('click', async () => {
+            if (confirm('Are you sure you want to reset profiling statistics across ALL microservices?')) {
+                try {
+                    const response = await fetch('/debug/profiler/reset', { method: 'POST' });
+                    if (response.ok) {
+                        fetchStats();
+                    }
+                } catch (err) {
+                    console.error("Error resetting stats:", err);
+                }
+            }
+        });
+
+        // Init
+        setupAutoRefresh();
+        setInterval(updateUptimeUI, 1000);
+    </script>
+</body>
+</html>

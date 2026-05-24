@@ -3,6 +3,11 @@ package exception
 import (
 	"encoding/json"
 	"net/http"
+	"time"
+
+	"social-network-go/logger"
+
+	"github.com/gin-gonic/gin"
 )
 
 type ErrorCode struct {
@@ -117,6 +122,55 @@ var (
 		Status:  http.StatusConflict,
 	}
 
+	LoginFailed = ErrorCode{
+		Code:    1020,
+		Message: "Login failed",
+		Error:   "LOGIN_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	RefreshFailed = ErrorCode{
+		Code:    1021,
+		Message: "Token refresh failed",
+		Error:   "REFRESH_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	ForgotPasswordFailed = ErrorCode{
+		Code:    1022,
+		Message: "Forgot password operation failed",
+		Error:   "FORGOT_PASSWORD_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	ResetPasswordFailed = ErrorCode{
+		Code:    1023,
+		Message: "Reset password failed",
+		Error:   "RESET_PASSWORD_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	ChangePasswordFailed = ErrorCode{
+		Code:    1024,
+		Message: "Change password failed",
+		Error:   "CHANGE_PASSWORD_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	RegisterFailed = ErrorCode{
+		Code:    1025,
+		Message: "Registration failed",
+		Error:   "REGISTER_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	VerifyFailed = ErrorCode{
+		Code:    1026,
+		Message: "Verification failed",
+		Error:   "VERIFY_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	ResendEmailFailed = ErrorCode{
+		Code:    1027,
+		Message: "Resend email failed",
+		Error:   "RESEND_EMAIL_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+
 	// User errors (2000-2999)
 	GivenNameRequired = ErrorCode{
 		Code:    2000,
@@ -215,6 +269,43 @@ var (
 		Status:  http.StatusBadRequest,
 	}
 
+	UpdateBioFailed = ErrorCode{
+		Code:    2020,
+		Message: "Update bio failed",
+		Error:   "UPDATE_BIO_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UpdateBirthdateFailed = ErrorCode{
+		Code:    2021,
+		Message: "Update birthdate failed",
+		Error:   "UPDATE_BIRTHDATE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UpdateNameFailed = ErrorCode{
+		Code:    2022,
+		Message: "Update name failed",
+		Error:   "UPDATE_NAME_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UpdateUsernameFailed = ErrorCode{
+		Code:    2023,
+		Message: "Update username failed",
+		Error:   "UPDATE_USERNAME_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UpdateProfilePictureFailed = ErrorCode{
+		Code:    2024,
+		Message: "Update profile picture failed",
+		Error:   "UPDATE_PROFILE_PICTURE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	GetUserProfileFailed = ErrorCode{
+		Code:    2025,
+		Message: "Get user profile failed",
+		Error:   "GET_USER_PROFILE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+
 	// Storage errors (3000-3999)
 	StorageInitializationError = ErrorCode{
 		Code:    3000,
@@ -290,10 +381,10 @@ var (
 		Error:   "CAN_NOT_MAKE_SELF_REQUEST",
 		Status:  http.StatusBadRequest,
 	}
-	SentAddFriendRequestFailed = ErrorCode{
+	SendFriendRequestFailed = ErrorCode{
 		Code:    4001,
-		Message: "Sent add friend request failed",
-		Error:   "SENT_ADD_FRIEND_REQUEST_FAILED",
+		Message: "Send friend request failed",
+		Error:   "SEND_FRIEND_REQUEST_FAILED",
 		Status:  http.StatusBadRequest,
 	}
 	AddFriendRequestSentLimitReached = ErrorCode{
@@ -362,7 +453,49 @@ var (
 		Error:   "FRIEND_NOT_FOUND",
 		Status:  http.StatusBadRequest,
 	}
-
+	DeleteRequestFailed = ErrorCode{
+		Code:    4013,
+		Message: "Delete friend request failed",
+		Error:   "DELETE_REQUEST_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	GetRequestsFailed = ErrorCode{
+		Code:    4014,
+		Message: "Get friend requests failed",
+		Error:   "GET_REQUESTS_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UnfriendFailed = ErrorCode{
+		Code:    4015,
+		Message: "Unfriend failed",
+		Error:   "UNFRIEND_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	BlockFailed = ErrorCode{
+		Code:    4016,
+		Message: "Block user failed",
+		Error:   "BLOCK_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UnblockFailed = ErrorCode{
+		Code:    4017,
+		Message: "Unblock user failed",
+		Error:   "UNBLOCK_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	GetBlockedUsersFailed = ErrorCode{
+		Code:    4018,
+		Message: "Get blocked users failed",
+		Error:   "GET_BLOCKED_USERS_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	GetFriendsFailed = ErrorCode{
+		Code:    4019,
+		Message: "Get friends failed",
+		Error:   "GET_FRIENDS_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	
 	// Post errors (5000-5999)
 	PostContentAndAttachFilesBothEmpty = ErrorCode{
 		Code:    5000,
@@ -430,6 +563,60 @@ var (
 		Error:   "DELETED_POST",
 		Status:  http.StatusBadRequest,
 	}
+	FailToGetPost = ErrorCode{
+		Code:    5012,
+		Message: "Fail to get post",
+		Error:   "FAIL_TO_GET_POST",
+		Status:  http.StatusBadRequest,
+	}
+	InvalidPostPrivacy = ErrorCode{
+		Code:    5013,
+		Message: "Invalid post privacy",
+		Error:   "INVALID_POST_PRIVACY",
+		Status:  http.StatusBadRequest,
+	}
+	CreatePostFailed = ErrorCode{
+		Code:    5014,
+		Message: "Create post failed",
+		Error:   "CREATE_POST_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	SharePostFailed = ErrorCode{
+		Code:    5015,
+		Message: "Share post failed",
+		Error:   "SHARE_POST_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	LikePostFailed = ErrorCode{
+		Code:    5016,
+		Message: "Like post failed",
+		Error:   "LIKE_POST_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UnlikePostFailed = ErrorCode{
+		Code:    5017,
+		Message: "Unlike post failed",
+		Error:   "UNLIKE_POST_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UpdatePrivacyFailed = ErrorCode{
+		Code:    5018,
+		Message: "Update post privacy failed",
+		Error:   "UPDATE_PRIVACY_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UpdatePostFailed = ErrorCode{
+		Code:    5019,
+		Message: "Update post failed",
+		Error:   "UPDATE_POST_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	DeletePostFailed = ErrorCode{
+		Code:    5020,
+		Message: "Delete post failed",
+		Error:   "DELETE_POST_FAILED",
+		Status:  http.StatusBadRequest,
+	}
 
 	// Comment errors (6000-6999)
 	CommentNotFound = ErrorCode{
@@ -484,6 +671,43 @@ var (
 		Code:    6008,
 		Message: "Comment content unchanged",
 		Error:   "COMMENT_CONTENT_UNCHANGED",
+		Status:  http.StatusBadRequest,
+	}
+
+	CommentFailed = ErrorCode{
+		Code:    6010,
+		Message: "Comment failed",
+		Error:   "COMMENT_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	ReplyCommentFailed = ErrorCode{
+		Code:    6011,
+		Message: "Reply comment failed",
+		Error:   "REPLY_COMMENT_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	LikeCommentFailed = ErrorCode{
+		Code:    6012,
+		Message: "Like comment failed",
+		Error:   "LIKE_COMMENT_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	UnlikeCommentFailed = ErrorCode{
+		Code:    6013,
+		Message: "Unlike comment failed",
+		Error:   "UNLIKE_COMMENT_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	GetCommentsFailed = ErrorCode{
+		Code:    6014,
+		Message: "Get comments failed",
+		Error:   "GET_COMMENTS_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	DeleteCommentFailed = ErrorCode{
+		Code:    6015,
+		Message: "Delete comment failed",
+		Error:   "DELETE_COMMENT_FAILED",
 		Status:  http.StatusBadRequest,
 	}
 
@@ -590,6 +814,42 @@ var (
 		Error:   "GIF_URL_REQUIRED",
 		Status:  http.StatusBadRequest,
 	}
+	SendMessageFailed = ErrorCode{
+		Code:    7018,
+		Message: "Send message failed",
+		Error:   "SEND_MESSAGE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	SendGifFailed = ErrorCode{
+		Code:    7019,
+		Message: "Send gif failed",
+		Error:   "SEND_GIF_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	SendFileFailed = ErrorCode{
+		Code:    7020,
+		Message: "Send file message failed",
+		Error:   "SEND_FILE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	SendVoiceFailed = ErrorCode{
+		Code:    7021,
+		Message: "Send voice message failed",
+		Error:   "SEND_VOICE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	EditMessageFailed = ErrorCode{
+		Code:    7022,
+		Message: "Edit message failed",
+		Error:   "EDIT_MESSAGE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
+	DeleteMessageFailed = ErrorCode{
+		Code:    7023,
+		Message: "Delete message failed",
+		Error:   "DELETE_MESSAGE_FAILED",
+		Status:  http.StatusBadRequest,
+	}
 
 	// General/System errors (9000-9999)
 	InvalidRequestMethod = ErrorCode{
@@ -688,4 +948,263 @@ func (e AppException) Error() string {
 
 func NewAppException(errCode ErrorCode) AppException {
 	return AppException{ErrCode: errCode}
+}
+
+var errorStringMap = map[string]ErrorCode{
+	// Account errors
+	"ACCOUNT_NOT_FOUND": AccountNotFound,
+	"ACCOUNT_NOT_VERIFIED": AccountNotVerified,
+	"ACCOUNT_NOT_VERIZED": AccountNotVerified,
+	"ACCOUNT_LOCKED": AccountLocked,
+	"AUTHENTICATION_FAILED": AuthenticationFailed,
+	"INVALID_PASSWORD": InvalidPassword,
+	"WEAK_PASSWORD_MUST_BE_8_CHARS_UPPERCASE_NUMBER": InvalidPassword,
+	"PASSWORD_NOT_STRONG_ENOUGH": InvalidPassword,
+	"INVALID_EMAIL": InvalidEmail,
+	"EMAIL_REQUIRED": EmailRequired,
+	"PASSWORD_REQUIRED": PasswordRequired,
+	"VERIFICATION_CODE_NOT_FOUND": VerificationCodeNotFound,
+	"VERIFICATION_CODE_NOT_MATCHED_OR_EXPIRED": VerificationCodeNotMatchedOrExpired,
+	"REFRESH_TOKEN_REQUIRED": RefreshTokenRequired,
+	"INVALID_OR_EXPIRED_REFRESH_TOKEN": InvalidOrExpiredRefreshToken,
+	"ACCOUNT_ALREADY_EXISTS": AccountAlreadyExists,
+	"INVALID_TOKEN": InvalidToken,
+	"EXPIRED_TOKEN": ExpiredToken,
+	"VERIFICATION_CODE_REQUIRED": VerificationCodeRequired,
+	"ACCOUNT_VERIFIED": AccountVerified,
+	"ACCOUNT_ALREADY_VERIFIED": AccountVerified,
+	"LOGIN_FAILED": LoginFailed,
+	"REFRESH_FAILED": RefreshFailed,
+	"FORGOT_PASSWORD_FAILED": ForgotPasswordFailed,
+	"RESET_PASSWORD_FAILED": ResetPasswordFailed,
+	"CHANGE_PASSWORD_FAILED": ChangePasswordFailed,
+	"REGISTER_FAILED": RegisterFailed,
+	"VERIFY_FAILED": VerifyFailed,
+	"RESEND_EMAIL_FAILED": ResendEmailFailed,
+
+	// User errors
+	"GIVEN_NAME_REQUIRED": GivenNameRequired,
+	"FAMILY_NAME_REQUIRED": FamilyNameRequired,
+	"BIRTHDATE_REQUIRED": BirthdateRequired,
+	"AGE_MUST_BE_AT_LEAST_16": AgeMustBeAtLeast16,
+	"INVALID_GIVEN_NAME_LENGTH": InvalidGivenNameLength,
+	"INVALID_FAMILY_NAME_LENGTH": InvalidFamilyNameLength,
+	"LESS_THAN_30_DAYS_SINCE_LAST_BIRTHDATE_CHANGE": LessThan30DaysSinceLastBirthdateChange,
+	"LESS_THAN_30_DAYS_SINCE_LAST_NAME_CHANGE": LessThan30DaysSinceLastNameChange,
+	"LESS_THAN_30_DAYS_SINCE_LAST_USERNAME_CHANGE": LessThan30DaysSinceLastUsernameChange,
+	"EMAIL_NOT_VERIFIED": EmailNotVerified,
+	"USER_NOT_FOUND": UserNotFound,
+	"INVALID_USERNAME": InvalidUsername,
+	"USERNAME_REQUIRED": UsernameRequired,
+	"USERNAME_ALREADY_EXISTS": UsernameAlreadyExists,
+	"PROFILE_PICTURE_REQUIRED": ProfilePictureRequired,
+	"NOTHING_CHANGED": NothingChanged,
+	"UPDATE_BIO_FAILED": UpdateBioFailed,
+	"UPDATE_BIRTHDATE_FAILED": UpdateBirthdateFailed,
+	"UPDATE_NAME_FAILED": UpdateNameFailed,
+	"UPDATE_USERNAME_FAILED": UpdateUsernameFailed,
+	"UPDATE_PROFILE_PICTURE_FAILED": UpdateProfilePictureFailed,
+	"GET_USER_PROFILE_FAILED": GetUserProfileFailed,
+
+	// Storage errors
+	"STORAGE_INITIALIZATION_ERROR": StorageInitializationError,
+	"FILE_REQUIRED": FileRequired,
+	"INVALID_FILE": InvalidFile,
+	"UPLOAD_FILE_FAILED": UploadFileFailed,
+	"FILE_NOT_FOUND": FileNotFound,
+	"DELETE_FILE_FAILED": DeleteFileFailed,
+	"LOAD_FILE_FAILED": LoadFileFailed,
+	"REQUIRED_IMAGE_FILE": RequiredImageFile,
+	"INVALID_FILE_SIZE": InvalidFileSize,
+	"LIST_CONTAINS_INVALID_FILE": ListContainsInvalidFile,
+	"REQUIRED_IMAGE_OR_VIDEO_FILE": RequiredImageOrVideoFile,
+
+	// Friend/Block errors
+	"CAN_NOT_MAKE_SELF_REQUEST": CanNotMakeSelfRequest,
+	"SENT_ADD_FRIEND_REQUEST_FAILED": SendFriendRequestFailed,
+	"SEND_FRIEND_REQUEST_FAILED": SendFriendRequestFailed,
+	"ADD_FRIEND_REQUEST_SENT_LIMIT_REACHED": AddFriendRequestSentLimitReached,
+	"ADD_FRIEND_REQUEST_RECEIVED_LIMIT_REACHED": AddFriendRequestReceivedLimitReached,
+	"REQUEST_NOT_FOUND": RequestNotFound,
+	"ACCEPT_REQUEST_FAILED": AcceptRequestFailed,
+	"HAS_BLOCKED": HasBlocked,
+	"HAS_BEEN_BLOCKED": HasBeenBlocked,
+	"NOT_BLOCK": NotBlock,
+	"BLOCK_LIMIT_REACHED": BlockLimitReached,
+	"CAN_NOT_BLOCK_YOURSELF": CanNotBlockYourself,
+	"BLOCK_NOT_FOUND": BlockNotFound,
+	"FRIEND_NOT_FOUND": FriendNotFound,
+	"DELETE_REQUEST_FAILED": DeleteRequestFailed,
+	"GET_REQUESTS_FAILED": GetRequestsFailed,
+	"UNFRIEND_FAILED": UnfriendFailed,
+	"BLOCK_FAILED": BlockFailed,
+	"UNBLOCK_FAILED": UnblockFailed,
+	"GET_BLOCKED_USERS_FAILED": GetBlockedUsersFailed,
+	"GET_FRIENDS_FAILED": GetFriendsFailed,
+
+	// Post errors
+	"POST_CONTENT_AND_ATTACH_FILES_BOTH_EMPTY": PostContentAndAttachFilesBothEmpty,
+	"INVALID_POST_CONTENT_LENGTH": InvalidPostContentLength,
+	"INVALID_NUMBER_OF_POST_ATTACHMENTS": InvalidNumberOfPostAttachments,
+	"POST_NOT_FOUND": PostNotFound,
+	"ONLY_PUBLIC_POST_CAN_BE_SHARED": OnlyPublicPostCanBeShared,
+	"PRIVACY_UNCHANGED": PrivacyUnchanged,
+	"INVALID_DELETE_ATTACHMENT": InvalidDeleteAttachment,
+	"POST_CONTENT_UNCHANGED": PostContentUnchanged,
+	"LIKED_POST": LikedPost,
+	"NOT_LIKED_POST": NotLikedPost,
+	"DELETED_POST": DeletedPost,
+	"INVALID_POST_PRIVACY": InvalidPostPrivacy,
+	"CREATE_POST_FAILED": CreatePostFailed,
+	"SHARE_POST_FAILED": SharePostFailed,
+	"LIKE_POST_FAILED": LikePostFailed,
+	"UNLIKE_POST_FAILED": UnlikePostFailed,
+	"UPDATE_PRIVACY_FAILED": UpdatePrivacyFailed,
+	"UPDATE_POST_FAILED": UpdatePostFailed,
+	"DELETE_POST_FAILED": DeletePostFailed,
+
+	// Comment errors
+	"COMMENT_NOT_FOUND": CommentNotFound,
+	"COMMENT_CONTENT_AND_ATTACH_FILE_BOTH_EMPTY": CommentContentAndAttachFileBothEmpty,
+	"INVALID_COMMENT_CONTENT_LENGTH": InvalidCommentContentLength,
+	"POST_ID_REQUIRED": PostIdRequired,
+	"ORIGINAL_COMMENT_ID_REQUIRED": OriginalCommentIdRequired,
+	"LIKED_COMMENT": LikedComment,
+	"NOT_LIKED_COMMENT": NotLikedComment,
+	"CAN_NOT_REPLY_REPLIED_COMMENT": CanNotReplyRepliedComment,
+	"COMMENT_CONTENT_UNCHANGED": CommentContentUnchanged,
+	"COMMENT_FAILED": CommentFailed,
+	"REPLY_COMMENT_FAILED": ReplyCommentFailed,
+	"LIKE_COMMENT_FAILED": LikeCommentFailed,
+	"UNLIKE_COMMENT_FAILED": UnlikeCommentFailed,
+	"GET_COMMENTS_FAILED": GetCommentsFailed,
+	"DELETE_COMMENT_FAILED": DeleteCommentFailed,
+
+	// Chat errors
+	"CHAT_NOT_FOUND": ChatNotFound,
+	"MESSAGE_USERNAME_REQUIRED": MessageUsernameRequired,
+	"INVALID_MESSAGE_CONTENT_LENGTH": InvalidMessageContentLength,
+	"CHAT_ID_AND_USER_ID_BOTH_EMPTY": ChatIdAndUserIdBothEmpty,
+	"MESSAGE_NOT_FOUND": MessageNotFound,
+	"CAN_NOT_DELETE_MESSAGE": CanNotDeleteMessage,
+	"TEXT_MESSAGE_CONTENT_REQUIRED": TextMessageContentRequired,
+	"TEXT_MESSAGE_CONTENT_UNCHANGED": TextMessageContentUnchanged,
+	"CAN_NOT_EDIT_FILE_MESSAGE": CanNotEditFileMessage,
+	"CAN_NOT_EDIT_MESSAGE": CanNotEditMessage,
+	"FILE_MESSAGE_REQUIRED": FileMessageRequired,
+	"ALREADY_IN_CALL": AlreadyInCall,
+	"TARGET_ALREADY_IN_IN_CALL": TargetAlreadyInCall,
+	"CALL_NOT_FOUND": CallNotFound,
+	"NOT_READY_FOR_CALL": NotReadyForCall,
+	"CAN_NOT_EDIT_CALL": CanNotEditCall,
+	"GIF_URL_REQUIRED": GifUrlRequired,
+	"BLOCKED": HasBlocked,
+	"CAN_NOT_EDIT_FILE_OR_CALL": CanNotEditFileMessage,
+	"SEND_MESSAGE_FAILED": SendMessageFailed,
+	"SEND_GIF_FAILED": SendGifFailed,
+	"SEND_FILE_FAILED": SendFileFailed,
+	"SEND_VOICE_FAILED": SendVoiceFailed,
+	"EDIT_MESSAGE_FAILED": EditMessageFailed,
+	"DELETE_MESSAGE_FAILED": DeleteMessageFailed,
+
+	// General/System
+	"INVALID_REQUEST_METHOD": InvalidRequestMethod,
+	"SEARCH_QUERY_REQUIRED": SearchQueryRequired,
+	"TOO_MANY_REQUESTS": TooManyRequests,
+	"INVALID_WEBSOCKET_CHANNEL": InvalidWebsocketChannel,
+	"ONLY_LETTER_ACCEPTED": OnlyLetterAccepted,
+	"UNAUTHORIZED": Unauthorized,
+	"INVALID_INPUT": InvalidInput,
+	"INVALID_REQUEST_PAYLOAD": InvalidInput,
+	"INVALID_BIRTHDATE_FORMAT_MUST_BE_YYYY_MM_DD": InvalidInput,
+	"INVALID_CODE_FORMAT": InvalidInput,
+	"INVALID_REQUEST_BODY": InvalidInput,
+	"INVALID_UUID": InvalidUUID,
+	"UNAUTHENTICATED": Unauthenticated,
+	"NO_RESOURCE_FOUND": NoResourceFound,
+	"UNKNOWN_ERROR": UnknownError,
+}
+
+// MapError looks up the given error message and maps it to a standard ErrorCode.
+// It supports direct matches and prefix-based matches (for auth locked/attempt states).
+func MapError(msg string) (ErrorCode, bool) {
+	if code, ok := errorStringMap[msg]; ok {
+		return code, true
+	}
+	// Prefix checks for authentication failures/account lockouts
+	if len(msg) >= 21 && msg[:21] == "AUTHENTICATION_FAILED" {
+		return AuthenticationFailed, true
+	}
+	if len(msg) >= 14 && msg[:14] == "ACCOUNT_LOCKED" {
+		return AccountLocked, true
+	}
+	return UnknownError, false
+}
+
+// MapAppError maps any error (including AppException and mapped string errors) to a standard ErrorCode.
+func MapAppError(err error) (ErrorCode, bool) {
+	if err == nil {
+		return UnknownError, false
+	}
+	if appErr, ok := err.(AppException); ok {
+		return appErr.ErrCode, true
+	}
+	if appErr, ok := err.(*AppException); ok && appErr != nil {
+		return appErr.ErrCode, true
+	}
+	if code, ok := errorStringMap[err.Error()]; ok {
+		return code, true
+	}
+	// Prefix checks for authentication failures/account lockouts
+	msg := err.Error()
+	if len(msg) >= 21 && msg[:21] == "AUTHENTICATION_FAILED" {
+		return AuthenticationFailed, true
+	}
+	if len(msg) >= 14 && msg[:14] == "ACCOUNT_LOCKED" {
+		return AccountLocked, true
+	}
+	return UnknownError, false
+}
+
+// SendError writes a JSON response for the given ErrorCode.
+func SendError(c *gin.Context, errCode ErrorCode) {
+	c.JSON(errCode.Status, gin.H{
+		"code":      errCode.Code,
+		"message":   errCode.Message,
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+}
+
+// SendAppError checks if err is an AppException, otherwise maps its message using MapError,
+// and if no mapping is found, logs the internal error and returns UnknownError.
+func SendAppError(c *gin.Context, err error) {
+	if appErr, ok := err.(AppException); ok {
+		SendError(c, appErr.ErrCode)
+		return
+	}
+	if mapped, found := MapError(err.Error()); found {
+		SendError(c, mapped)
+		return
+	}
+
+	// Unmapped internal/system error - log it and return generic UnknownError
+	logger.Err(err).Error("Unhandled application error")
+	SendError(c, UnknownError)
+}
+
+// SendErrorWithStatus maps a string/magic string to standard ErrorCode if possible,
+// otherwise uses the provided HTTP status, custom code, and message.
+// If the message is not mapped, it logs it as a warning.
+func SendErrorWithStatus(c *gin.Context, httpStatus int, code int, msg string) {
+	if mapped, found := MapError(msg); found {
+		SendError(c, mapped)
+		return
+	}
+
+	logger.Field("status", httpStatus).Field("code", code).Warn("Unmapped handler error: %s", msg)
+	c.JSON(httpStatus, gin.H{
+		"code":      code,
+		"message":   msg,
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"social-network-go/logger"
+	"social-network-go/profiler"
 )
 
 func main() {
@@ -48,11 +49,19 @@ func main() {
 	// 6. Setup and Start HTTP/REST Server (Gin)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(profiler.Middleware("user-service"))
 	r.Use(logger.GinMiddleware())
 
 	// Health Check
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "user-service"})
+	})
+
+	// Profiler
+	r.GET("/debug/profiler", profiler.Handler)
+	r.POST("/debug/profiler/reset", func(c *gin.Context) {
+		profiler.Reset()
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
 	// Profile Management REST APIs

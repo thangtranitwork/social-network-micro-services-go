@@ -23,7 +23,7 @@ func (s *GrpcServer) GetCommonUserInfo(ctx context.Context, req *pb.UserRequest)
 
 	// Try to lazily ensure profile exists using UserID if we have it
 	if req.UserId != "" {
-		_, _ = s.UserSvc.EnsureProfile(ctx, req.UserId, "") // Email is unknown here, but EnsureProfile handles it
+		_, _ = s.UserSvc.EnsureProfile(ctx, req.UserId, "", "", "", "") // Email is unknown here, but EnsureProfile handles it
 	}
 
 	// Internal gRPC calls bypass block checks by passing empty currentUserID
@@ -100,6 +100,17 @@ func (s *GrpcServer) GetUsersByIds(ctx context.Context, req *pb.UsersByIdsReques
 	}
 
 	return &pb.UsersByIdsResponse{Users: users}, nil
+}
+
+func (s *GrpcServer) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
+	user, err := s.UserSvc.EnsureProfile(ctx, req.UserId, req.Email, req.GivenName, req.FamilyName, req.Birthdate)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.CreateUserResponse{
+		UserId:   user.ID,
+		Username: user.Username,
+	}, nil
 }
 
 func StartGrpcServer(port string, userSvc *service.UserService) {

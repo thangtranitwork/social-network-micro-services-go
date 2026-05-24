@@ -1,4 +1,4 @@
-.PHONY: all tidy build run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean
+.PHONY: all tidy build test run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean dev-restart
 
 # Environment defaults
 export PORT ?= 2003
@@ -16,6 +16,11 @@ all: tidy build
 tidy:
 	@echo "====== Tidying Go Modules ======"
 	go mod tidy
+
+# Run all unit tests
+test:
+	@echo "====== Running Unit Tests ======"
+	go test -v -count=1 ./...
 
 # Compile all microservices
 build:
@@ -112,3 +117,15 @@ run-admin:
 clean:
 	@echo "====== Cleaning Binaries ======"
 	rm -rf bin/
+
+dev-restart:
+	@if [ -z "$(svc)" ]; then \
+		echo "Error: Please specify the service using 'svc=...', e.g. 'make dev-restart svc=auth-service'"; \
+		exit 1; \
+	fi
+	@echo "====== Rebuilding and Restarting $(svc) ======"
+	go build -o bin/$(svc) $(svc)/main.go
+	-@pkill -f "bin/$(svc)" || true
+	@mkdir -p logs
+	@nohup ./bin/$(svc) > /dev/null 2> logs/$(svc).log &
+	@echo "====== $(svc) rebuilt and started in background! ======"

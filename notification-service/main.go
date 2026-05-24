@@ -16,6 +16,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/segmentio/kafka-go"
 	"social-network-go/logger"
+	"social-network-go/profiler"
 )
 
 type Config struct {
@@ -452,7 +453,14 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(profiler.Middleware("notification-service"))
 	r.Use(logger.GinMiddleware())
+
+	r.GET("/debug/profiler", profiler.Handler)
+	r.POST("/debug/profiler/reset", func(c *gin.Context) {
+		profiler.Reset()
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
+	})
 
 	// Upgrade notification WS
 	r.GET("/v1/notifications/ws", func(c *gin.Context) {

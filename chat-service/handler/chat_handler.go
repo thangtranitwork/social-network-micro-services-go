@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"social-network-go/chat-service/config"
+	"social-network-go/chat-service/model"
 	"social-network-go/chat-service/service"
+	"social-network-go/exception"
+	"social-network-go/logger"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -15,12 +18,29 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type ChatServiceInterface interface {
+	RegisterClient(userID string, conn *websocket.Conn)
+	HandleIncomingMessages(userID string)
+	GetChatHistory(userID, partnerID string) []*model.Message
+	GetChatList(userID string) []service.ChatRoom
+	IsMemberOfChat(userID, chatID string) bool
+	GetChatMessages(chatID string, skip, limit int64) []*service.MessageResponse
+	MarkMessagesAsRead(chatID, userID string)
+	SearchChats(userID, searchQuery string) []service.ChatRoom
+	SendMessage(senderID, receiverUsername, text string) (*service.MessageResponse, error)
+	SendGif(senderID, receiverUsername, gifURL string) (*service.MessageResponse, error)
+	SendFile(senderID, receiverUsername, fileID string) (*service.MessageResponse, error)
+	SendVoice(senderID, receiverUsername, fileID string) (*service.MessageResponse, error)
+	DeleteMessage(messageID, userID string) error
+	EditMessage(messageID, newContent, userID string) error
+}
+
 type ChatHandler struct {
-	ChatSvc  *service.ChatService
+	ChatSvc  ChatServiceInterface
 	Upgrader websocket.Upgrader
 }
 
-func NewChatHandler(chatSvc *service.ChatService) *ChatHandler {
+func NewChatHandler(chatSvc ChatServiceInterface) *ChatHandler {
 	return &ChatHandler{
 		ChatSvc: chatSvc,
 		Upgrader: websocket.Upgrader{
@@ -50,14 +70,6 @@ func sendSuccess(c *gin.Context, body interface{}) {
 	})
 }
 
-func sendError(c *gin.Context, httpStatus int, code int, msg string) {
-	c.JSON(httpStatus, ApiResponse{
-		Code:      code,
-		Message:   msg,
-		Timestamp: time.Now().Format(time.RFC3339),
-	})
-}
-
 func getCurrentUser(c *gin.Context) string {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -69,13 +81,14 @@ func getCurrentUser(c *gin.Context) string {
 func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 	userID := getCurrentUser(c)
 	if userID == "" {
-		sendError(c, http.StatusBadRequest, 400, "USER_ID_REQUIRED")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	// Upgrade the connection to WebSocket
 	conn, err := h.Upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		logger.WithContext(c.Request.Context()).Err(err).Error("Failed to upgrade websocket connection")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upgrade connection"})
 		return
 	}
@@ -87,13 +100,13 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 func (h *ChatHandler) GetChatHistory(c *gin.Context) {
 	userID := getCurrentUser(c)
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
 	partnerID := c.Param("partnerId")
 	if partnerID == "" {
-		sendError(c, http.StatusBadRequest, 400, "PARTNER_ID_REQUIRED")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
@@ -104,7 +117,7 @@ func (h *ChatHandler) GetChatHistory(c *gin.Context) {
 func (h *ChatHandler) GetChatList(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 	rooms := h.ChatSvc.GetChatList(userID)
@@ -117,18 +130,18 @@ func (h *ChatHandler) GetChatList(c *gin.Context) {
 func (h *ChatHandler) GetChatMessages(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
 	chatID := c.Param("chatId")
 	if chatID == "" {
-		sendError(c, http.StatusBadRequest, 400, "CHAT_ID_REQUIRED")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	if !h.ChatSvc.IsMemberOfChat(userID, chatID) {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
@@ -150,7 +163,7 @@ func (h *ChatHandler) GetChatMessages(c *gin.Context) {
 func (h *ChatHandler) CreateStringeeToken(c *gin.Context) {
 	userID := getCurrentUser(c)
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
@@ -169,7 +182,8 @@ func (h *ChatHandler) CreateStringeeToken(c *gin.Context) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString([]byte(cfg.StringeeSecret))
 	if err != nil {
-		sendError(c, http.StatusInternalServerError, 500, "FAILED_TO_GENERATE_TOKEN")
+		logger.WithContext(c.Request.Context()).Err(err).Error("Failed to generate Stringee token")
+		exception.SendError(c, exception.AuthenticationFailed)
 		return
 	}
 
@@ -179,7 +193,7 @@ func (h *ChatHandler) CreateStringeeToken(c *gin.Context) {
 func (h *ChatHandler) SearchChats(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 	query := c.Query("query")
@@ -190,7 +204,7 @@ func (h *ChatHandler) SearchChats(c *gin.Context) {
 func (h *ChatHandler) SendMessage(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
@@ -199,17 +213,18 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 		Text     string `json:"text" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		sendError(c, http.StatusBadRequest, 400, "INVALID_REQUEST_BODY")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	resp, err := h.ChatSvc.SendMessage(userID, req.Username, req.Text)
 	if err != nil {
-		if err.Error() == "BLOCKED" {
-			sendError(c, http.StatusForbidden, 403, "BLOCKED")
+		logger.WithContext(c.Request.Context()).Err(err).Error("SendMessage failed")
+		if mapped, found := exception.MapAppError(err); found {
+			exception.SendError(c, mapped)
 			return
 		}
-		sendError(c, http.StatusInternalServerError, 500, err.Error())
+		exception.SendError(c, exception.SendMessageFailed)
 		return
 	}
 	sendSuccess(c, resp)
@@ -218,7 +233,7 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 func (h *ChatHandler) SendGif(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
@@ -227,17 +242,18 @@ func (h *ChatHandler) SendGif(c *gin.Context) {
 		URL      string `json:"url" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		sendError(c, http.StatusBadRequest, 400, "INVALID_REQUEST_BODY")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	resp, err := h.ChatSvc.SendGif(userID, req.Username, req.URL)
 	if err != nil {
-		if err.Error() == "BLOCKED" {
-			sendError(c, http.StatusForbidden, 403, "BLOCKED")
+		logger.WithContext(c.Request.Context()).Err(err).Error("SendGif failed")
+		if mapped, found := exception.MapAppError(err); found {
+			exception.SendError(c, mapped)
 			return
 		}
-		sendError(c, http.StatusInternalServerError, 500, err.Error())
+		exception.SendError(c, exception.SendGifFailed)
 		return
 	}
 	sendSuccess(c, resp)
@@ -246,7 +262,7 @@ func (h *ChatHandler) SendGif(c *gin.Context) {
 func (h *ChatHandler) SendFile(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
@@ -255,17 +271,18 @@ func (h *ChatHandler) SendFile(c *gin.Context) {
 		FileId   string `json:"fileId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		sendError(c, http.StatusBadRequest, 400, "INVALID_REQUEST_BODY")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	resp, err := h.ChatSvc.SendFile(userID, req.Username, req.FileId)
 	if err != nil {
-		if err.Error() == "BLOCKED" {
-			sendError(c, http.StatusForbidden, 403, "BLOCKED")
+		logger.WithContext(c.Request.Context()).Err(err).Error("SendFile failed")
+		if mapped, found := exception.MapAppError(err); found {
+			exception.SendError(c, mapped)
 			return
 		}
-		sendError(c, http.StatusInternalServerError, 500, err.Error())
+		exception.SendError(c, exception.SendFileFailed)
 		return
 	}
 	sendSuccess(c, resp)
@@ -274,7 +291,7 @@ func (h *ChatHandler) SendFile(c *gin.Context) {
 func (h *ChatHandler) SendVoice(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
@@ -283,17 +300,18 @@ func (h *ChatHandler) SendVoice(c *gin.Context) {
 		FileId   string `json:"fileId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		sendError(c, http.StatusBadRequest, 400, "INVALID_REQUEST_BODY")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	resp, err := h.ChatSvc.SendVoice(userID, req.Username, req.FileId)
 	if err != nil {
-		if err.Error() == "BLOCKED" {
-			sendError(c, http.StatusForbidden, 403, "BLOCKED")
+		logger.WithContext(c.Request.Context()).Err(err).Error("SendVoice failed")
+		if mapped, found := exception.MapAppError(err); found {
+			exception.SendError(c, mapped)
 			return
 		}
-		sendError(c, http.StatusInternalServerError, 500, err.Error())
+		exception.SendError(c, exception.SendVoiceFailed)
 		return
 	}
 	sendSuccess(c, resp)
@@ -302,7 +320,7 @@ func (h *ChatHandler) SendVoice(c *gin.Context) {
 func (h *ChatHandler) EditMessage(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
@@ -311,17 +329,18 @@ func (h *ChatHandler) EditMessage(c *gin.Context) {
 		Text      string `json:"text" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		sendError(c, http.StatusBadRequest, 400, "INVALID_REQUEST_BODY")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	err := h.ChatSvc.EditMessage(req.MessageID, req.Text, userID)
 	if err != nil {
-		if err.Error() == "UNAUTHORIZED" {
-			sendError(c, http.StatusForbidden, 403, "UNAUTHORIZED")
+		logger.WithContext(c.Request.Context()).Err(err).Error("EditMessage failed")
+		if mapped, found := exception.MapAppError(err); found {
+			exception.SendError(c, mapped)
 			return
 		}
-		sendError(c, http.StatusInternalServerError, 500, err.Error())
+		exception.SendError(c, exception.EditMessageFailed)
 		return
 	}
 	sendSuccess(c, nil)
@@ -330,23 +349,24 @@ func (h *ChatHandler) EditMessage(c *gin.Context) {
 func (h *ChatHandler) DeleteMessage(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		sendError(c, http.StatusUnauthorized, 401, "UNAUTHORIZED")
+		exception.SendError(c, exception.Unauthorized)
 		return
 	}
 
 	messageID := c.Param("messageId")
 	if messageID == "" {
-		sendError(c, http.StatusBadRequest, 400, "MESSAGE_ID_REQUIRED")
+		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
 	err := h.ChatSvc.DeleteMessage(messageID, userID)
 	if err != nil {
-		if err.Error() == "UNAUTHORIZED" {
-			sendError(c, http.StatusForbidden, 403, "UNAUTHORIZED")
+		logger.WithContext(c.Request.Context()).Err(err).Error("DeleteMessage failed")
+		if mapped, found := exception.MapAppError(err); found {
+			exception.SendError(c, mapped)
 			return
 		}
-		sendError(c, http.StatusInternalServerError, 500, err.Error())
+		exception.SendError(c, exception.DeleteMessageFailed)
 		return
 	}
 	sendSuccess(c, nil)

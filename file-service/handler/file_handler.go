@@ -1,18 +1,29 @@
 package handler
 
 import (
+	"context"
+	"io"
 	"net/http"
-	"social-network-go/file-service/service"
+	"social-network-go/file-service/model"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-type FileHandler struct {
-	fileSvc *service.FileService
+type FileServiceInterface interface {
+	Upload(ctx context.Context, file io.Reader, filename string, contentType string, uploaderID string) (*model.File, error)
+	GetPresignedUploadURL(ctx context.Context, filename string, contentType string) (string, string, error)
+	Load(ctx context.Context, id string) (*model.FileResponse, error)
+	GetPresignedURL(ctx context.Context, id string) (string, error)
+	DeleteFile(ctx context.Context, id string) error
+	DeleteFiles(ctx context.Context, ids []string) error
 }
 
-func NewFileHandler(fileSvc *service.FileService) *FileHandler {
+type FileHandler struct {
+	fileSvc FileServiceInterface
+}
+
+func NewFileHandler(fileSvc FileServiceInterface) *FileHandler {
 	return &FileHandler{fileSvc: fileSvc}
 }
 

@@ -6,10 +6,12 @@ import (
 	"social-network-go/post-service/config"
 	"social-network-go/post-service/db"
 	"social-network-go/post-service/handler"
+	"social-network-go/post-service/repository"
 	"social-network-go/post-service/service"
 
 	"github.com/gin-gonic/gin"
 	"social-network-go/logger"
+	"social-network-go/profiler"
 )
 
 func main() {
@@ -22,7 +24,8 @@ func main() {
 	db.InitNeo4j(cfg)
 
 	// 3. Initialize Service & Handler
-	postSvc := service.NewPostService(cfg)
+	postRepo := repository.NewPostRepository()
+	postSvc := service.NewPostService(cfg, postRepo)
 	
 	// Initialize Notification Publisher
 	notifPublisher := service.NewKafkaNotificationPublisher(cfg.KafkaAddr)
@@ -42,11 +45,19 @@ func main() {
 	// 3. Setup HTTP/REST Server (Gin)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(profiler.Middleware("post-service"))
 	r.Use(logger.GinMiddleware())
 
 	// Health Check
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "post-service"})
+	})
+
+	// Profiler
+	r.GET("/debug/profiler", profiler.Handler)
+	r.POST("/debug/profiler/reset", func(c *gin.Context) {
+		profiler.Reset()
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
 	// REST APIs (Internal Routes mapped under Gateway)

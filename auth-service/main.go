@@ -15,6 +15,7 @@ import (
 	"social-network-go/auth-service/service"
 	"social-network-go/logger"
 	"social-network-go/pb"
+	"social-network-go/profiler"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,7 +27,7 @@ func main() {
 	cfg := config.LoadConfig()
 
 	// 2. Initialize PostgreSQL (GORM)
-	db.InitDB(cfg)
+	gormDB := db.InitDB(cfg)
 
 	// 3. Initialize Redis
 	redis.InitRedis(cfg)
@@ -41,7 +42,8 @@ func main() {
 	userClient := pb.NewUserServiceClient(userConn)
 
 	// 5. Initialize Auth Service & Handler
-	authSvc := service.NewAuthService(cfg, userClient)
+	authSvc := service.NewAuthService(cfg, userClient, gormDB)
+	defer authSvc.Close()
 	authHandler := handler.NewAuthHandler(authSvc)
 
 	// 5. Start gRPC Server
@@ -62,11 +64,19 @@ func main() {
 		}
 		c.Next()
 	})
+	r.Use(profiler.Middleware("auth-service"))
 	r.Use(logger.GinMiddleware())
 
 	// Health Check
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "auth-service"})
+	})
+
+	// Profiler
+	r.GET("/debug/profiler", profiler.Handler)
+	r.POST("/debug/profiler/reset", func(c *gin.Context) {
+		profiler.Reset()
+		c.JSON(http.StatusOK, gin.H{"status": "success"})
 	})
 
 	// Authentication Routes

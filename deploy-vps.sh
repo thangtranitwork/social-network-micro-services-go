@@ -3,7 +3,7 @@
 # ========================================================
 # VPS DEPLOYMENT CONFIGURATION (Adjust to your host setup)
 # ========================================================
-SERVER_IP="14.225.249.148"    # Default IP matching your dev reference
+SERVER_IP="127.0.0.1"    # Default IP matching your dev reference
 SSH_USER="ubuntu"             # Target SSH User
 SSH_PORT="22"                 # SSH port (default 22, matching your reference port if needed)
 SERVICE_DIR="social-network"  # Subdirectory on remote host
@@ -13,7 +13,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_PATH="$PROJECT_ROOT/scripts/deploy.sh.template"
 
 # List of valid microservices
-VALID_SERVICES=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "ai-service")
+VALID_SERVICES=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "ai-service" "file-service" "admin-service")
+
 
 usage() {
     echo "Usage: $0 {service_name|all} [deploy_message]"

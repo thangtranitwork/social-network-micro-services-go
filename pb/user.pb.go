@@ -44,11 +44,27 @@ type UsersByIdsResponse struct {
 	Users []*UserCommonInfoResponse `json:"users"`
 }
 
+// CreateUserRequest message
+type CreateUserRequest struct {
+	UserId     string `json:"user_id"`
+	Email      string `json:"email"`
+	GivenName  string `json:"given_name"`
+	FamilyName string `json:"family_name"`
+	Birthdate  string `json:"birthdate"`
+}
+
+// CreateUserResponse message
+type CreateUserResponse struct {
+	UserId   string `json:"user_id"`
+	Username string `json:"username"`
+}
+
 // UserServiceClient is the client API for UserService.
 type UserServiceClient interface {
 	GetCommonUserInfo(ctx context.Context, in *UserRequest, opts ...grpc.CallOption) (*UserCommonInfoResponse, error)
 	CheckFriendship(ctx context.Context, in *FriendshipRequest, opts ...grpc.CallOption) (*FriendshipResponse, error)
 	GetUsersByIds(ctx context.Context, in *UsersByIdsRequest, opts ...grpc.CallOption) (*UsersByIdsResponse, error)
+	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error)
 }
 
 type userServiceClient struct {
@@ -86,11 +102,21 @@ func (c *userServiceClient) GetUsersByIds(ctx context.Context, in *UsersByIdsReq
 	return out, nil
 }
 
+func (c *userServiceClient) CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error) {
+	out := new(CreateUserResponse)
+	err := c.cc.Invoke(ctx, "/pb.UserService/CreateUser", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserServiceServer is the server API for UserService.
 type UserServiceServer interface {
 	GetCommonUserInfo(context.Context, *UserRequest) (*UserCommonInfoResponse, error)
 	CheckFriendship(context.Context, *FriendshipRequest) (*FriendshipResponse, error)
 	GetUsersByIds(context.Context, *UsersByIdsRequest) (*UsersByIdsResponse, error)
+	CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error)
 }
 
 func RegisterUserServiceServer(s grpc.ServiceRegistrar, srv UserServiceServer) {
@@ -151,6 +177,24 @@ func _UserService_GetUsersByIds_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_CreateUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).CreateUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/pb.UserService/CreateUser",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).CreateUser(ctx, req.(*CreateUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var UserService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "pb.UserService",
 	HandlerType: (*UserServiceServer)(nil),
@@ -166,6 +210,10 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUsersByIds",
 			Handler:    _UserService_GetUsersByIds_Handler,
+		},
+		{
+			MethodName: "CreateUser",
+			Handler:    _UserService_CreateUser_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

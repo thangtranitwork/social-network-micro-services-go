@@ -521,9 +521,9 @@ func GinMiddleware() gin.HandlerFunc {
 		msg := fmt.Sprintf("HTTP %s %s", method, path)
 
 		if status >= 500 {
-			logBuilder.Error(msg)
+			logBuilder.Error("%s", msg)
 		}  else {
-			logBuilder.Info(msg)
+			logBuilder.Info("%s", msg)
 		}
 	}
 }
