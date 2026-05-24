@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "social-network-go/pb";
+
+service UserService {
+    rpc GetCommonUserInfo (UserRequest) returns (UserCommonInfoResponse);
+    rpc CheckFriendship (FriendshipRequest) returns (FriendshipResponse);
+    rpc GetUsersByIds (UsersByIdsRequest) returns (UsersByIdsResponse);
+}
+
+message UserRequest {
+    string user_id = 1;
+    string username = 2; // Can search by either
+}
+
+message UserCommonInfoResponse {
+    string user_id = 1;
+    string username = 2;
+    string given_name = 3;
+    string family_name = 4;
+    string profile_picture_id = 5;
+    string email = 6;
+}
+
+message FriendshipRequest {
+    string user_id_a = 1;
+    string user_id_b = 2;
+}
+
+message FriendshipResponse {
+    bool is_friend = 1;
+    bool has_blocked = 2;
+    bool has_requested = 3;
+}
+
+message UsersByIdsRequest {
+    repeated string user_ids = 1;
+}
+
+message UsersByIdsResponse {
+    repeated UserCommonInfoResponse users = 1;
+}

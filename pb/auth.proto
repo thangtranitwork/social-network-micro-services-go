@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "social-network-go/pb";
+
+service AuthService {
+    rpc ValidateToken (TokenRequest) returns (TokenResponse);
+}
+
+message TokenRequest {
+    string token = 1;
+}
+
+message TokenResponse {
+    bool is_valid = 1;
+    string user_id = 2;
+    string email = 3;
+    string role = 4;
+    string error_message = 5;
+}

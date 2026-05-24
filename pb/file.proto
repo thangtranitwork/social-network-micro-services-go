@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "./pb";
+
+service FileService {
+    rpc DeleteFiles (DeleteFilesRequest) returns (DeleteFilesResponse);
+    rpc GetPresignedURL (GetPresignedURLRequest) returns (GetPresignedURLResponse);
+    rpc GetPresignedURLs (GetPresignedURLsRequest) returns (GetPresignedURLsResponse);
+    rpc GetPresignedUploadURL (GetPresignedUploadURLRequest) returns (GetPresignedUploadURLResponse);
+}
+
+message DeleteFilesRequest {
+    repeated string file_ids = 1;
+}
+
+message DeleteFilesResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message GetPresignedURLRequest {
+    string file_id = 1;
+}
+
+message GetPresignedURLResponse {
+    string url = 1;
+}
+
+message GetPresignedURLsRequest {
+    repeated string file_ids = 1;
+}
+
+message GetPresignedURLsResponse {
+    map<string, string> urls = 1;
+}
+
+message GetPresignedUploadURLRequest {
+    string filename = 1;
+    string content_type = 2;
+}
+
+message GetPresignedUploadURLResponse {
+    string file_id = 1;
+    string url = 2;
+}

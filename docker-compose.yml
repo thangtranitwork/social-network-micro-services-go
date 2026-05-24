@@ -1,0 +1,94 @@
+version: '3.8'
+name: social-network-go-infra
+
+services:
+  # 1. PostgreSQL (Auth Service Account Database)
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres-auth
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=auth_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # 2. Neo4j (Social & Content Graph Database)
+  neo4j:
+    image: neo4j:5-community
+    container_name: neo4j-graph
+    ports:
+      - "7474:7474" # Browser interface
+      - "7687:7687" # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
+  # 3. Redis (Cache, OTP & Token Blacklist)
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # 4. MongoDB (Chat History Database)
+  mongodb:
+    image: mongo:6-jammy
+    container_name: mongodb-chat
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+  # 5. Kafka Event Broker (with Zookeeper)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-broker
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+
+  # 6. MinIO (Object Storage for Images and Videos)
+  minio:
+    image: minio/minio
+    container_name: minio-storage
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # Console
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  redis_data:
+  mongodb_data:
+  minio_data:

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Confirm Email</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f6f8;
+            color: #333;
+            padding: 20px;
+        }
+
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            max-width: 600px;
+            margin: auto;
+            padding: 30px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #2c3e50;
+        }
+
+        .info {
+            margin: 20px 0;
+            font-size: 16px;
+        }
+
+        .expiration {
+            font-weight: bold;
+            color: #e74c3c;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 12px 20px;
+            background-color: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            transition: background-color 0.3s ease;
+        }
+
+        .btn:hover {
+            background-color: #2980b9;
+        }
+
+        .footer {
+            margin-top: 30px;
+            font-size: 13px;
+            color: #888;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- Title -->
+    <h1 th:text="${title}">Confirm Your Email</h1>
+
+    <!-- Content -->
+    <p class="info">
+        Thank you for registering an account. To complete the registration process, please confirm your email address by clicking the button below.
+    </p>
+
+    <!-- Expiration Time -->
+    <p class="info">
+        The verification code will expire in
+        <span class="expiration">15 minutes</span>
+    </p>
+
+    <!-- Verification Button -->
+    <p>
+        <a th:href="${verificationLink}" class="btn">✅ Verify Email</a>
+    </p>
+
+    <!-- Footer -->
+    <div class="footer">
+        If you do not request to create an account, you can ignore this email.<br/>
+        &copy; 2025 Social Network
+    </div>
+</div>
+</body>
+</html>

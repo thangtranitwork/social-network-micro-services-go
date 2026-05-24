@@ -1,0 +1,200 @@
+version: '3.8'
+name: social-network-go-prod
+
+services:
+  # ========================================================
+  # PART 1: DATABASES & INFRASTRUCTURE
+  # ========================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: prod-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=auth_db
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    networks:
+      - sn_network
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: prod-neo4j
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j_prod_data:/data
+    networks:
+      - sn_network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: prod-redis
+    networks:
+      - sn_network
+
+  mongodb:
+    image: mongo:6-jammy
+    container_name: prod-mongodb
+    volumes:
+      - mongodb_prod_data:/data/db
+    networks:
+      - sn_network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: prod-zookeeper
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+    networks:
+      - sn_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: prod-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+    networks:
+      - sn_network
+
+  # ========================================================
+  # PART 2: GO MICROSERVICES
+  # ========================================================
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: auth-service
+    container_name: prod-auth-service
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - DB_HOST=postgres
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=auth_db
+      - REDIS_ADDR=redis:6379
+    networks:
+      - sn_network
+
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: user-service
+    container_name: prod-user-service
+    depends_on:
+      - neo4j
+      - redis
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+    networks:
+      - sn_network
+
+  post-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: post-service
+    container_name: prod-post-service
+    depends_on:
+      - neo4j
+      - redis
+      - user-service
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+      - USER_GRPC_ADDR=user-service:50052
+    networks:
+      - sn_network
+
+  chat-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: chat-service
+    container_name: prod-chat-service
+    depends_on:
+      - mongodb
+      - redis
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/chat_db
+      - REDIS_ADDR=redis:6379
+    networks:
+      - sn_network
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: notification-service
+    container_name: prod-notification-service
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_ADDR=kafka:9092
+    networks:
+      - sn_network
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: ai-service
+    container_name: prod-ai-service
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_ADDR=kafka:9092
+      - GEMINI_KEY=${GEMINI_KEY}
+    networks:
+      - sn_network
+
+  # API Gateway: Exposes port 2003 publicly to the Host
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: api-gateway
+    container_name: prod-api-gateway
+    ports:
+      - "2003:2003"
+    depends_on:
+      - auth-service
+      - user-service
+      - post-service
+      - chat-service
+    environment:
+      - GATEWAY_PORT=2003
+      - AUTH_GRPC_ADDR=auth-service:50051
+      - AUTH_HTTP_ADDR=http://auth-service:8081
+      - USER_HTTP_ADDR=http://user-service:8082
+      - POST_HTTP_ADDR=http://post-service:8083
+      - CHAT_HTTP_ADDR=http://chat-service:8084
+    networks:
+      - sn_network
+
+networks:
+  sn_network:
+    driver: bridge
+
+volumes:
+  postgres_prod_data:
+  neo4j_prod_data:
+  mongodb_prod_data:
