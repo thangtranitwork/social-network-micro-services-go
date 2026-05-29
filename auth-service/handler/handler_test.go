@@ -33,7 +33,7 @@ func (m *MockAuthService) Logout(refreshToken string) error {
 	return m.Err
 }
 
-func (m *MockAuthService) Register(email, password, givenName, familyName, birthdate string) (*model.VerifyCode, error) {
+func (m *MockAuthService) Register(email, password, givenName, familyName, birthdate, clientIP string) (*model.VerifyCode, error) {
 	return m.VerifyCode, m.Err
 }
 
@@ -41,11 +41,11 @@ func (m *MockAuthService) Verify(email string, code uuid.UUID) error {
 	return m.Err
 }
 
-func (m *MockAuthService) ResendEmail(email string) (*model.VerifyCode, error) {
+func (m *MockAuthService) ResendEmail(email, clientIP string) (*model.VerifyCode, error) {
 	return m.VerifyCode, m.Err
 }
 
-func (m *MockAuthService) ForgotPassword(email string) error {
+func (m *MockAuthService) ForgotPassword(email, clientIP string) error {
 	return m.Err
 }
 

@@ -34,8 +34,6 @@ func sendSuccess(c *gin.Context, body interface{}) {
 	})
 }
 
-
-
 func getCurrentUser(c *gin.Context) string {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -62,6 +60,11 @@ func mapUserToProfileResponse(u *model.User) model.UserProfileResponse {
 		NextChangeBirthdateDate: u.NextChangeBirthdateDate,
 		NextChangeUsernameDate:  u.NextChangeUsernameDate,
 		CreatedAt:               u.CreatedAt,
+		IsFriend:                u.IsFriend,
+		MutualFriendsCount:      u.MutualFriendsCount,
+		Request:                 u.Request,
+		BlockStatus:             u.BlockStatus,
+		PostCount:               u.PostCount,
 	}
 }
 
@@ -69,11 +72,15 @@ func mapUsersToCommonInfo(users []*model.User) []model.UserCommonInformationResp
 	res := make([]model.UserCommonInformationResponse, len(users))
 	for i, u := range users {
 		res[i] = model.UserCommonInformationResponse{
-			ID:                u.ID,
-			Username:          u.Username,
-			GivenName:         u.GivenName,
-			FamilyName:        u.FamilyName,
-			ProfilePictureUrl: u.ProfilePictureId,
+			ID:                 u.ID,
+			Username:           u.Username,
+			GivenName:          u.GivenName,
+			FamilyName:         u.FamilyName,
+			ProfilePictureUrl:  u.ProfilePictureId,
+			IsFriend:           u.IsFriend,
+			MutualFriendsCount: u.MutualFriendsCount,
+			Request:            u.Request,
+			BlockStatus:        u.BlockStatus,
 		}
 	}
 	return res

@@ -11,7 +11,16 @@ func (s *AdminService) GetUsersStatistics(ctx context.Context) (*model.UserStati
 }
 
 func (s *AdminService) GetUsersList(ctx context.Context, skip, limit int) ([]model.UserDetailResponse, error) {
-	return s.repo.GetUsersList(ctx, skip, limit)
+	list, err := s.repo.GetUsersList(ctx, skip, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		isOnline, lastOnline := s.GetUserOnlineStatus(ctx, list[i].ID)
+		list[i].IsOnline = isOnline
+		list[i].LastOnline = lastOnline
+	}
+	return list, nil
 }
 
 func (s *AdminService) QueryWeekUserStats(ctx context.Context, week, year int) map[string]int {

@@ -17,12 +17,12 @@ import (
 )
 
 type MockFileService struct {
-	File        *model.File
-	FileResp    *model.FileResponse
-	UploadID    string
-	UploadURL   string
-	Url         string
-	Err         error
+	File      *model.File
+	FileResp  *model.FileResponse
+	UploadID  string
+	UploadURL string
+	Url       string
+	Err       error
 }
 
 func (m *MockFileService) Upload(ctx context.Context, file io.Reader, filename string, contentType string, uploaderID string) (*model.File, error) {
@@ -39,11 +39,13 @@ func (m *MockFileService) GetPresignedUploadURL(ctx context.Context, filename st
 	return m.UploadID, m.UploadURL, nil
 }
 
-func (m *MockFileService) Load(ctx context.Context, id string) (*model.FileResponse, error) {
+func (m *MockFileService) Load(ctx context.Context, id string) (io.ReadCloser, string, string, int64, error) {
 	if m.Err != nil {
-		return nil, m.Err
+		return nil, "", "", 0, m.Err
 	}
-	return m.FileResp, nil
+	content := []byte("dummy file content")
+	reader := io.NopCloser(bytes.NewReader(content))
+	return reader, "test.jpg", "image/jpeg", int64(len(content)), nil
 }
 
 func (m *MockFileService) GetPresignedURL(ctx context.Context, id string) (string, error) {
@@ -159,14 +161,7 @@ func TestGetPresignedUploadURL(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	mockSvc := &MockFileService{
-		FileResp: &model.FileResponse{
-			ID:          "file-123.jpg",
-			Name:        "test.jpg",
-			ContentType: "image/jpeg",
-			URL:         "http://minio/file-123.jpg",
-		},
-	}
+	mockSvc := &MockFileService{}
 	r := setupTestRouter(mockSvc)
 	w := httptest.NewRecorder()
 
@@ -175,6 +170,12 @@ func TestLoad(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
+	}
+	if w.Header().Get("Content-Type") != "image/jpeg" {
+		t.Errorf("Expected Content-Type image/jpeg, got %s", w.Header().Get("Content-Type"))
+	}
+	if w.Body.String() != "dummy file content" {
+		t.Errorf("Expected dummy file content, got %s", w.Body.String())
 	}
 }
 

@@ -3,8 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
+
+	"social-network-go/logger"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -45,18 +46,23 @@ func (p *KafkaNotificationPublisher) Send(ctx context.Context, action string, cr
 
 	payload, err := json.Marshal(event)
 	if err != nil {
+		logger.Err(err).Error("Failed to marshal SINGLE notification event")
 		return err
 	}
 
-	log.Printf("Publishing SINGLE notification event to Kafka: %s", string(payload))
+	logger.Info("Publishing SINGLE notification event to Kafka: %s", string(payload))
 
 	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return p.writer.WriteMessages(publishCtx, kafka.Message{
+	err = p.writer.WriteMessages(publishCtx, kafka.Message{
 		Key:   []byte(receiverID),
 		Value: payload,
 	})
+	if err != nil {
+		logger.Err(err).Error("Failed to publish SINGLE notification event to Kafka")
+	}
+	return err
 }
 
 func (p *KafkaNotificationPublisher) SendToFriends(ctx context.Context, action string, creatorID string, targetID string, targetType string, shortenedContent string) error {
@@ -71,18 +77,23 @@ func (p *KafkaNotificationPublisher) SendToFriends(ctx context.Context, action s
 
 	payload, err := json.Marshal(event)
 	if err != nil {
+		logger.Err(err).Error("Failed to marshal FRIENDS notification event")
 		return err
 	}
 
-	log.Printf("Publishing FRIENDS notification event to Kafka: %s", string(payload))
+	logger.Info("Publishing FRIENDS notification event to Kafka: %s", string(payload))
 
 	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return p.writer.WriteMessages(publishCtx, kafka.Message{
+	err = p.writer.WriteMessages(publishCtx, kafka.Message{
 		Key:   []byte(creatorID),
 		Value: payload,
 	})
+	if err != nil {
+		logger.Err(err).Error("Failed to publish FRIENDS notification event to Kafka")
+	}
+	return err
 }
 
 func (p *KafkaNotificationPublisher) Close() error {

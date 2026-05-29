@@ -15,10 +15,10 @@ type AuthServiceInterface interface {
 	Login(email, password string, isAdmin bool) (string, string, error)
 	RefreshToken(tokenStr string) (string, error)
 	Logout(refreshToken string) error
-	Register(email, password, givenName, familyName, birthdate string) (*model.VerifyCode, error)
+	Register(email, password, givenName, familyName, birthdate, clientIP string) (*model.VerifyCode, error)
 	Verify(email string, code uuid.UUID) error
-	ResendEmail(email string) (*model.VerifyCode, error)
-	ForgotPassword(email string) error
+	ResendEmail(email, clientIP string) (*model.VerifyCode, error)
+	ForgotPassword(email, clientIP string) error
 	ResetPassword(code, newPassword string) error
 	ChangePassword(userID uuid.UUID, oldPassword, newPassword string) error
 	GetRefreshTokenDuration() time.Duration
@@ -47,8 +47,6 @@ func sendSuccess(c *gin.Context, body interface{}) {
 		Body:      body,
 	})
 }
-
-
 
 type LoginReq struct {
 	Email    string `json:"email" binding:"required,email"`

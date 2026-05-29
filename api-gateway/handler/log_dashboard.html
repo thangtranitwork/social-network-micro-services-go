@@ -391,6 +391,7 @@
         .level-info { color: #f1f5f9; }
         .level-warn { color: var(--warn); }
         .level-error { color: var(--error); }
+        .level-fatal { color: #f43f5e; font-weight: 700; background: rgba(244, 63, 94, 0.12); border-radius: 4px; padding: 0.1rem 0.35rem; }
         .level-system { color: var(--text-muted); }
 
         .caller-tag {
@@ -416,34 +417,151 @@
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 255, 255, 0.15);
         }
+
+        /* Login Card */
+        #loginCard {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #080914;
+            z-index: 100;
+        }
+        .login-panel {
+            background: rgba(15, 17, 36, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            border-radius: 16px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            text-align: center;
+        }
+        .login-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            text-align: left;
+        }
+        .login-input-group label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .login-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-color);
+            outline: none;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .login-input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+        }
+        .login-btn-submit {
+            padding: 0.75rem;
+            background: linear-gradient(to right, var(--primary), #a855f7);
+            border: none;
+            color: #fff;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .login-btn-submit:hover {
+            opacity: 0.9;
+        }
+        .login-alert {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: var(--error);
+            padding: 0.75rem;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
 
-    <header>
-        <div class="logo-group">
-            <div class="logo-indicator"></div>
-            <div>
-                <h1>Social Network Log Center</h1>
-                <div class="subtitle">Real-time Microservice Monitor & Aggregator</div>
-            </div>
-        </div>
+    <!-- Login Portal -->
+    <div id="loginCard" style="display: none;">
+        <div class="login-panel">
+            <div style="font-size: 2.5rem;">📜</div>
+            <h2 style="font-size: 1.5rem; font-weight: 800; background: linear-gradient(to right, var(--primary), #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0;">
+                Logs Admin Portal
+            </h2>
+            <p style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; margin: 0;">Sign in with admin credentials to access core system logs</p>
 
-        <div class="system-stats">
-            <div class="stat-item">
-                <div class="stat-label">Deploy Mode</div>
-                <div class="stat-val" style="color: var(--primary);">DEV LOCAL</div>
+            <div id="loginAlert" style="display: none;" class="login-alert">
+                Invalid email or password.
             </div>
-            <div class="stat-item">
-                <div class="stat-label">Total Services</div>
-                <div class="stat-val">8 Services</div>
+
+            <div class="login-input-group">
+                <label>Email Address</label>
+                <input id="loginEmail" type="email" value="admin@admin.com" class="login-input">
             </div>
-            <div class="stat-item">
-                <div class="stat-label">Core Engine</div>
-                <div class="stat-val" style="color: var(--success);">GO NATIVE</div>
+            <div class="login-input-group">
+                <label>Password</label>
+                <input id="loginPassword" type="password" value="123456Aa@" class="login-input">
             </div>
+            <button onclick="performLogin()" id="btnLoginSubmit" class="login-btn-submit">
+                Sign In
+            </button>
         </div>
-    </header>
+    </div>
+
+    <div id="dashboardContent" style="display: none; height: 100vh; flex-direction: column;">
+        <header>
+            <div class="logo-group">
+                <div class="logo-indicator"></div>
+                <div>
+                    <h1>Social Network Log Center</h1>
+                    <div class="subtitle">Real-time Microservice Monitor & Aggregator</div>
+                    
+                    <!-- Navigation Tabs -->
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                        <a href="/containers" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">🐳 Containers</a>
+                        <a href="/logs" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 700; background: var(--active-tab-glow); border: 1px solid rgba(99, 102, 241, 0.2); color: #fff; text-decoration: none; transition: all 0.2s; box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);">📜 Logs</a>
+                        <a href="/profiler" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">📊 Profiler</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="system-stats">
+                <div class="stat-item" style="display: flex; align-items: center; justify-content: center; background: transparent; border: none; padding: 0;">
+                    <button id="authBtn" onclick="handleAuthClick()" style="padding: 0.4rem 0.75rem; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-muted); font-size: 0.7rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem; transition: all 0.2s; font-family: inherit;">
+                        <span id="authStatusText">Auth Token</span>
+                    </button>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Deploy Mode</div>
+                    <div class="stat-val" style="color: var(--primary);">DEV LOCAL</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Total Services</div>
+                    <div class="stat-val">8 Services</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Core Engine</div>
+                    <div class="stat-val" style="color: var(--success);">GO NATIVE</div>
+                </div>
+            </div>
+        </header>
 
     <div class="workspace">
         <div class="sidebar">
@@ -452,7 +570,7 @@
             <div class="service-row active" id="row-api-gateway">
                 <button class="tab-btn" onclick="selectService('api-gateway')">
                     <span>API Gateway</span>
-                    <span class="service-badge">:2003</span>
+                    <span class="service-badge">:11111</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('api-gateway', event)" id="btn-api-gateway" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -462,7 +580,7 @@
             <div class="service-row" id="row-auth-service">
                 <button class="tab-btn" onclick="selectService('auth-service')">
                     <span>Auth Service</span>
-                    <span class="service-badge">:8081</span>
+                    <span class="service-badge">:10081</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('auth-service', event)" id="btn-auth-service" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -472,7 +590,7 @@
             <div class="service-row" id="row-user-service">
                 <button class="tab-btn" onclick="selectService('user-service')">
                     <span>User Service</span>
-                    <span class="service-badge">:8082</span>
+                    <span class="service-badge">:10082</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('user-service', event)" id="btn-user-service" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -482,7 +600,7 @@
             <div class="service-row" id="row-post-service">
                 <button class="tab-btn" onclick="selectService('post-service')">
                     <span>Post Service</span>
-                    <span class="service-badge">:8083</span>
+                    <span class="service-badge">:10083</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('post-service', event)" id="btn-post-service" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -492,7 +610,7 @@
             <div class="service-row" id="row-chat-service">
                 <button class="tab-btn" onclick="selectService('chat-service')">
                     <span>Chat Service</span>
-                    <span class="service-badge">:8084</span>
+                    <span class="service-badge">:10084</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('chat-service', event)" id="btn-chat-service" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -502,7 +620,7 @@
             <div class="service-row" id="row-notification-service">
                 <button class="tab-btn" onclick="selectService('notification-service')">
                     <span>Notification</span>
-                    <span class="service-badge">:8085</span>
+                    <span class="service-badge">:10085</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('notification-service', event)" id="btn-notification-service" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -512,7 +630,7 @@
             <div class="service-row" id="row-admin-service">
                 <button class="tab-btn" onclick="selectService('admin-service')">
                     <span>Admin Service</span>
-                    <span class="service-badge">:8088</span>
+                    <span class="service-badge">:10088</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('admin-service', event)" id="btn-admin-service" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -522,7 +640,7 @@
             <div class="service-row" id="row-file-service">
                 <button class="tab-btn" onclick="selectService('file-service')">
                     <span>File Service</span>
-                    <span class="service-badge">:8087</span>
+                    <span class="service-badge">:10087</span>
                 </button>
                 <button class="action-btn" onclick="toggleServiceStream('file-service', event)" id="btn-file-service" title="Pause/Resume Streaming">
                     <span>⏸</span>
@@ -538,6 +656,12 @@
                     <span>⏸</span>
                 </button>
             </div>
+            <div class="service-row" id="row-all-services" style="margin-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem;">
+                <button class="tab-btn" onclick="selectService('all-services')">
+                    <span>🔍 Trace Request ID</span>
+                    <span class="service-badge">All</span>
+                </button>
+            </div>
         </div>
 
         <div class="console-area">
@@ -547,16 +671,27 @@
                     <span class="status-text" id="stream-status-text">Connected</span>
                 </div>
 
-                <div class="controls-group">
+                <div class="controls-group" id="normal-controls-group">
                     <select class="level-select" id="level-filter" onchange="applyFilter()">
                         <option value="ALL">All Levels</option>
                         <option value="INFO">INFO</option>
                         <option value="WARN">WARN</option>
                         <option value="ERROR">ERROR</option>
+                        <option value="FATAL">FATAL</option>
                     </select>
                     <input type="text" class="search-bar" placeholder="Search / Filter..." id="search-input" oninput="applyFilter()">
                     <button class="ctrl-btn" onclick="togglePlayPause()" id="play-pause-btn">
                         <span>Pause</span>
+                    </button>
+                    <button class="ctrl-btn" onclick="clearTerminal()">
+                        <span>Clear</span>
+                    </button>
+                </div>
+
+                <div class="controls-group" id="trace-search-group" style="display: none;">
+                    <input type="text" class="search-bar" placeholder="Enter Request ID to trace..." id="trace-request-input" style="width: 320px;" onkeydown="if(event.key==='Enter') performTraceSearch()">
+                    <button class="ctrl-btn" onclick="performTraceSearch()" style="background: var(--primary); color: white;">
+                        <span>Trace Request</span>
                     </button>
                     <button class="ctrl-btn" onclick="clearTerminal()">
                         <span>Clear</span>
@@ -585,7 +720,8 @@
             'notification-service': { isPaused: false },
             'ai-service': { isPaused: false },
             'admin-service': { isPaused: false },
-            'file-service': { isPaused: false }
+            'file-service': { isPaused: false },
+            'all-services': { isPaused: false }
         };
 
         function toggleServiceStream(serviceName, event) {
@@ -597,16 +733,17 @@
             state.isPaused = !state.isPaused;
 
             const btn = document.getElementById('btn-' + serviceName);
-            const icon = btn.querySelector('span');
-
-            if (state.isPaused) {
-                icon.innerText = '▶';
-                btn.classList.add('paused');
-                btn.title = 'Resume Streaming';
-            } else {
-                icon.innerText = '⏸';
-                btn.classList.remove('paused');
-                btn.title = 'Pause Streaming';
+            if (btn) {
+                const icon = btn.querySelector('span');
+                if (state.isPaused) {
+                    icon.innerText = '▶';
+                    btn.classList.add('paused');
+                    btn.title = 'Resume Streaming';
+                } else {
+                    icon.innerText = '⏸';
+                    btn.classList.remove('paused');
+                    btn.title = 'Pause Streaming';
+                }
             }
 
             if (serviceName === currentService) {
@@ -644,12 +781,94 @@
 
             currentService = serviceName;
             
-            // Sync with service pause state
-            isPaused = serviceStates[serviceName].isPaused;
-            updateGlobalPauseUI(isPaused);
+            const normalControls = document.getElementById('normal-controls-group');
+            const traceSearch = document.getElementById('trace-search-group');
+            const statusDot = document.getElementById('stream-status-dot');
+            const statusText = document.getElementById('stream-status-text');
+
+            if (serviceName === 'all-services') {
+                normalControls.style.display = 'none';
+                traceSearch.style.display = 'flex';
+                statusDot.style.backgroundColor = 'var(--primary)';
+                statusText.innerText = 'Centralized Trace Mode';
+                
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+                clearTerminal();
+                appendLogLine("2026/01/01 00:00:00 [INFO] Trace Mode Enabled. Enter a Request ID in the input box above to search logs across all services.");
+            } else {
+                normalControls.style.display = 'flex';
+                traceSearch.style.display = 'none';
+
+                // Sync with service pause state
+                isPaused = serviceStates[serviceName].isPaused;
+                updateGlobalPauseUI(isPaused);
+
+                clearTerminal();
+                connectStream();
+            }
+        }
+
+        async function performTraceSearch() {
+            const reqID = document.getElementById('trace-request-input').value.trim();
+            if (!reqID) {
+                alert('Please enter a Request ID.');
+                return;
+            }
 
             clearTerminal();
-            connectStream();
+            appendLogLine("2026/01/01 00:00:00 [INFO] Tracing request_id: " + reqID + " across all services...");
+
+            try {
+                let response = await fetch('/logs/search?request_id=' + encodeURIComponent(reqID), {
+                    headers: {
+                        'Authorization': 'Bearer ' + getAuthToken()
+                    }
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        const newToken = await refreshAdminToken();
+                        if (newToken) {
+                            response = await fetch('/logs/search?request_id=' + encodeURIComponent(reqID), {
+                                headers: {
+                                    'Authorization': 'Bearer ' + newToken
+                                }
+                            });
+                            if (!response.ok) {
+                                const errData = await response.json();
+                                appendLogLine("2026/01/01 00:00:00 [ERROR] Trace failed: " + (errData.error || response.statusText));
+                                return;
+                            }
+                        } else {
+                            appendLogLine("2026/01/01 00:00:00 [ERROR] Unauthorized. Please log in again.");
+                            return;
+                        }
+                    } else {
+                        const errData = await response.json();
+                        appendLogLine("2026/01/01 00:00:00 [ERROR] Trace failed: " + (errData.error || response.statusText));
+                        return;
+                    }
+                }
+
+                const results = await response.json();
+                if (results.length === 0) {
+                    appendLogLine("2026/01/01 00:00:00 [WARN] No logs found matching request_id: " + reqID);
+                    return;
+                }
+
+                results.forEach(res => {
+                    let line = res.rawLine;
+                    let target = "[" + res.level + "]";
+                    let replacement = "[" + res.level + "] [" + res.service.toUpperCase() + "]";
+                    let formattedLine = line.replace(target, replacement);
+                    appendLogLine(formattedLine);
+                });
+            } catch (err) {
+                appendLogLine("2026/01/01 00:00:00 [ERROR] Network error: " + err.message);
+            }
         }
 
         function connectStream() {
@@ -663,7 +882,7 @@
             statusDot.style.backgroundColor = 'var(--warn)';
             statusText.innerText = 'Connecting...';
 
-            eventSource = new EventSource('/logs/stream?service=' + currentService);
+            eventSource = new EventSource('/logs/stream?service=' + currentService + '&token=' + getAuthToken());
 
             eventSource.addEventListener('log', function(event) {
                 if (isPaused) return;
@@ -688,9 +907,18 @@
                 }
             };
 
-            eventSource.onerror = function() {
+            eventSource.onerror = async function() {
                 statusDot.style.backgroundColor = 'var(--error)';
                 statusText.innerText = 'Disconnected. Retrying...';
+                
+                if (eventSource) {
+                    eventSource.close();
+                }
+                
+                const newToken = await refreshAdminToken();
+                if (newToken) {
+                    setTimeout(connectStream, 3000);
+                }
             };
         }
 
@@ -703,8 +931,14 @@
             }
         }
 
+        function stripAnsi(str) {
+            if (!str) return "";
+            const ansiRegex = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+            return str.replace(ansiRegex, '');
+        }
+
         function formatLogLine(rawText) {
-            let text = rawText;
+            let text = stripAnsi(rawText);
             
             // 1. Extract caller if present
             let callerStr = "";
@@ -724,7 +958,11 @@
             // 3. Detect and style Level Badge
             let levelBadge = "";
             let levelClass = "level-info";
-            if (text.includes("[INFO]")) {
+            if (text.includes("[FATAL]")) {
+                levelBadge = '<span style="color: #f43f5e; background: rgba(244, 63, 94, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">FATAL</span>';
+                text = text.replace("[FATAL]", "").trim();
+                levelClass = "level-fatal";
+            } else if (text.includes("[INFO]")) {
                 levelBadge = '<span style="color: #818cf8; background: rgba(129, 140, 248, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">INFO</span>';
                 text = text.replace("[INFO]", "").trim();
                 levelClass = "level-info";
@@ -930,7 +1168,8 @@
             // Apply search & level filters
             const selectedLevel = document.getElementById('level-filter').value;
             let lineLevel = "ALL";
-            if (rawText.includes('[INFO]')) lineLevel = "INFO";
+            if (rawText.includes('[FATAL]')) lineLevel = "FATAL";
+            else if (rawText.includes('[INFO]')) lineLevel = "INFO";
             else if (rawText.includes('[WARN]')) lineLevel = "WARN";
             else if (rawText.includes('[ERROR]')) lineLevel = "ERROR";
 
@@ -967,7 +1206,8 @@
                 const text = line.innerText;
                 
                 let lineLevel = "ALL";
-                if (text.includes('INFO')) lineLevel = "INFO";
+                if (text.includes('FATAL')) lineLevel = "FATAL";
+                else if (text.includes('INFO')) lineLevel = "INFO";
                 else if (text.includes('WARN')) lineLevel = "WARN";
                 else if (text.includes('ERROR')) lineLevel = "ERROR";
 
@@ -983,8 +1223,160 @@
         }
 
         window.onload = function() {
-            connectStream();
+            checkAuth();
         };
+    </script>
+    </div> <!-- Close #dashboardContent -->
+
+    <script>
+        // Authentication methods
+        let isRefreshing = false;
+        let refreshPromise = null;
+
+        async function refreshAdminToken() {
+            if (isRefreshing) return refreshPromise;
+            isRefreshing = true;
+            refreshPromise = (async () => {
+                try {
+                    const response = await fetch('/v1/auth/refresh', {
+                        method: 'POST'
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.code === 200 && data.body && data.body.token) {
+                            localStorage.setItem('admin_token', data.body.token);
+                            updateAuthIndicator();
+                            return data.body.token;
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to auto-refresh token:', err);
+                } finally {
+                    isRefreshing = false;
+                    refreshPromise = null;
+                }
+                localStorage.removeItem('admin_token');
+                checkAuth();
+                return null;
+            })();
+            return refreshPromise;
+        }
+
+        function getAuthToken() {
+            return localStorage.getItem('admin_token') || '';
+        }
+
+        function updateAuthIndicator() {
+            const token = getAuthToken();
+            const badge = document.getElementById('authBtn');
+            const text = document.getElementById('authStatusText');
+            if (!badge || !text) return;
+            if (token) {
+                text.innerText = 'Logout (ADMIN)';
+                badge.style.color = '#10b981';
+                badge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+                badge.style.background = 'rgba(16, 185, 129, 0.05)';
+            } else {
+                text.innerText = 'Sign In';
+                badge.style.color = '#ef4444';
+                badge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                badge.style.background = 'rgba(239, 68, 68, 0.05)';
+            }
+        }
+
+        function handleAuthClick() {
+            const token = getAuthToken();
+            if (token) {
+                if (confirm('Are you sure you want to log out from the Admin Portal?')) {
+                    localStorage.removeItem('admin_token');
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
+                    }
+                    checkAuth();
+                }
+            } else {
+                checkAuth();
+            }
+        }
+
+        function checkAuth() {
+            const token = getAuthToken();
+            const loginCard = document.getElementById('loginCard');
+            const dashboardContent = document.getElementById('dashboardContent');
+            
+            updateAuthIndicator();
+
+            if (token) {
+                if (loginCard) loginCard.style.display = 'none';
+                if (dashboardContent) {
+                    dashboardContent.style.display = 'flex';
+                }
+                
+                // Parse service param from URL
+                const urlParams = new URLSearchParams(window.location.search);
+                const serviceParam = urlParams.get('service');
+                const validServices = ['api-gateway', 'auth-service', 'user-service', 'post-service', 'chat-service', 'notification-service', 'file-service', 'admin-service', 'ai-service'];
+                if (serviceParam && validServices.includes(serviceParam)) {
+                    currentService = serviceParam;
+                    // Update Active Tab UI
+                    document.querySelectorAll('.service-row').forEach(row => row.classList.remove('active'));
+                    const targetRow = document.getElementById('row-' + currentService);
+                    if (targetRow) {
+                        targetRow.classList.add('active');
+                    }
+                }
+                
+                connectStream();
+            } else {
+                if (loginCard) loginCard.style.display = 'flex';
+                if (dashboardContent) dashboardContent.style.display = 'none';
+            }
+        }
+
+        async function performLogin() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const btn = document.getElementById('btnLoginSubmit');
+            const alertBox = document.getElementById('loginAlert');
+
+            if (!email || !password) {
+                alertBox.textContent = 'Please fill in both email and password.';
+                alertBox.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = 'Signing In...';
+            alertBox.style.display = 'none';
+
+            try {
+                const response = await fetch('/v1/auth/login-admin', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+                if (response.ok && data.code === 200 && data.body && data.body.token) {
+                    localStorage.setItem('admin_token', data.body.token);
+                    checkAuth();
+                } else {
+                    alertBox.textContent = data.message || 'Login failed. Please verify credentials.';
+                    alertBox.style.display = 'block';
+                }
+            } catch (err) {
+                console.error('Login error:', err);
+                alertBox.textContent = 'Failed to connect to authentication service.';
+                alertBox.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
     </script>
 </body>
 </html>

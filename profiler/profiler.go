@@ -1,11 +1,14 @@
 package profiler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +28,52 @@ type CommandStats struct {
 	LastExecutions     []time.Duration
 	LastRequestTime    atomic.Int64 // Store nanoseconds
 	PendingCount       atomic.Int64
+}
+
+func (c *CommandStats) MarshalJSON() ([]byte, error) {
+	var executions []time.Duration
+	if c.LastExecutions != nil {
+		executions = c.LastExecutions
+	} else {
+		executions = []time.Duration{}
+	}
+
+	return json.Marshal(struct {
+		RequestCount       int64           `json:"requestCount"`
+		TotalExecutionTime int64           `json:"totalExecutionTime"`
+		LastExecutions     []time.Duration `json:"lastExecutions"`
+		LastRequestTime    int64           `json:"lastRequestTime"`
+		PendingCount       int64           `json:"pendingCount"`
+	}{
+		RequestCount:       c.RequestCount.Load(),
+		TotalExecutionTime: c.TotalExecutionTime.Load(),
+		LastExecutions:     executions,
+		LastRequestTime:    c.LastRequestTime.Load(),
+		PendingCount:       c.PendingCount.Load(),
+	})
+}
+
+func (c *CommandStats) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		RequestCount       int64           `json:"requestCount"`
+		TotalExecutionTime int64           `json:"totalExecutionTime"`
+		LastExecutions     []time.Duration `json:"lastExecutions"`
+		LastRequestTime    int64           `json:"lastRequestTime"`
+		PendingCount       int64           `json:"pendingCount"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	c.RequestCount.Store(aux.RequestCount)
+	c.TotalExecutionTime.Store(aux.TotalExecutionTime)
+	if aux.LastExecutions == nil {
+		c.LastExecutions = make([]time.Duration, 0, 100)
+	} else {
+		c.LastExecutions = aux.LastExecutions
+	}
+	c.LastRequestTime.Store(aux.LastRequestTime)
+	c.PendingCount.Store(aux.PendingCount)
+	return nil
 }
 
 type PProfInfo struct {
@@ -55,6 +104,15 @@ func Init() {
 			stats:     make(map[string]*CommandStats),
 			startTime: time.Now(),
 		}
+		loadStats()
+
+		// Start periodic save
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			for range ticker.C {
+				saveStats()
+			}
+		}()
 	})
 }
 
@@ -313,10 +371,11 @@ func Reset() {
 	ensureInit()
 
 	globalProfiler.mu.Lock()
-	defer globalProfiler.mu.Unlock()
-
 	globalProfiler.stats = make(map[string]*CommandStats)
 	globalProfiler.startTime = time.Now()
+	globalProfiler.mu.Unlock()
+
+	saveStats()
 }
 
 // GetStartTime returns the start time of the profiler
@@ -375,17 +434,28 @@ func Middleware(serviceName string) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		start := time.Now()
-		
+
 		// Skip logs/profiler routes to avoid polluting stats
 		path := c.Request.URL.Path
-		if path == "/health" || path == "/logs" || path == "/logs/stream" || path == "/debug/profiler" {
+		if path == "/health" || path == "/logs" || path == "/logs/stream" || path == "/debug/profiler" ||
+			path == "/debug/profiler/reset" || path == "/profiler" || path == "/containers" {
 			c.Next()
 			return
 		}
 
-		command := fmt.Sprintf("%s:%s %s", serviceName, c.Request.Method, c.FullPath())
-		if c.FullPath() == "" {
-			command = fmt.Sprintf("%s:%s %s", serviceName, c.Request.Method, path)
+		isWebSocket := strings.ToLower(c.GetHeader("Upgrade")) == "websocket" || strings.Contains(path, "/ws") || strings.Contains(path, "/stream")
+
+		var command string
+		if isWebSocket {
+			command = fmt.Sprintf("%s:WS %s", serviceName, c.FullPath())
+			if c.FullPath() == "" {
+				command = fmt.Sprintf("%s:WS %s", serviceName, path)
+			}
+		} else {
+			command = fmt.Sprintf("%s:%s %s", serviceName, c.Request.Method, c.FullPath())
+			if c.FullPath() == "" {
+				command = fmt.Sprintf("%s:%s %s", serviceName, c.Request.Method, path)
+			}
 		}
 
 		globalProfiler.mu.Lock()
@@ -417,4 +487,73 @@ func Handler(c *gin.Context) {
 		"pprof":     GetPProfInfo(),
 		"commands":  GetStatsLightweight(),
 	})
+}
+
+type profilerPersistentData struct {
+	StartTime time.Time                `json:"startTime"`
+	Stats     map[string]*CommandStats `json:"stats"`
+}
+
+func getStatsFilePath() string {
+	exeName := filepath.Base(os.Args[0])
+	exeName = strings.TrimSuffix(exeName, ".exe")
+	return fmt.Sprintf("profiler_stats_%s.json", exeName)
+}
+
+func saveStats() {
+	if globalProfiler == nil {
+		return
+	}
+	globalProfiler.mu.RLock()
+	persistentData := profilerPersistentData{
+		StartTime: globalProfiler.startTime,
+		Stats:     globalProfiler.stats,
+	}
+	globalProfiler.mu.RUnlock()
+
+	data, err := json.MarshalIndent(persistentData, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "PROFILER ERROR marshaling stats: %v\n", err)
+		return
+	}
+
+	filePath := getStatsFilePath()
+	err = os.WriteFile(filePath, data, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "PROFILER ERROR saving stats to %s: %v\n", filePath, err)
+	}
+}
+
+func loadStats() {
+	filePath := getStatsFilePath()
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "PROFILER ERROR reading stats file %s: %v\n", filePath, err)
+		return
+	}
+
+	var persistentData profilerPersistentData
+	if err := json.Unmarshal(data, &persistentData); err != nil {
+		fmt.Fprintf(os.Stderr, "PROFILER ERROR unmarshaling stats from %s: %v\n", filePath, err)
+		return
+	}
+
+	globalProfiler.mu.Lock()
+	defer globalProfiler.mu.Unlock()
+
+	if !persistentData.StartTime.IsZero() {
+		globalProfiler.startTime = persistentData.StartTime
+	}
+
+	for k, v := range persistentData.Stats {
+		if v != nil {
+			if v.LastExecutions == nil {
+				v.LastExecutions = make([]time.Duration, 0, 100)
+			}
+			globalProfiler.stats[k] = v
+		}
+	}
 }

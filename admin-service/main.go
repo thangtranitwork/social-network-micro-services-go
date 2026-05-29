@@ -32,6 +32,7 @@ func main() {
 	// Initialize Router
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(logger.TraceMiddleware())
 	r.Use(profiler.Middleware("admin-service"))
 	r.Use(logger.GinMiddleware())
 

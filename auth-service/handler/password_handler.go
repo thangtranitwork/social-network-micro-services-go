@@ -15,7 +15,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.AuthSvc.ForgotPassword(req.Email); err != nil {
+	if err := h.AuthSvc.ForgotPassword(req.Email, c.ClientIP()); err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("ForgotPassword failed")
 		if mapped, found := exception.MapAppError(err); found {
 			exception.SendError(c, mapped)

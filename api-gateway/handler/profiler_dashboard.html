@@ -33,7 +33,46 @@
     </style>
 </head>
 <body class="text-gray-100 antialiased p-6">
-    <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- Login Portal -->
+    <div id="loginCard" class="fixed inset-0 z-50 flex items-center justify-center bg-[#080914]">
+        <div class="w-full max-w-md p-8 rounded-2xl glass-panel border border-gray-800 space-y-6 text-center shadow-2xl relative overflow-hidden">
+            <!-- Background gradients -->
+            <div class="absolute -top-10 -left-10 w-40 h-40 bg-cyan-500/10 rounded-full blur-3xl"></div>
+            <div class="absolute -bottom-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl"></div>
+
+            <div class="space-y-2 relative">
+                <div class="text-4xl">📊</div>
+                <h2 class="text-2xl font-extrabold bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent">
+                    Profiler Admin Portal
+                </h2>
+                <p class="text-xs text-gray-400 font-medium">Authentication required to access trace diagnostics</p>
+            </div>
+
+            <!-- Alert Container -->
+            <div id="loginAlert" class="hidden p-3 bg-red-950/40 border border-red-500/30 text-red-400 rounded-lg text-xs font-semibold text-left">
+                Invalid credentials.
+            </div>
+
+            <!-- Login Form -->
+            <div class="space-y-4 text-left relative">
+                <div class="space-y-1.5">
+                    <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Email Address</label>
+                    <input type="email" id="loginEmail" value="admin@admin.com" class="w-full px-4 py-2.5 bg-gray-900/50 border border-gray-800 rounded-xl text-sm text-gray-200 outline-none focus:border-cyan-500/50 transition-colors">
+                </div>
+                <div class="space-y-1.5">
+                    <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Password</label>
+                    <input type="password" id="loginPassword" value="123456Aa@" class="w-full px-4 py-2.5 bg-gray-900/50 border border-gray-800 rounded-xl text-sm text-gray-200 outline-none focus:border-cyan-500/50 transition-colors">
+                </div>
+            </div>
+
+            <button onclick="performLogin()" id="btnLoginSubmit" class="w-full py-3 bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold rounded-xl transition-all shadow-[0_4px_20px_rgba(99,102,241,0.2)] active:scale-[0.98]">
+                Sign In
+            </button>
+        </div>
+    </div>
+
+    <div id="dashboardContent" class="hidden max-w-7xl mx-auto space-y-6">
         <!-- Header -->
         <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-gray-800">
             <div>
@@ -44,9 +83,24 @@
                     Microservice Profiler
                 </h1>
                 <p class="text-gray-400 mt-1 font-medium">Distributed tracing diagnostics, heap allocation, and route-by-route latency</p>
+                
+                <!-- Navigation Tabs -->
+                <div class="flex items-center gap-2 mt-4">
+                    <a href="/containers" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">🐳 Containers</a>
+                    <a href="/logs" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">📜 Logs</a>
+                    <a href="/profiler" class="px-4 py-1.5 rounded-lg text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]">📊 Profiler</a>
+                </div>
             </div>
             
             <div class="flex items-center gap-3">
+                <!-- Admin Auth Indicator Button -->
+                <button id="authBtn" onclick="handleAuthClick()" class="flex items-center gap-2 bg-gray-900 border border-gray-800 text-gray-400 hover:text-white font-semibold text-xs px-4 py-2 rounded-lg transition-all">
+                    <svg class="w-4 h-4 text-cyan-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                    </svg>
+                    <span id="authStatusText">Auth Token</span>
+                </button>
+
                 <!-- Auto Refresh Selector -->
                 <div class="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-sm">
                     <span class="text-gray-400 font-medium">Refresh:</span>
@@ -58,12 +112,20 @@
                     </select>
                 </div>
 
+                <!-- Copy JSON Button -->
+                <button id="btnExport" class="flex items-center gap-2 bg-cyan-950/40 hover:bg-cyan-900/50 border border-cyan-500/30 text-cyan-300 font-semibold px-4 py-1.5 rounded-lg transition-all active:scale-95 duration-200">
+                    <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m-1 4h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                    </svg>
+                    <span id="exportBtnText">Copy JSON</span>
+                </button>
+
                 <!-- Reset Button -->
                 <button id="btnReset" class="flex items-center gap-2 bg-red-950/40 hover:bg-red-900/50 border border-red-500/30 text-red-300 font-semibold px-4 py-1.5 rounded-lg transition-all active:scale-95 duration-200">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                     </svg>
-                    Reset All Stats
+                    <span id="resetBtnText">Reset All Stats</span>
                 </button>
             </div>
         </header>
@@ -273,8 +335,26 @@
 
         async function fetchStats() {
             try {
-                const response = await fetch('/debug/profiler');
-                if (!response.ok) throw new Error('Failed to fetch profiler data');
+                let response = await fetch('/debug/profiler', {
+                    headers: {
+                        'Authorization': 'Bearer ' + getAuthToken()
+                    }
+                });
+                if (response.status === 401 || response.status === 403) {
+                    const newToken = await refreshAdminToken();
+                    if (newToken) {
+                        response = await fetch('/debug/profiler', {
+                            headers: {
+                                'Authorization': 'Bearer ' + newToken
+                            }
+                        });
+                        if (!response.ok) throw new Error('Failed to fetch profiler data');
+                    } else {
+                        return;
+                    }
+                } else if (!response.ok) {
+                    throw new Error('Failed to fetch profiler data');
+                }
                 latestData = await response.json();
                 
                 renderDashboard();
@@ -484,6 +564,26 @@
             }
         }
 
+        function updateResetButtonLabel() {
+            const textEl = document.getElementById('resetBtnText');
+            if (currentFilter === 'all') {
+                textEl.textContent = 'Reset All Stats';
+            } else {
+                const displayName = currentFilter.replace('-service', '').toUpperCase();
+                textEl.textContent = `Reset ${displayName} Stats`;
+            }
+        }
+
+        function updateExportButtonLabel() {
+            const textEl = document.getElementById('exportBtnText');
+            if (currentFilter === 'all') {
+                textEl.textContent = 'Copy JSON';
+            } else {
+                const displayName = currentFilter.replace('-service', '').toUpperCase();
+                textEl.textContent = `Copy ${displayName} JSON`;
+            }
+        }
+
         // Event Listeners
         document.getElementById('refreshRate').addEventListener('change', setupAutoRefresh);
         document.getElementById('searchFilter').addEventListener('input', renderDashboard);
@@ -498,15 +598,39 @@
                 btn.classList.add('bg-cyan-900/40', 'border-cyan-500/30', 'text-cyan-300');
                 btn.classList.remove('bg-gray-900', 'border-gray-800', 'text-gray-400');
                 currentFilter = btn.dataset.filter;
+                updateResetButtonLabel();
+                updateExportButtonLabel();
                 renderDashboard();
             });
         });
 
         // Reset Stats
         document.getElementById('btnReset').addEventListener('click', async () => {
-            if (confirm('Are you sure you want to reset profiling statistics across ALL microservices?')) {
+            const targetName = currentFilter === 'all' ? 'ALL microservices' : currentFilter.replace('-service', '').toUpperCase();
+            if (confirm(`Are you sure you want to reset profiling statistics for ${targetName}?`)) {
                 try {
-                    const response = await fetch('/debug/profiler/reset', { method: 'POST' });
+                    const url = currentFilter === 'all' 
+                        ? '/debug/profiler/reset' 
+                        : `/debug/profiler/reset?service=${currentFilter}`;
+                    let response = await fetch(url, { 
+                        method: 'POST',
+                        headers: {
+                            'Authorization': 'Bearer ' + getAuthToken()
+                        }
+                    });
+                    if (response.status === 401 || response.status === 403) {
+                        const newToken = await refreshAdminToken();
+                        if (newToken) {
+                            response = await fetch(url, { 
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': 'Bearer ' + newToken
+                                }
+                            });
+                        } else {
+                            return;
+                        }
+                    }
                     if (response.ok) {
                         fetchStats();
                     }
@@ -516,9 +640,191 @@
             }
         });
 
+        // Copy JSON to Clipboard / Download
+        document.getElementById('btnExport').addEventListener('click', async () => {
+            if (!latestData) {
+                alert('No profiler data available.');
+                return;
+            }
+            
+            const targetData = currentFilter === 'all' 
+                ? latestData 
+                : latestData[currentFilter];
+
+            const dataStr = JSON.stringify(targetData, null, 2);
+            try {
+                await navigator.clipboard.writeText(dataStr);
+                
+                const btn = document.getElementById('btnExport');
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = `
+                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    Copied!
+                `;
+                btn.classList.add('bg-emerald-950/40', 'border-emerald-500/30', 'text-emerald-300');
+                btn.classList.remove('bg-cyan-950/40', 'border-cyan-500/30', 'text-cyan-300');
+                
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.classList.remove('bg-emerald-950/40', 'border-emerald-500/30', 'text-emerald-300');
+                    btn.classList.add('bg-cyan-950/40', 'border-cyan-500/30', 'text-cyan-300');
+                    updateExportButtonLabel();
+                }, 2000);
+            } catch (err) {
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `profiler_stats_${currentFilter}_${Date.now()}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+        });
+
+        // Authentication methods
+        let isRefreshing = false;
+        let refreshPromise = null;
+
+        async function refreshAdminToken() {
+            if (isRefreshing) return refreshPromise;
+            isRefreshing = true;
+            refreshPromise = (async () => {
+                try {
+                    const response = await fetch('/v1/auth/refresh', {
+                        method: 'POST'
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.code === 200 && data.body && data.body.token) {
+                            localStorage.setItem('admin_token', data.body.token);
+                            updateAuthIndicator();
+                            return data.body.token;
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to auto-refresh token:', err);
+                } finally {
+                    isRefreshing = false;
+                    refreshPromise = null;
+                }
+                localStorage.removeItem('admin_token');
+                checkAuth();
+                return null;
+            })();
+            return refreshPromise;
+        }
+
+        function getAuthToken() {
+            return localStorage.getItem('admin_token') || '';
+        }
+
+        function updateAuthIndicator() {
+            const token = getAuthToken();
+            const badge = document.getElementById('authBtn');
+            const text = document.getElementById('authStatusText');
+            if (!badge || !text) return;
+            if (token) {
+                text.innerText = 'Logout (ADMIN)';
+                badge.classList.add('text-emerald-400');
+                badge.classList.remove('text-gray-400');
+            } else {
+                text.innerText = 'Sign In';
+                badge.classList.add('text-gray-400');
+                badge.classList.remove('text-emerald-400');
+            }
+        }
+
+        function handleAuthClick() {
+            const token = getAuthToken();
+            if (token) {
+                if (confirm('Are you sure you want to log out from the Admin Portal?')) {
+                    localStorage.removeItem('admin_token');
+                    if (updateTimer) {
+                        clearInterval(updateTimer);
+                        updateTimer = null;
+                    }
+                    checkAuth();
+                }
+            } else {
+                checkAuth();
+            }
+        }
+
+        function checkAuth() {
+            const token = getAuthToken();
+            const loginCard = document.getElementById('loginCard');
+            const dashboardContent = document.getElementById('dashboardContent');
+            
+            updateAuthIndicator();
+
+            if (token) {
+                if (loginCard) loginCard.classList.add('hidden');
+                if (dashboardContent) {
+                    dashboardContent.classList.remove('hidden');
+                }
+                setupAutoRefresh();
+            } else {
+                if (loginCard) loginCard.classList.remove('hidden');
+                if (dashboardContent) dashboardContent.classList.add('hidden');
+                if (updateTimer) {
+                    clearInterval(updateTimer);
+                    updateTimer = null;
+                }
+            }
+        }
+
+        async function performLogin() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const btn = document.getElementById('btnLoginSubmit');
+            const alertBox = document.getElementById('loginAlert');
+
+            if (!email || !password) {
+                alertBox.textContent = 'Please fill in both email and password.';
+                alertBox.classList.remove('hidden');
+                return;
+            }
+
+            btn.disabled = true;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = 'Signing In...';
+            alertBox.classList.add('hidden');
+
+            try {
+                const response = await fetch('/v1/auth/login-admin', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+                if (response.ok && data.code === 200 && data.body && data.body.token) {
+                    localStorage.setItem('admin_token', data.body.token);
+                    checkAuth();
+                } else {
+                    alertBox.textContent = data.message || 'Login failed. Please verify credentials.';
+                    alertBox.classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error('Login error:', err);
+                alertBox.textContent = 'Failed to connect to authentication service.';
+                alertBox.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
         // Init
-        setupAutoRefresh();
+        checkAuth();
         setInterval(updateUptimeUI, 1000);
     </script>
+    </div> <!-- Close #dashboardContent -->
 </body>
 </html>

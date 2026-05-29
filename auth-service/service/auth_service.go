@@ -1,12 +1,17 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"social-network-go/auth-service/config"
+	red "social-network-go/auth-service/redis"
 	"social-network-go/auth-service/repository"
+	"social-network-go/exception"
 	"social-network-go/pb"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -19,6 +24,33 @@ type AuthService struct {
 	AccountRepo    repository.AccountRepository
 	VerifyCodeRepo repository.VerifyCodeRepository
 	ResetTokenRepo repository.PasswordResetTokenRepository
+}
+
+func (s *AuthService) checkEmailRateLimit(ctx context.Context, clientIP string) error {
+	if clientIP == "" {
+		return nil
+	}
+	if red.RedisClient == nil {
+		return nil
+	}
+
+	key := fmt.Sprintf("email_rate_limit:%s", clientIP)
+	count, err := red.RedisClient.Get(ctx, key).Int()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+
+	if count >= s.Cfg.EmailRateLimitCount {
+		return exception.NewAppException(exception.TooManyEmailRequests)
+	}
+
+	pipe := red.RedisClient.TxPipeline()
+	pipe.Incr(ctx, key)
+	if count == 0 {
+		pipe.Expire(ctx, key, s.Cfg.EmailRateLimitWindow)
+	}
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 func NewAuthService(cfg *config.Config, userClient pb.UserServiceClient, gormDB *gorm.DB) *AuthService {

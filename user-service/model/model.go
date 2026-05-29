@@ -3,17 +3,17 @@ package model
 import "time"
 
 const (
-	MaxFriendCount           = 100
-	MaxBlockCount            = 100
-	ChangeNameCooldownDay    = 30
-	ChangeUsernameCooldownDay = 30
+	MaxFriendCount             = 100
+	MaxBlockCount              = 100
+	ChangeNameCooldownDay      = 30
+	ChangeUsernameCooldownDay  = 30
 	ChangeBirthdateCooldownDay = 30
-	MaxGivenNameLength       = 64
-	MaxFamilyNameLength      = 64
-	MaxUsernameLength        = 32
-	MinAge                   = 16
-	MaxSentRequestCount      = 100
-	MaxReceivedRequestCount  = 100
+	MaxGivenNameLength         = 64
+	MaxFamilyNameLength        = 64
+	MaxUsernameLength          = 32
+	MinAge                     = 16
+	MaxSentRequestCount        = 100
+	MaxReceivedRequestCount    = 100
 )
 
 type User struct {
@@ -33,6 +33,13 @@ type User struct {
 	NextChangeBirthdateDate time.Time `json:"nextChangeBirthdateDate"`
 	NextChangeUsernameDate  time.Time `json:"nextChangeUsernameDate"`
 	CreatedAt               time.Time `json:"createdAt"`
+
+	// Relationship status fields relative to current viewer
+	IsFriend           bool   `json:"isFriend"`
+	Request            string `json:"request"`
+	BlockStatus        string `json:"blockStatus"`
+	MutualFriendsCount int    `json:"mutualFriendsCount"`
+	PostCount          int    `json:"postCount"`
 }
 
 // UserProfileResponse matches Java UserProfileResponse
@@ -53,15 +60,26 @@ type UserProfileResponse struct {
 	NextChangeBirthdateDate time.Time `json:"nextChangeBirthdateDate"`
 	NextChangeUsernameDate  time.Time `json:"nextChangeUsernameDate"`
 	CreatedAt               time.Time `json:"createdAt"`
+
+	// Relationship status fields relative to current viewer
+	IsFriend           bool   `json:"isFriend"`
+	MutualFriendsCount int    `json:"mutualFriendsCount"`
+	Request            string `json:"request"`
+	BlockStatus        string `json:"blockStatus"`
+	PostCount          int    `json:"postCount"`
 }
 
 // UserCommonInformationResponse matches Java UserCommonInformationResponse
 type UserCommonInformationResponse struct {
-	ID                string `json:"id"`
-	Username          string `json:"username"`
-	GivenName         string `json:"givenName"`
-	FamilyName        string `json:"familyName"`
-	ProfilePictureUrl string `json:"profilePictureUrl"`
+	ID                 string `json:"id"`
+	Username           string `json:"username"`
+	GivenName          string `json:"givenName"`
+	FamilyName         string `json:"familyName"`
+	ProfilePictureUrl  string `json:"profilePictureUrl"`
+	IsFriend           bool   `json:"isFriend"`
+	MutualFriendsCount int    `json:"mutualFriendsCount"`
+	Request            string `json:"request"`
+	BlockStatus        string `json:"blockStatus"`
 }
 
 // UpdateBioRequest

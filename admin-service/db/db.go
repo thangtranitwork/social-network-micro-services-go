@@ -3,13 +3,17 @@ package db
 import (
 	"social-network-go/admin-service/config"
 	"social-network-go/logger"
+
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 var (
 	Neo4jDriver neo4j.DriverWithContext
 	RedisClient *redis.Client
+	PostgresDB  *gorm.DB
 )
 
 func InitDB(cfg *config.Config) {
@@ -30,4 +34,13 @@ func InitDB(cfg *config.Config) {
 	})
 	RedisClient = rdb
 	logger.Info("Admin-Service initialized Redis client on address %s", cfg.RedisAddr)
+
+	// Initialize Postgres DB
+	pgDB, err := gorm.Open(postgres.Open(cfg.PostgresDSN), &gorm.Config{})
+	if err != nil {
+		logger.Warn("Warning: Failed to connect to PostgreSQL database: %v", err)
+	} else {
+		PostgresDB = pgDB
+		logger.Info("Admin-Service connected to PostgreSQL successfully")
+	}
 }

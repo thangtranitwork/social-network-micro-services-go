@@ -3,52 +3,65 @@ package service
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"social-network-go/auth-service/model"
 	red "social-network-go/auth-service/redis"
 	"social-network-go/exception"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // Update password service
 // Java equivalent: UpdatePasswordServiceImpl
 // Flow: send -> verify -> updatePassword
-func (s *AuthService) ForgotPassword(email string) error {
-	return s.ForgotPasswordWithContinueURL(email, s.Cfg.FrontendURL+"/reset-password")
+func (s *AuthService) ForgotPassword(email, clientIP string) error {
+	return s.ForgotPasswordWithContinueURL(email, s.Cfg.FrontendURL+"/reset-password", clientIP)
 }
 
-func (s *AuthService) ForgotPasswordWithContinueURL(email, continueURL string) error {
+func (s *AuthService) ForgotPasswordWithContinueURL(email, continueURL, clientIP string) error {
 	ctx := context.Background()
 	account, err := s.AccountRepo.FindByEmail(ctx, email)
 	if err != nil {
 		return exception.NewAppException(exception.AccountNotFound)
 	}
 
-	var resetToken *model.PasswordResetToken
-	resetToken, err = s.ResetTokenRepo.FindLatestUnusedByAccountID(ctx, account.ID)
-	if err != nil {
-		// Token not found or error, create new one
-		newResetToken := model.PasswordResetToken{
-			Code:       uuid.New(),
-			AccountID:  account.ID,
-			Used:       false,
-			ExpiryTime: time.Now().Add(s.Cfg.PasswordResetDuration),
-		}
-		if err := s.ResetTokenRepo.Create(ctx, &newResetToken); err != nil {
-			return err
-		}
-		resetToken = &newResetToken
-	} else {
-		resetToken.ExpiryTime = time.Now().Add(s.Cfg.PasswordResetDuration)
-		if err := s.ResetTokenRepo.Save(ctx, resetToken); err != nil {
-			return err
-		}
+	// 1. Check IP rate limit before sending email
+	if err := s.checkEmailRateLimit(ctx, clientIP); err != nil {
+		return err
 	}
 
-	resetLink := fmt.Sprintf("%s?email=%s&code=%s", continueURL, email, resetToken.Code.String())
+	if red.RedisClient == nil {
+		return exception.NewAppException(exception.UnknownError)
+	}
+
+	// Retrieve reset code if one exists in Redis
+	userCodeKey := fmt.Sprintf("reset_password_code:%s", account.ID.String())
+	var code uuid.UUID
+
+	cachedCodeStr, err := red.RedisClient.Get(ctx, userCodeKey).Result()
+	if err == nil {
+		// Key still exists, extend TTL and keep same code
+		code, err = uuid.Parse(cachedCodeStr)
+		if err != nil {
+			code = uuid.New()
+			_ = red.RedisClient.Set(ctx, userCodeKey, code.String(), s.Cfg.PasswordResetDuration).Err()
+			tokenKey := fmt.Sprintf("reset_password_token:%s", code.String())
+			_ = red.RedisClient.Set(ctx, tokenKey, account.ID.String(), s.Cfg.PasswordResetDuration).Err()
+		} else {
+			_ = red.RedisClient.Expire(ctx, userCodeKey, s.Cfg.PasswordResetDuration).Err()
+			tokenKey := fmt.Sprintf("reset_password_token:%s", code.String())
+			_ = red.RedisClient.Expire(ctx, tokenKey, s.Cfg.PasswordResetDuration).Err()
+		}
+	} else {
+		// Key expired or not found, generate new code
+		code = uuid.New()
+		_ = red.RedisClient.Set(ctx, userCodeKey, code.String(), s.Cfg.PasswordResetDuration).Err()
+		tokenKey := fmt.Sprintf("reset_password_token:%s", code.String())
+		_ = red.RedisClient.Set(ctx, tokenKey, account.ID.String(), s.Cfg.PasswordResetDuration).Err()
+	}
+
+	resetLink := fmt.Sprintf("%s?email=%s&code=%s", continueURL, email, code.String())
 	go s.EmailSender.SendHTMLEmail(email, "Update Password Verification", s.EmailSender.GetResetPasswordEmailHTML(resetLink))
 
 	return nil
@@ -66,22 +79,34 @@ func (s *AuthService) VerifyResetPassword(email, codeStr string) error {
 		return exception.NewAppException(exception.AccountNotFound)
 	}
 
-	resetToken, err := s.ResetTokenRepo.FindByAccountIDAndCode(ctx, account.ID, code)
-	if err != nil {
-		return exception.NewAppException(exception.VerificationCodeNotFound)
+	if red.RedisClient == nil {
+		return exception.NewAppException(exception.UnknownError)
 	}
-	if resetToken.Used || time.Now().After(resetToken.ExpiryTime) {
+
+	// 1. Get the account ID for this token from Redis
+	tokenKey := fmt.Sprintf("reset_password_token:%s", code.String())
+	accountIDStr, err := red.RedisClient.Get(ctx, tokenKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
+		}
+		return err
+	}
+
+	if accountIDStr != account.ID.String() {
 		return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
 	}
 
-	if red.RedisClient != nil {
-		ttl := time.Until(resetToken.ExpiryTime)
-		if ttl > 0 {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			return red.RedisClient.Set(ctx, resetVerifiedKey(email, code), "1", ttl).Err()
-		}
+	// 2. Set reset verified key in Redis for short period
+	ttl := s.Cfg.PasswordResetDuration
+	err = red.RedisClient.Set(ctx, resetVerifiedKey(email, code), "1", ttl).Err()
+	if err != nil {
+		return err
 	}
+
+	// 3. Remove the token and user code from Redis so it cannot be used again to verify
+	userCodeKey := fmt.Sprintf("reset_password_code:%s", account.ID.String())
+	_ = red.RedisClient.Del(ctx, tokenKey, userCodeKey).Err()
 
 	return nil
 }
@@ -98,25 +123,17 @@ func (s *AuthService) UpdatePassword(email, codeStr, newPassword string) error {
 		return exception.NewAppException(exception.AccountNotFound)
 	}
 
-	resetToken, err := s.ResetTokenRepo.FindByAccountIDAndCode(ctx, account.ID, code)
+	if red.RedisClient == nil {
+		return exception.NewAppException(exception.UnknownError)
+	}
+
+	// Verify that the code was successfully verified previously (resetVerifiedKey should exist)
+	exists, err := red.RedisClient.Exists(ctx, resetVerifiedKey(email, code)).Result()
 	if err != nil {
-		return exception.NewAppException(exception.VerificationCodeNotFound)
+		return err
 	}
-	if resetToken.Used || time.Now().After(resetToken.ExpiryTime) {
+	if exists == 0 {
 		return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
-	}
-
-	if red.RedisClient != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		exists, err := red.RedisClient.Exists(ctx, resetVerifiedKey(email, code)).Result()
-		if err != nil {
-			return err
-		}
-		if exists == 0 {
-			return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
-		}
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -130,13 +147,8 @@ func (s *AuthService) UpdatePassword(email, codeStr, newPassword string) error {
 	}
 
 	txAccountRepo := s.AccountRepo.WithTx(tx)
-	txResetTokenRepo := s.ResetTokenRepo.WithTx(tx)
 
 	if err := txAccountRepo.UpdatePassword(ctx, account.ID, string(hashedPassword)); err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := txResetTokenRepo.MarkAsUsed(ctx, code); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -144,9 +156,8 @@ func (s *AuthService) UpdatePassword(email, codeStr, newPassword string) error {
 		return err
 	}
 
-	if red.RedisClient != nil {
-		_ = red.RedisClient.Del(context.Background(), resetVerifiedKey(email, code)).Err()
-	}
+	// Clean up verified key from Redis
+	_ = red.RedisClient.Del(ctx, resetVerifiedKey(email, code)).Err()
 
 	return nil
 }
@@ -160,14 +171,22 @@ func (s *AuthService) ResetPassword(codeStr, newPassword string) error {
 	}
 
 	ctx := context.Background()
-	resetToken, err := s.ResetTokenRepo.FindByCode(ctx, code)
+	if red.RedisClient == nil {
+		return exception.NewAppException(exception.UnknownError)
+	}
+
+	// Get account ID from token
+	tokenKey := fmt.Sprintf("reset_password_token:%s", code.String())
+	accountIDStr, err := red.RedisClient.Get(ctx, tokenKey).Result()
 	if err != nil {
-		return exception.NewAppException(exception.VerificationCodeNotFound)
+		if err == redis.Nil {
+			return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
+		}
+		return err
 	}
-	if resetToken.Used {
-		return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
-	}
-	if time.Now().After(resetToken.ExpiryTime) {
+
+	accountID, err := uuid.Parse(accountIDStr)
+	if err != nil {
 		return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
 	}
 
@@ -182,17 +201,20 @@ func (s *AuthService) ResetPassword(codeStr, newPassword string) error {
 	}
 
 	txAccountRepo := s.AccountRepo.WithTx(tx)
-	txResetTokenRepo := s.ResetTokenRepo.WithTx(tx)
 
-	if err := txAccountRepo.UpdatePassword(ctx, resetToken.AccountID, string(hashedPassword)); err != nil {
+	if err := txAccountRepo.UpdatePassword(ctx, accountID, string(hashedPassword)); err != nil {
 		tx.Rollback()
 		return err
 	}
-	if err := txResetTokenRepo.MarkAsUsed(ctx, code); err != nil {
-		tx.Rollback()
+	if err := tx.Commit().Error; err != nil {
 		return err
 	}
-	return tx.Commit().Error
+
+	// Delete from Redis
+	userCodeKey := fmt.Sprintf("reset_password_code:%s", accountID.String())
+	_ = red.RedisClient.Del(ctx, tokenKey, userCodeKey).Err()
+
+	return nil
 }
 
 func (s *AuthService) ChangePassword(accountID uuid.UUID, oldPassword, newPassword string) error {

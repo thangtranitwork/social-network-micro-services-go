@@ -2,8 +2,8 @@ package grpc
 
 import (
 	"context"
-	"log"
 	"net"
+	"social-network-go/logger"
 	"social-network-go/pb"
 	"social-network-go/user-service/service"
 
@@ -116,16 +116,16 @@ func (s *GrpcServer) CreateUser(ctx context.Context, req *pb.CreateUserRequest) 
 func StartGrpcServer(port string, userSvc *service.UserService) {
 	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		log.Fatalf("Failed to listen on gRPC TCP port %s: %v", port, err)
+		logger.Err(err).Fatal("Failed to listen on gRPC TCP port %s", port)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logger.UnaryServerInterceptor()))
 	pb.RegisterUserServiceServer(grpcServer, &GrpcServer{UserSvc: userSvc})
 
-	log.Printf("User Service gRPC server listening on port %s", port)
+	logger.Info("User Service gRPC server listening on port %s", port)
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve gRPC: %v", err)
+			logger.Err(err).Fatal("Failed to serve gRPC")
 		}
 	}()
 }

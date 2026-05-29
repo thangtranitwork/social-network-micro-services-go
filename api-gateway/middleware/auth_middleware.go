@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"social-network-go/logger"
 	"social-network-go/pb"
 
 	"github.com/gin-gonic/gin"
@@ -45,7 +45,7 @@ func AuthRequired(authClient pb.AuthServiceClient) gin.HandlerFunc {
 
 		resp, err := authClient.ValidateToken(ctx, &pb.TokenRequest{Token: token})
 		if err != nil {
-			log.Printf("[AUTH] gRPC ValidateToken error: %v", err)
+			logger.Err(err).Error("[AUTH] gRPC ValidateToken error")
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"code":      503,
 				"message":   "AUTH_SERVICE_UNAVAILABLE",

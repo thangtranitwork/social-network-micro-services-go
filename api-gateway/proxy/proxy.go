@@ -1,10 +1,11 @@
 package proxy
 
 import (
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"social-network-go/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,10 +14,10 @@ import (
 func ProxyTo(target string) gin.HandlerFunc {
 	targetUrl, err := url.Parse(target)
 	if err != nil {
-		log.Fatalf("Invalid proxy target URL: %v", err)
+		logger.Err(err).Fatal("Invalid proxy target URL")
 	}
 	proxy := httputil.NewSingleHostReverseProxy(targetUrl)
-	
+
 	// Strip CORS headers from upstream responses — Gateway is the sole CORS authority
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		resp.Header.Del("Access-Control-Allow-Origin")
@@ -27,9 +28,9 @@ func ProxyTo(target string) gin.HandlerFunc {
 		resp.Header.Del("Vary")
 		return nil
 	}
-	
+
 	return func(c *gin.Context) {
-		log.Printf("[PROXY] %s %s -> %s%s", c.Request.Method, c.Request.URL.Path, target, c.Request.URL.Path)
+		logger.Info("[PROXY] %s %s -> %s%s", c.Request.Method, c.Request.URL.Path, target, c.Request.URL.Path)
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }

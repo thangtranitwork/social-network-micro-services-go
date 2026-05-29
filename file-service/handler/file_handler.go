@@ -13,7 +13,7 @@ import (
 type FileServiceInterface interface {
 	Upload(ctx context.Context, file io.Reader, filename string, contentType string, uploaderID string) (*model.File, error)
 	GetPresignedUploadURL(ctx context.Context, filename string, contentType string) (string, string, error)
-	Load(ctx context.Context, id string) (*model.FileResponse, error)
+	Load(ctx context.Context, id string) (io.ReadCloser, string, string, int64, error)
 	GetPresignedURL(ctx context.Context, id string) (string, error)
 	DeleteFile(ctx context.Context, id string) error
 	DeleteFiles(ctx context.Context, ids []string) error
@@ -76,10 +76,10 @@ func (h *FileHandler) UploadMultiple(c *gin.Context) {
 			results = append(results, gin.H{"error": "failed to open file", "filename": fileHeader.Filename})
 			continue
 		}
-		
+
 		res, err := h.fileSvc.Upload(c.Request.Context(), file, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), uploaderID)
 		file.Close()
-		
+
 		if err != nil {
 			results = append(results, gin.H{"error": err.Error(), "filename": fileHeader.Filename})
 		} else {
@@ -112,7 +112,7 @@ func (h *FileHandler) GetPresignedUploadURL(c *gin.Context) {
 
 func (h *FileHandler) Load(c *gin.Context) {
 	id := c.Param("id")
-	result, err := h.fileSvc.Load(c.Request.Context(), id)
+	reader, filename, contentType, size, err := h.fileSvc.Load(c.Request.Context(), id)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such key") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
@@ -121,8 +121,11 @@ func (h *FileHandler) Load(c *gin.Context) {
 		}
 		return
 	}
+	defer reader.Close()
 
-	c.JSON(http.StatusOK, result)
+	c.Header("Content-Disposition", "inline; filename=\""+filename+"\"")
+	c.Header("Cache-Control", "public, max-age=3600, immutable")
+	c.DataFromReader(http.StatusOK, size, contentType, reader, nil)
 }
 
 func (h *FileHandler) GetPresignedURL(c *gin.Context) {

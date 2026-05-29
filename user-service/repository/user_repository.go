@@ -3,11 +3,11 @@ package repository
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"social-network-go/exception"
+	"social-network-go/logger"
 	"social-network-go/user-service/db"
 	"social-network-go/user-service/model"
 
@@ -50,6 +50,7 @@ type UserRepository interface {
 	UpdateName(ctx context.Context, currentUserID string, familyName, givenName string, nextDate string) error
 	UpdateUsername(ctx context.Context, currentUserID string, username string, nextDate string) error
 	UpdateProfilePicture(ctx context.Context, currentUserID string, fileID string) error
+	RecordProfileView(ctx context.Context, viewerID, targetID string) error
 }
 
 type Neo4jUserRepository struct {
@@ -175,7 +176,9 @@ func (r *Neo4jUserRepository) EnsureProfile(ctx context.Context, id, email, give
 			return nil, nil
 		})
 		if err == nil {
-			log.Printf("Successfully synchronized Neo4j Profile node for ID: %s", id)
+			logger.Info("Successfully synchronized Neo4j Profile node for ID: %s", id)
+		} else {
+			logger.Err(err).Error("Failed to synchronize Neo4j Profile node for ID: %s", id)
 		}
 	}
 
@@ -196,6 +199,14 @@ func (r *Neo4jUserRepository) EnsureProfile(ctx context.Context, id, email, give
 	}
 
 	return r.fallbackUsers[id], nil
+}
+
+func getBool(v interface{}) bool {
+	if v == nil {
+		return false
+	}
+	b, ok := v.(bool)
+	return ok && b
 }
 
 func (r *Neo4jUserRepository) GetUserProfile(ctx context.Context, usernameOrID string, currentUserID string) (*model.User, error) {
@@ -232,17 +243,52 @@ func (r *Neo4jUserRepository) GetUserProfile(ctx context.Context, usernameOrID s
 			query := `
 				MATCH (u:User)
 				WHERE u.username = $usernameOrID OR u.id = $usernameOrID
+				
+				// Target counters
 				OPTIONAL MATCH (u)-[:FRIEND]-(f)
 				OPTIONAL MATCH (u)-[:BLOCK]->(b)
 				OPTIONAL MATCH (u)-[:REQUEST]->(r)
 				OPTIONAL MATCH (u)<-[:REQUEST]-(rc)
+				
+				// Viewer relationships (relative to currentUserID)
+				OPTIONAL MATCH (cu:User {id: $currentUserID})
+				OPTIONAL MATCH (cu)-[friendship:FRIEND]-(u)
+				OPTIONAL MATCH (cu)-[requestOut:REQUEST]->(u)
+				OPTIONAL MATCH (u)-[requestIn:REQUEST]->(cu)
+				OPTIONAL MATCH (cu)-[blockOut:BLOCK]->(u)
+				OPTIONAL MATCH (u)-[blockIn:BLOCK]->(cu)
+				
+				// Mutual friends
+				WITH u, count(DISTINCT f) as friendCount, count(DISTINCT b) as blockCount,
+				     count(DISTINCT r) as sentCount, count(DISTINCT rc) as recvCount,
+				     cu, friendship, requestOut, requestIn, blockOut, blockIn
+				
+				WITH u, friendCount, blockCount, sentCount, recvCount, cu, friendship, requestOut, requestIn, blockOut, blockIn,
+				     size([(cu)-[:FRIEND]-(mutual:User)-[:FRIEND]-(u) | mutual]) AS mutualFriendsCount
+				
+				// Count posts
+				OPTIONAL MATCH (u)-[:POSTED]->(post:Post)
+				
 				RETURN u.id, u.username, u.givenName, u.familyName, u.email, u.bio, u.birthdate, 
-				       count(DISTINCT f) as friendCount, count(DISTINCT b) as blockCount, 
-				       count(DISTINCT r) as sentCount, count(DISTINCT rc) as recvCount,
+				       friendCount, blockCount, sentCount, recvCount,
 				       u.nextChangeNameDate, u.nextChangeBirthdateDate, u.nextChangeUsernameDate, u.createdAt,
-				       u.profilePictureId
+				       u.profilePictureId,
+				       
+				       CASE WHEN friendship IS NOT NULL THEN true ELSE false END as isFriend,
+				       CASE 
+				           WHEN requestOut IS NOT NULL THEN 'OUT'
+				           WHEN requestIn IS NOT NULL THEN 'IN'
+				           ELSE 'NONE'
+				       END as request,
+				       CASE
+				           WHEN blockOut IS NOT NULL THEN 'BLOCKED'
+				           WHEN blockIn IS NOT NULL THEN 'HAS_BEEN_BLOCKED'
+				           ELSE 'NORMAL'
+				       END as blockStatus,
+				       mutualFriendsCount,
+				       count(DISTINCT post) as postCount
 			`
-			result, err := tx.Run(ctx, query, map[string]interface{}{"usernameOrID": usernameOrID})
+			result, err := tx.Run(ctx, query, map[string]interface{}{"usernameOrID": usernameOrID, "currentUserID": currentUserID})
 			if err != nil {
 				return nil, err
 			}
@@ -266,6 +312,11 @@ func (r *Neo4jUserRepository) GetUserProfile(ctx context.Context, usernameOrID s
 					NextChangeUsernameDate:  getTimeVal(vals[13]),
 					CreatedAt:               getTimeVal(vals[14]),
 					ProfilePictureId:        getStringVal(vals[15]),
+					IsFriend:                getBool(vals[16]),
+					Request:                 getStringVal(vals[17]),
+					BlockStatus:             getStringVal(vals[18]),
+					MutualFriendsCount:      getInt(vals[19]),
+					PostCount:               getInt(vals[20]),
 				}
 				return user, nil
 			}
@@ -366,10 +417,64 @@ func (r *Neo4jUserRepository) GetSuggestedFriends(ctx context.Context, currentUs
 
 		res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 			query := `
-				MATCH (u:User {id: $id})-[:FRIEND]-(f:User)-[:FRIEND]-(foaf:User)
-				WHERE NOT (u)-[:FRIEND]-(foaf) AND NOT (u)-[:BLOCK]-(foaf) AND NOT (u)-[:REQUEST]-(foaf) AND u <> foaf
-				RETURN foaf.id, foaf.username, foaf.givenName, foaf.familyName, foaf.email, foaf.bio, count(f) as mutualCount, foaf.profilePictureId
-				ORDER BY mutualCount DESC LIMIT 20
+				MATCH (u:User {id: $id})
+				CALL {
+					WITH u
+					MATCH (u)-[:FRIEND]-(:User)-[:FRIEND]-(foaf:User)
+					RETURN foaf
+					UNION
+					WITH u
+					MATCH (u)-[:VIEW_PROFILE]-(foaf:User)
+					RETURN foaf
+					UNION
+					WITH u
+					MATCH (u)-[:IS_MEMBER_OF]->(:Chat)<-[:IS_MEMBER_OF]-(foaf:User)
+					RETURN foaf
+					UNION
+					WITH u
+					MATCH (u)-[:LIKED]->(:Post)<-[:POSTED]-(foaf:User)
+					RETURN foaf
+					UNION
+					WITH u
+					MATCH (u)-[:POSTED]->(:Post)<-[:LIKED]-(foaf:User)
+					RETURN foaf
+					UNION
+					WITH u
+					MATCH (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:POSTED]-(foaf:User)
+					RETURN foaf
+					UNION
+					WITH u
+					MATCH (u)-[:POSTED]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf:User)
+					RETURN foaf
+				}
+				WITH u, foaf
+				WHERE foaf <> u
+				  AND NOT (u)-[:FRIEND]-(foaf)
+				  AND NOT (u)-[:BLOCK]-(foaf)
+				  AND NOT (u)-[:REQUEST]-(foaf)
+				WITH distinct u, foaf
+
+				// 1. Calculate counts using COUNT subqueries
+				WITH u, foaf,
+				     COUNT { (u)-[:FRIEND]-(:User)-[:FRIEND]-(foaf) } as mutualCount,
+				     COUNT { (u)-[:VIEW_PROFILE]->(foaf) } as viewOut,
+				     COUNT { (u)<-[:VIEW_PROFILE]-(foaf) } as viewIn,
+				     COUNT { (u)-[:IS_MEMBER_OF]->(:Chat)<-[:IS_MEMBER_OF]-(foaf) } as chatRooms,
+				     COUNT { (u)-[:LIKED]->(:Post)<-[:POSTED]-(foaf) } +
+				     COUNT { (u)-[:POSTED]->(:Post)<-[:LIKED]-(foaf) } +
+				     COUNT { (u)-[:LIKED]->(:Post)<-[:LIKED]-(foaf) } +
+				     COUNT { (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:POSTED]-(foaf) } +
+				     COUNT { (u)-[:POSTED]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf) } +
+				     COUNT { (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf) } +
+				     COUNT { (u)-[:COMMENTED]->(:Comment)-[:REPLY_OF]-(:Comment)<-[:COMMENTED]-(foaf) } as interactions
+				WITH u, foaf, mutualCount, viewOut, viewIn, chatRooms, interactions,
+				     abs(toInteger(substring(coalesce(u.birthdate, "1998-01-01"), 0, 4)) - toInteger(substring(coalesce(foaf.birthdate, "1998-01-01"), 0, 4))) as ageDiff
+
+				// Score calculation
+				WITH foaf,
+				     (mutualCount * 5) + (viewOut * 2) + (viewIn * 1) + (case when chatRooms > 0 then 30 else 0 end) + (interactions * 2) - (ageDiff * 2) as score
+				RETURN foaf.id, foaf.username, foaf.givenName, foaf.familyName, foaf.email, foaf.bio, score, foaf.profilePictureId
+				ORDER BY score DESC LIMIT 20
 			`
 			result, err := tx.Run(ctx, query, map[string]interface{}{"id": currentUserID})
 			if err != nil {
@@ -565,7 +670,7 @@ func (r *Neo4jUserRepository) Block(ctx context.Context, currentUserID string, t
 	}
 
 	r.fallbackBlocks[currentUserID] = append(r.fallbackBlocks[currentUserID], target.ID)
-	
+
 	r.mu.Unlock()
 	_ = r.Unfriend(ctx, currentUserID, targetUsername)
 	r.mu.Lock()
@@ -1087,6 +1192,26 @@ func (r *Neo4jUserRepository) UpdateProfilePicture(ctx context.Context, currentU
 	defer r.mu.Unlock()
 	if u, ok := r.fallbackUsers[currentUserID]; ok {
 		u.ProfilePictureId = fileID
+	}
+	return nil
+}
+
+func (r *Neo4jUserRepository) RecordProfileView(ctx context.Context, viewerID, targetID string) error {
+	if db.Neo4jDriver != nil {
+		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(ctx)
+
+		_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u1:User {id: $viewerID}), (u2:User {id: $targetID})
+				MERGE (u1)-[v:VIEW_PROFILE]->(u2)
+				ON CREATE SET v.createdAt = datetime(), v.times = 1
+				ON MATCH SET v.times = coalesce(v.times, 0) + 1, v.updatedAt = datetime()
+				RETURN u1.id
+			`
+			return tx.Run(ctx, query, map[string]interface{}{"viewerID": viewerID, "targetID": targetID})
+		})
+		return err
 	}
 	return nil
 }

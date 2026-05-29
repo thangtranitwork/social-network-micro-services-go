@@ -6,17 +6,19 @@ import (
 	"time"
 
 	"social-network-go/auth-service/model"
+	red "social-network-go/auth-service/redis"
 	"social-network-go/exception"
 	"social-network-go/logger"
 	"social-network-go/pb"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // Register service
 // Java equivalent: RegisterServiceImpl
-func (s *AuthService) Register(email, password, givenName, familyName, birthdate string) (*model.VerifyCode, error) {
+func (s *AuthService) Register(email, password, givenName, familyName, birthdate, clientIP string) (*model.VerifyCode, error) {
 	ctx := context.Background()
 	existingAccount, err := s.AccountRepo.FindByEmail(ctx, email)
 	if err == nil {
@@ -26,14 +28,20 @@ func (s *AuthService) Register(email, password, givenName, familyName, birthdate
 		return nil, exception.NewAppException(exception.EmailNotVerified)
 	}
 
+	// 1. Check IP rate limit before sending email
+	if err := s.checkEmailRateLimit(ctx, clientIP); err != nil {
+		return nil, err
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
 	}
 
 	accountID := uuid.New()
+	code := uuid.New()
 	verifyCode := model.VerifyCode{
-		Code:       uuid.New(),
+		Code:       code,
 		AccountID:  accountID,
 		Verified:   false,
 		ExpiryTime: time.Now().Add(s.Cfg.VerifyEmailDuration),
@@ -53,13 +61,8 @@ func (s *AuthService) Register(email, password, givenName, familyName, birthdate
 	}
 
 	txAccountRepo := s.AccountRepo.WithTx(tx)
-	txVerifyCodeRepo := s.VerifyCodeRepo.WithTx(tx)
 
 	if err := txAccountRepo.Create(ctx, &account); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-	if err := txVerifyCodeRepo.Create(ctx, &verifyCode); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -67,7 +70,16 @@ func (s *AuthService) Register(email, password, givenName, familyName, birthdate
 		return nil, err
 	}
 
-	verificationLink := fmt.Sprintf("%s/register?email=%s&code=%s", s.Cfg.FrontendURL, email, verifyCode.Code.String())
+	// 2. Save verify code to Redis
+	if red.RedisClient != nil {
+		key := fmt.Sprintf("verify_code:%s", accountID.String())
+		err = red.RedisClient.Set(ctx, key, code.String(), s.Cfg.VerifyEmailDuration).Err()
+		if err != nil {
+			logger.Field("account_id", accountID).Field("error", err).Warn("Failed to save verify code to Redis")
+		}
+	}
+
+	verificationLink := fmt.Sprintf("%s/register?email=%s&code=%s", s.Cfg.FrontendURL, email, code.String())
 	go s.EmailSender.SendHTMLEmail(email, "Email Verification", s.EmailSender.GetRegisterEmailHTML(verificationLink))
 
 	_, err = s.UserClient.CreateUser(ctx, &pb.CreateUserRequest{
@@ -94,14 +106,21 @@ func (s *AuthService) Verify(email string, code uuid.UUID) error {
 		return exception.NewAppException(exception.AccountVerified)
 	}
 
-	verifyCode, err := s.VerifyCodeRepo.FindByAccountIDAndCode(ctx, account.ID, code)
+	// Look up verify code in Redis
+	if red.RedisClient == nil {
+		return exception.NewAppException(exception.UnknownError)
+	}
+
+	key := fmt.Sprintf("verify_code:%s", account.ID.String())
+	cachedCodeStr, err := red.RedisClient.Get(ctx, key).Result()
 	if err != nil {
-		return exception.NewAppException(exception.VerificationCodeNotFound)
+		if err == redis.Nil {
+			return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
+		}
+		return err
 	}
-	if verifyCode.Code != code { // defensive; normally Code == code is enough
-		return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
-	}
-	if time.Now().After(verifyCode.ExpiryTime) {
+
+	if cachedCodeStr != code.String() {
 		return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
 	}
 
@@ -111,13 +130,8 @@ func (s *AuthService) Verify(email string, code uuid.UUID) error {
 	}
 
 	txAccountRepo := s.AccountRepo.WithTx(tx)
-	txVerifyCodeRepo := s.VerifyCodeRepo.WithTx(tx)
 
 	if err := txAccountRepo.UpdateVerificationStatus(ctx, account.ID, true); err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := txVerifyCodeRepo.DeleteByAccountID(ctx, account.ID); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -125,10 +139,13 @@ func (s *AuthService) Verify(email string, code uuid.UUID) error {
 		return err
 	}
 
+	// Delete from Redis since verification is successful
+	_ = red.RedisClient.Del(ctx, key).Err()
+
 	return nil
 }
 
-func (s *AuthService) ResendEmail(email string) (*model.VerifyCode, error) {
+func (s *AuthService) ResendEmail(email, clientIP string) (*model.VerifyCode, error) {
 	ctx := context.Background()
 	account, err := s.AccountRepo.FindByEmail(ctx, email)
 	if err != nil {
@@ -138,18 +155,43 @@ func (s *AuthService) ResendEmail(email string) (*model.VerifyCode, error) {
 		return nil, exception.NewAppException(exception.AccountVerified)
 	}
 
-	verifyCode, err := s.VerifyCodeRepo.FindLatestUnverifiedByAccountID(ctx, account.ID)
-	if err != nil {
-		return nil, exception.NewAppException(exception.VerificationCodeNotFound)
-	}
-
-	verifyCode.ExpiryTime = time.Now().Add(s.Cfg.VerifyEmailDuration)
-	if err := s.VerifyCodeRepo.Save(ctx, verifyCode); err != nil {
+	// 1. Check IP rate limit before sending email
+	if err := s.checkEmailRateLimit(ctx, clientIP); err != nil {
 		return nil, err
 	}
 
-	verificationLink := fmt.Sprintf("%s/register?email=%s&code=%s", s.Cfg.FrontendURL, email, verifyCode.Code.String())
+	if red.RedisClient == nil {
+		return nil, exception.NewAppException(exception.UnknownError)
+	}
+
+	key := fmt.Sprintf("verify_code:%s", account.ID.String())
+	var code uuid.UUID
+
+	cachedCodeStr, err := red.RedisClient.Get(ctx, key).Result()
+	if err == nil {
+		// Key still exists, extend TTL and keep same code
+		code, err = uuid.Parse(cachedCodeStr)
+		if err != nil {
+			code = uuid.New()
+			_ = red.RedisClient.Set(ctx, key, code.String(), s.Cfg.VerifyEmailDuration).Err()
+		} else {
+			_ = red.RedisClient.Expire(ctx, key, s.Cfg.VerifyEmailDuration).Err()
+		}
+	} else {
+		// Key expired or not found, generate new code
+		code = uuid.New()
+		_ = red.RedisClient.Set(ctx, key, code.String(), s.Cfg.VerifyEmailDuration).Err()
+	}
+
+	verifyCode := model.VerifyCode{
+		Code:       code,
+		AccountID:  account.ID,
+		Verified:   false,
+		ExpiryTime: time.Now().Add(s.Cfg.VerifyEmailDuration),
+	}
+
+	verificationLink := fmt.Sprintf("%s/register?email=%s&code=%s", s.Cfg.FrontendURL, email, code.String())
 	go s.EmailSender.SendHTMLEmail(email, "Email Verification", s.EmailSender.GetRegisterEmailHTML(verificationLink))
 
-	return verifyCode, nil
+	return &verifyCode, nil
 }

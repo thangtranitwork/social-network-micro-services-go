@@ -7,14 +7,15 @@ import (
 )
 
 type Config struct {
-	GRPCPort  string
-	HTTPPort  string
-	Neo4jURI  string
-	Neo4jUser string
-	Neo4jPass string
-	RedisAddr string
-	RedisPass    string
-	FileGrpcAddr string
+	GRPCPort       string
+	HTTPPort       string
+	Neo4jURI       string
+	Neo4jUser      string
+	Neo4jPass      string
+	RedisAddr      string
+	RedisPass      string
+	FileGrpcAddr   string
+	FileServiceURL string
 }
 
 func LoadConfig() *Config {
@@ -29,13 +30,14 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		GRPCPort:     getEnv("USER_GRPC_PORT", "50052"),
-		HTTPPort:     getEnv("USER_HTTP_PORT", "8082"),
-		Neo4jURI:     getEnv("NEO4J_URI", "neo4j://localhost:7687"),
-		Neo4jUser:    getEnv("NEO4J_USER", "neo4j"),
-		Neo4jPass:    getEnv("NEO4J_PASS", "password"),
-		RedisAddr:    getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPass:    getEnv("REDIS_PASSWORD", ""),
-		FileGrpcAddr: getEnv("FILE_GRPC_ADDR", "localhost:50057"),
+		GRPCPort:       getEnv("USER_GRPC_PORT", "10052"),
+		HTTPPort:       getEnv("USER_HTTP_PORT", "10082"),
+		Neo4jURI:       getEnv("NEO4J_URI", "neo4j://localhost:7687"),
+		Neo4jUser:      getEnv("NEO4J_USER", "neo4j"),
+		Neo4jPass:      getEnv("NEO4J_PASS", "password"),
+		RedisAddr:      getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPass:      getEnv("REDIS_PASSWORD", ""),
+		FileGrpcAddr:   getEnv("FILE_GRPC_ADDR", "localhost:10057"),
+		FileServiceURL: getEnv("FILE_SERVICE_URL", "http://localhost:11111/v1/files"),
 	}
 }

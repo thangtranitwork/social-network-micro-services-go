@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"social-network-go/admin-service/model"
 	"social-network-go/admin-service/service"
@@ -74,6 +75,18 @@ func (m *MockAdminRepository) QueryMonthPostStats(ctx context.Context, month, ye
 
 func (m *MockAdminRepository) QueryYearPostStats(ctx context.Context, year int) (map[string]int, error) {
 	return m.YearStats, m.Err
+}
+
+func (m *MockAdminRepository) DeletePost(ctx context.Context, postID string) error {
+	return m.Err
+}
+
+func (m *MockAdminRepository) SuspendUser(ctx context.Context, userID string, duration time.Duration) error {
+	return m.Err
+}
+
+func (m *MockAdminRepository) UnsuspendUser(ctx context.Context, userID string) error {
+	return m.Err
 }
 
 func setupTestRouter(repo *MockAdminRepository) *gin.Engine {

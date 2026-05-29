@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"time"
 
 	"social-network-go/api-gateway/config"
@@ -10,6 +11,7 @@ import (
 	"social-network-go/profiler"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
@@ -26,6 +28,7 @@ func main() {
 	conn, err := grpc.NewClient(
 		cfg.AuthGrpcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(logger.UnaryClientInterceptor()),
 	)
 	if err != nil {
 		logger.Warn("Warning: Failed to create Auth gRPC client at %s: %v. Auth validation will fail.", cfg.AuthGrpcAddr, err)
@@ -47,13 +50,29 @@ func main() {
 		}
 	}
 
-	// 3. Initialize Gin engine
-	r := gin.Default()
+	// Initialize Redis Client
+	rdb := redis.NewClient(&redis.Options{
+		Addr: cfg.RedisAddr,
+	})
+	logger.Info("Initialized Redis client at %s", cfg.RedisAddr)
 
+	// 3. Initialize Gin engine
+	r := gin.New()
+	// Custom recovery: silently re-panic http.ErrAbortHandler (client disconnect from ReverseProxy);
+	// log and recover from all other panics normally.
+	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		if recovered == http.ErrAbortHandler {
+			panic(http.ErrAbortHandler)
+		}
+		logger.Error("[PANIC RECOVERED] %v", recovered)
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
+
+	r.Use(logger.TraceMiddleware())
 	r.Use(profiler.Middleware("api-gateway"))
 
 	// 4. Setup Routes & Middlewares
-	router.SetupRoutes(r, cfg, authClient)
+	router.SetupRoutes(r, cfg, authClient, rdb)
 
 	// 5. Start HTTP server
 	logger.Info("API Gateway listening on port %s", cfg.Port)

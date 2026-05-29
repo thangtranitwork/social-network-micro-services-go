@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"net"
 	"net/http"
+	"time"
 
 	"social-network-go/post-service/config"
 	"social-network-go/post-service/db"
@@ -26,7 +29,7 @@ func main() {
 	// 3. Initialize Service & Handler
 	postRepo := repository.NewPostRepository()
 	postSvc := service.NewPostService(cfg, postRepo)
-	
+
 	// Initialize Notification Publisher
 	notifPublisher := service.NewKafkaNotificationPublisher(cfg.KafkaAddr)
 	defer notifPublisher.Close()
@@ -45,12 +48,51 @@ func main() {
 	// 3. Setup HTTP/REST Server (Gin)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(logger.TraceMiddleware())
 	r.Use(profiler.Middleware("post-service"))
 	r.Use(logger.GinMiddleware())
 
 	// Health Check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "post-service"})
+		status := "UP"
+		details := gin.H{}
+
+		// Check Neo4j
+		if db.Neo4jDriver == nil {
+			status = "DOWN"
+			details["neo4j"] = "DOWN (driver not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := db.Neo4jDriver.VerifyConnectivity(ctx); err != nil {
+				status = "DOWN"
+				details["neo4j"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["neo4j"] = "UP"
+			}
+			cancel()
+		}
+
+		// Check Kafka
+		kafkaConn, err := net.DialTimeout("tcp", cfg.KafkaAddr, 2*time.Second)
+		if err != nil {
+			status = "DOWN"
+			details["kafka"] = "DOWN (" + err.Error() + ")"
+		} else {
+			details["kafka"] = "UP"
+			kafkaConn.Close()
+		}
+
+		httpStatus := http.StatusOK
+		if status == "DOWN" {
+			httpStatus = http.StatusServiceUnavailable
+		}
+
+		c.JSON(httpStatus, gin.H{
+			"status":    status,
+			"service":   "post-service",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"details":   details,
+		})
 	})
 
 	// Profiler

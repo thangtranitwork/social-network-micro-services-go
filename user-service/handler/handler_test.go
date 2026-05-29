@@ -108,6 +108,10 @@ func (m *MockUserRepository) UpdateProfilePicture(ctx context.Context, currentUs
 	return m.Err
 }
 
+func (m *MockUserRepository) RecordProfileView(ctx context.Context, viewerID, targetID string) error {
+	return m.Err
+}
+
 func setupTestRouter(repo *MockUserRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

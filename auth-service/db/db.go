@@ -23,7 +23,7 @@ func InitDB(cfg *config.Config) *gorm.DB {
 	logger.Info("Successfully connected to PostgreSQL")
 
 	// Auto Migrate the schemas
-	err = DB.AutoMigrate(&model.Account{}, &model.VerifyCode{}, &model.PasswordResetToken{})
+	err = DB.AutoMigrate(&model.Account{})
 	if err != nil {
 		logger.Error("Failed to auto-migrate database schemas: %v", err)
 		os.Exit(1)

@@ -3,22 +3,23 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"strings"
 	"time"
 
 	"social-network-go/exception"
+	config "social-network-go/user-service/config"
 	"social-network-go/user-service/model"
 	red "social-network-go/user-service/redis"
 	"social-network-go/user-service/repository"
 )
 
 var (
-	ErrUserNotFound                  = exception.NewAppException(exception.UserNotFound)
-	ErrInvalidUsername               = exception.NewAppException(exception.InvalidUsername)
-	ErrInvalidAge                    = exception.NewAppException(exception.AgeMustBeAtLeast16)
-	ErrInvalidName                   = exception.NewAppException(exception.InvalidGivenNameLength)
-	ErrProfilePictureRequired        = exception.NewAppException(exception.ProfilePictureRequired)
-	ErrCannotMakeSelfRequest         = exception.NewAppException(exception.CanNotMakeSelfRequest)
+	ErrUserNotFound           = exception.NewAppException(exception.UserNotFound)
+	ErrInvalidUsername        = exception.NewAppException(exception.InvalidUsername)
+	ErrInvalidAge             = exception.NewAppException(exception.AgeMustBeAtLeast16)
+	ErrInvalidName            = exception.NewAppException(exception.InvalidGivenNameLength)
+	ErrProfilePictureRequired = exception.NewAppException(exception.ProfilePictureRequired)
+	ErrCannotMakeSelfRequest  = exception.NewAppException(exception.CanNotMakeSelfRequest)
 )
 
 type FileClient interface {
@@ -31,11 +32,13 @@ type FileClient interface {
 type UserService struct {
 	FileClient FileClient
 	UserRepo   repository.UserRepository
+	cfg        *config.Config
 }
 
-func NewUserService() *UserService {
+func NewUserService(cfg *config.Config) *UserService {
 	return &UserService{
 		UserRepo: repository.NewUserRepository(),
+		cfg:      cfg,
 	}
 }
 
@@ -54,32 +57,12 @@ func (s *UserService) clearCache(ctx context.Context, userID string) {
 }
 
 func (s *UserService) enrichUsersWithPresignedURLs(ctx context.Context, users []*model.User) {
-	if s.FileClient == nil || len(users) == 0 {
+	if len(users) == 0 {
 		return
 	}
-	fileIDs := make([]string, 0)
-	fileIDSet := make(map[string]bool)
-
 	for _, u := range users {
-		if u.ProfilePictureId != "" && !fileIDSet[u.ProfilePictureId] {
-			fileIDs = append(fileIDs, u.ProfilePictureId)
-			fileIDSet[u.ProfilePictureId] = true
-		}
-	}
-
-	if len(fileIDs) == 0 {
-		return
-	}
-
-	urls, err := s.FileClient.GetPresignedURLs(ctx, fileIDs)
-	if err != nil {
-		log.Printf("Error getting presigned URLs for users: %v", err)
-		return
-	}
-
-	for _, u := range users {
-		if url, ok := urls[u.ProfilePictureId]; ok {
-			u.ProfilePictureId = url
+		if u.ProfilePictureId != "" && !strings.HasPrefix(u.ProfilePictureId, "http://") && !strings.HasPrefix(u.ProfilePictureId, "https://") {
+			u.ProfilePictureId = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, u.ProfilePictureId)
 		}
 	}
 }

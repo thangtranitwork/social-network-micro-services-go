@@ -17,12 +17,12 @@ import (
 )
 
 type MockPostRepository struct {
-	Post          *model.Post
-	Posts         []*model.Post
-	CommentObj    *model.Comment
-	Comments      []*model.Comment
-	FileIDs       []string
-	Err           error
+	Post       *model.Post
+	Posts      []*model.Post
+	CommentObj *model.Comment
+	Comments   []*model.Comment
+	FileIDs    []string
+	Err        error
 }
 
 func (m *MockPostRepository) CreatePost(ctx context.Context, postID, authorID, content, privacy string, fileIDs []string) error {
@@ -141,7 +141,7 @@ func setupTestRouter(repo *MockPostRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	cfg := &config.Config{
-		UserGrpcAddr: "localhost:50051",
+		UserGrpcAddr: "localhost:10052",
 		RedisAddr:    "localhost:6379",
 	}
 	svc := service.NewPostService(cfg, repo)

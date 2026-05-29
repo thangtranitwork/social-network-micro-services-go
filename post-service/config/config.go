@@ -7,15 +7,16 @@ import (
 )
 
 type Config struct {
-	HTTPPort     string
-	Neo4jURI     string
-	Neo4jUser    string
-	Neo4jPass    string
-	RedisAddr    string
-	RedisPass    string
-	UserGrpcAddr string
-	FileGrpcAddr string
-	KafkaAddr    string
+	HTTPPort       string
+	Neo4jURI       string
+	Neo4jUser      string
+	Neo4jPass      string
+	RedisAddr      string
+	RedisPass      string
+	UserGrpcAddr   string
+	FileGrpcAddr   string
+	KafkaAddr      string
+	FileServiceURL string
 }
 
 func LoadConfig() *Config {
@@ -28,14 +29,15 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		HTTPPort:     getEnv("POST_HTTP_PORT", "8083"),
-		Neo4jURI:     getEnv("NEO4J_URI", "neo4j://localhost:7687"),
-		Neo4jUser:    getEnv("NEO4J_USER", "neo4j"),
-		Neo4jPass:    getEnv("NEO4J_PASS", "password"),
-		RedisAddr:    getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPass:    getEnv("REDIS_PASSWORD", ""),
-		UserGrpcAddr: getEnv("USER_GRPC_ADDR", "localhost:50052"),
-		FileGrpcAddr: getEnv("FILE_GRPC_ADDR", "localhost:50057"),
-		KafkaAddr:    getEnv("KAFKA_ADDR", "localhost:9092"),
+		HTTPPort:       getEnv("POST_HTTP_PORT", "10083"),
+		Neo4jURI:       getEnv("NEO4J_URI", "neo4j://localhost:7687"),
+		Neo4jUser:      getEnv("NEO4J_USER", "neo4j"),
+		Neo4jPass:      getEnv("NEO4J_PASS", "password"),
+		RedisAddr:      getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPass:      getEnv("REDIS_PASSWORD", ""),
+		UserGrpcAddr:   getEnv("USER_GRPC_ADDR", "localhost:10052"),
+		FileGrpcAddr:   getEnv("FILE_GRPC_ADDR", "localhost:10057"),
+		KafkaAddr:      getEnv("KAFKA_ADDR", "localhost:9092"),
+		FileServiceURL: getEnv("FILE_SERVICE_URL", "http://localhost:11111/v1/files"),
 	}
 }

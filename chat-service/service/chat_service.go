@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +16,7 @@ import (
 	"social-network-go/chat-service/db"
 	"social-network-go/chat-service/model"
 	"social-network-go/exception"
+	"social-network-go/logger"
 	"social-network-go/pb"
 
 	"github.com/google/uuid"
@@ -44,16 +44,17 @@ type ChatService struct {
 	mu           sync.RWMutex
 	UserClient   pb.UserServiceClient
 	FileClient   FileClient
+	cfg          *config.Config
 }
 
 func NewChatService(cfg *config.Config) *ChatService {
 	var userClient pb.UserServiceClient
 	conn, err := grpc.Dial(cfg.UserGrpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Printf("Warning: Failed to connect to User gRPC at %s: %v.", cfg.UserGrpcAddr, err)
+		logger.Err(err).Warn("Failed to connect to User gRPC at %s", cfg.UserGrpcAddr)
 	} else {
 		userClient = pb.NewUserServiceClient(conn)
-		log.Printf("Chat Service connected to User gRPC Service at %s", cfg.UserGrpcAddr)
+		logger.Info("Chat Service connected to User gRPC Service at %s", cfg.UserGrpcAddr)
 	}
 
 	return &ChatService{
@@ -61,6 +62,7 @@ func NewChatService(cfg *config.Config) *ChatService {
 		writeMutexes: make(map[string]*sync.Mutex),
 		activeChats:  make(map[string]string),
 		UserClient:   userClient,
+		cfg:          cfg,
 	}
 }
 
@@ -75,7 +77,7 @@ func (s *ChatService) RegisterClient(userID string, conn *websocket.Conn) {
 	s.writeMutexes[userID] = &sync.Mutex{}
 	count := len(s.connections)
 	s.mu.Unlock()
-	log.Printf("User %s connected to WebSocket. Active connections: %d", userID, count)
+	logger.Info("User %s connected to WebSocket. Active connections: %d", userID, count)
 
 	s.handleRedisOnline(userID)
 }
@@ -89,7 +91,7 @@ func (s *ChatService) UnregisterClient(userID string) {
 		delete(s.activeChats, userID)
 		count := len(s.connections)
 		s.mu.Unlock()
-		log.Printf("User %s disconnected. Active connections: %d", userID, count)
+		logger.Info("User %s disconnected. Active connections: %d", userID, count)
 
 		s.handleRedisOffline(userID)
 		return
@@ -110,10 +112,10 @@ func (s *ChatService) handleRedisOnline(userID string) {
 	count, err := db.RedisClient.Incr(ctx, counterKey).Result()
 	if err == nil && count == 1 {
 		db.RedisClient.Incr(ctx, onlineCountKey)
-		log.Printf("User %s is now ONLINE (Redis updated)", userID)
+		logger.Info("User %s is now ONLINE (Redis updated)", userID)
 		s.broadcastOnlineStatus(userID, true)
 	} else if err != nil {
-		log.Printf("Failed to increment online counter in Redis: %v", err)
+		logger.Err(err).Error("Failed to increment online counter in Redis")
 		s.broadcastOnlineStatus(userID, true)
 	}
 }
@@ -131,7 +133,7 @@ func (s *ChatService) handleRedisOffline(userID string) {
 
 	count, err := db.RedisClient.Decr(ctx, counterKey).Result()
 	if err != nil {
-		log.Printf("Failed to decrement online counter in Redis: %v", err)
+		logger.Err(err).Error("Failed to decrement online counter in Redis")
 		s.broadcastOnlineStatus(userID, false)
 		return
 	}
@@ -148,7 +150,7 @@ func (s *ChatService) handleRedisOffline(userID string) {
 
 		nowStr := time.Now().Format(time.RFC3339Nano)
 		db.RedisClient.Set(ctx, lastOnlineKey, nowStr, 0)
-		log.Printf("User %s is now OFFLINE (Redis updated)", userID)
+		logger.Info("User %s is now OFFLINE (Redis updated)", userID)
 		s.broadcastOnlineStatus(userID, false)
 	}
 }
@@ -172,9 +174,15 @@ func (s *ChatService) broadcastOnlineStatus(userID string, online bool) {
 		}
 		var targets []targetConn
 		for _, room := range rooms {
-			if conn, isOnline := s.connections[room.Target.ID]; isOnline {
-				if mu := s.writeMutexes[room.Target.ID]; mu != nil {
-					targets = append(targets, targetConn{conn: conn, mu: mu})
+			members := s.GetChatMembers(room.ChatID)
+			for _, memberID := range members {
+				if memberID == userID {
+					continue
+				}
+				if conn, isOnline := s.connections[memberID]; isOnline {
+					if mu := s.writeMutexes[memberID]; mu != nil {
+						targets = append(targets, targetConn{conn: conn, mu: mu})
+					}
 				}
 			}
 		}
@@ -203,141 +211,248 @@ func (s *ChatService) HandleIncomingMessages(userID string) {
 	for {
 		_, messageBytes, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("Error reading WebSocket message from %s: %v", userID, err)
+			logger.Err(err).Error("Error reading WebSocket message from %s", userID)
 			break
 		}
 
-		// Parse the message using fields from the frontend STOMP payload (chatId, username, text)
-		var req struct {
-			Command  string `json:"command"`
-			ChatID   string `json:"chatId"`
-			Username string `json:"username"`
-			Text     string `json:"text"`
-		}
-		if err := json.Unmarshal(messageBytes, &req); err != nil {
-			log.Printf("Error unmarshalling chat message: %v", err)
+		// Parse raw map for flexible command detection
+		var raw map[string]interface{}
+		if err := json.Unmarshal(messageBytes, &raw); err != nil {
+			logger.Err(err).Error("Error unmarshalling raw message")
 			continue
 		}
 
-		if req.Command == "SUBSCRIBE" {
-			if req.ChatID != "" {
-				s.mu.Lock()
-				s.activeChats[userID] = req.ChatID
-				s.mu.Unlock()
-				log.Printf("User %s subscribed to chat %s", userID, req.ChatID)
+		cmd, _ := raw["command"].(string)
+		chatID, _ := raw["chatId"].(string)
 
-				// Mark messages as read on subscribe!
-				s.MarkMessagesAsRead(req.ChatID, userID)
+		// DEBUG LOG
+		logger.Info("Received WS message from %s: Raw='%s', command='%s', chatId='%s'", userID, string(messageBytes), cmd, chatID)
+
+		// ──────────────────────────────────────────────────────────────────
+		// WebRTC Signaling — forward CALL_* packets without touching MongoDB
+		// ──────────────────────────────────────────────────────────────────
+		if strings.HasPrefix(cmd, "CALL_") {
+			if chatID == "" {
+				logger.Warn("WebRTC signal %s from %s has no chatId, skipping", cmd, userID)
+				continue
+			}
+
+			// Background context for state updates
+			bgCtx := context.Background()
+			isGroup := s.IsGroupChat(chatID)
+
+			// Logic to persist call history/status
+			if cmd == "CALL_OFFER" {
+				callType, _ := raw["callType"].(string)
+				isVideo := callType == "VIDEO"
+				callID := chatID
+
+				if isGroup {
+					callerInfo, _ := s.UserClient.GetCommonUserInfo(bgCtx, &pb.UserRequest{UserId: userID})
+					if callerInfo != nil {
+						// Logic for group call history
+						_ = s.StartGroupCall(bgCtx, callID, callerInfo.Username, chatID, isVideo)
+					}
+				} else {
+					// 1-1 Call
+					members := s.GetChatMembers(chatID)
+					var recipientID string
+					for _, m := range members {
+						if m != userID {
+							recipientID = m
+							break
+						}
+					}
+					if recipientID != "" {
+						callerInfo, _ := s.UserClient.GetCommonUserInfo(bgCtx, &pb.UserRequest{UserId: userID})
+						recipientInfo, _ := s.UserClient.GetCommonUserInfo(bgCtx, &pb.UserRequest{UserId: recipientID})
+
+						if callerInfo != nil && recipientInfo != nil {
+							s.PrepareCall(bgCtx, callerInfo.Username, recipientInfo.Username)
+							_ = s.StartCall(bgCtx, callID, callerInfo.Username, recipientInfo.Username, isVideo)
+						}
+					}
+				}
+			} else if cmd == "CALL_ANSWER" {
+				if isGroup {
+					_ = s.AnswerGroupCall(bgCtx, chatID, userID)
+				}
+				_ = s.AnswerCall(bgCtx, chatID)
+			} else if cmd == "CALL_HANGUP" {
+				_ = s.EndCall(bgCtx, chatID)
+			}
+
+			members := s.GetChatMembers(chatID)
+			// Add senderId to payload
+			raw["senderId"] = userID
+
+			targetId, _ := raw["targetId"].(string)
+			if targetId != "" {
+				// Direct routing
+				s.SendToUser(targetId, raw)
+			} else {
+				// Broadcast to all other members
+				for _, memberID := range members {
+					if memberID == userID {
+						continue // don't echo back to sender
+					}
+					s.SendToUser(memberID, raw)
+				}
 			}
 			continue
 		}
 
-		if req.Command == "UNSUBSCRIBE" {
+		if cmd == "SUBSCRIBE" {
+			if chatID != "" {
+				s.mu.Lock()
+				s.activeChats[userID] = chatID
+				s.mu.Unlock()
+				logger.Info("User %s subscribed to chat %s", userID, chatID)
+
+				// Mark messages as read on subscribe!
+				s.MarkMessagesAsRead(chatID, userID)
+			}
+			continue
+		}
+
+		if cmd == "UNSUBSCRIBE" {
 			s.mu.Lock()
-			if currentChat, ok := s.activeChats[userID]; ok && currentChat == req.ChatID {
+			if currentChat, ok := s.activeChats[userID]; ok && currentChat == chatID {
 				delete(s.activeChats, userID)
-				log.Printf("User %s unsubscribed from chat %s", userID, req.ChatID)
+				logger.Info("User %s unsubscribed from chat %s", userID, chatID)
 			}
 			s.mu.Unlock()
 			continue
 		}
 
-		if req.Command == "TYPING" || req.Command == "STOP_TYPING" {
-			if req.ChatID != "" {
-				s.BroadcastToChat(req.ChatID, map[string]interface{}{
-					"command": req.Command,
+		if cmd == "TYPING" || cmd == "STOP_TYPING" {
+			if chatID != "" {
+				s.BroadcastToChat(chatID, map[string]interface{}{
+					"command": cmd,
 					"id":      userID,
 				})
 			}
 			continue
 		}
 
-		// Resolve recipient ID
-		var recipientID string
-		if req.Username != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if s.UserClient != nil {
-				resp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: req.Username})
-				if err == nil && resp != nil {
-					recipientID = resp.UserId
-				} else {
-					log.Printf("Failed to resolve username %s: %v", req.Username, err)
-				}
-			}
-			cancel()
-		}
-
-		// Fallback to resolve from ChatID members if username not provided
-		if recipientID == "" && req.ChatID != "" {
-			members := s.GetChatMembers(req.ChatID)
-			for _, m := range members {
-				if m != userID {
-					recipientID = m
-					break
-				}
-			}
-		}
-
-		if recipientID == "" {
-			log.Printf("Could not resolve recipient for message from %s, skipping message", userID)
+		// If it has a command but wasn't handled above, it shouldn't be a text message
+		if cmd != "" {
+			logger.Warn("Unrecognized command from %s: %s", userID, cmd)
 			continue
+		}
+
+		// Proceed to parse as regular chat message
+		var req struct {
+			Username string `json:"username"`
+			Text     string `json:"text"`
+		}
+		_ = json.Unmarshal(messageBytes, &req)
+		effectiveChatID := chatID
+
+		// Determine if it is group chat
+		isGroup := false
+		if effectiveChatID != "" {
+			if !s.IsMemberOfChat(userID, effectiveChatID) {
+				logger.Warn("User %s is not member of chat %s, skipping message", userID, effectiveChatID)
+				continue
+			}
+			isGroup = s.IsGroupChat(effectiveChatID)
+		}
+
+		var recipientID string
+		var blockStatus string
+		var online bool = true
+
+		if isGroup {
+			recipientID = ""
+		} else {
+			// Resolve recipient ID
+			if req.Username != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if s.UserClient != nil {
+					resp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: req.Username})
+					if err == nil && resp != nil {
+						recipientID = resp.UserId
+					} else {
+						logger.Err(err).Error("Failed to resolve username %s", req.Username)
+					}
+				}
+				cancel()
+			}
+
+			// Fallback to resolve from effectiveChatID members if username not provided
+			if recipientID == "" && effectiveChatID != "" {
+				members := s.GetChatMembers(effectiveChatID)
+				for _, m := range members {
+					if m != userID {
+						recipientID = m
+						break
+					}
+				}
+			}
+
+			if recipientID == "" {
+				logger.Warn("Could not resolve recipient for message from %s, skipping message", userID)
+				continue
+			}
+
+			// Validate block relationship
+			blockStatus = s.CheckBlockStatus(userID, recipientID)
+			if blockStatus == "BLOCKED" {
+				logger.Warn("Validation error: user %s has blocked recipient %s", userID, recipientID)
+				_ = conn.WriteMessage(websocket.TextMessage, exception.HasBlocked.Marshal())
+				continue
+			} else if blockStatus == "HAS_BEEN_BLOCKED" {
+				logger.Warn("Validation error: user %s has been blocked by recipient %s", userID, recipientID)
+				_ = conn.WriteMessage(websocket.TextMessage, exception.HasBeenBlocked.Marshal())
+				continue
+			}
 		}
 
 		// 1. Validate empty text content
 		trimmed := strings.TrimSpace(req.Text)
 		if trimmed == "" {
-			log.Printf("Validation error: text content is required for user %s", userID)
+			logger.Warn("Validation error: text content is required for user %s", userID)
 			_ = conn.WriteMessage(websocket.TextMessage, exception.TextMessageContentRequired.Marshal())
 			continue
 		}
 
 		// 2. Validate content length
 		if len([]rune(trimmed)) > 10000 {
-			log.Printf("Validation error: message content length exceeds limit for user %s", userID)
+			logger.Warn("Validation error: message content length exceeds limit for user %s", userID)
 			_ = conn.WriteMessage(websocket.TextMessage, exception.InvalidMessageContentLength.Marshal())
 			continue
 		}
 
-		// 3. Validate block relationship
-		blockStatus := s.CheckBlockStatus(userID, recipientID)
-		if blockStatus == "BLOCKED" {
-			log.Printf("Validation error: user %s has blocked recipient %s", userID, recipientID)
-			_ = conn.WriteMessage(websocket.TextMessage, exception.HasBlocked.Marshal())
-			continue
-		} else if blockStatus == "HAS_BEEN_BLOCKED" {
-			log.Printf("Validation error: user %s has been blocked by recipient %s", userID, recipientID)
-			_ = conn.WriteMessage(websocket.TextMessage, exception.HasBeenBlocked.Marshal())
-			continue
-		}
-
-		// Get or create chatID if not provided
-		chatID := req.ChatID
-		if chatID == "" {
+		// Get or create effectiveChatID if not provided
+		if effectiveChatID == "" {
 			var err error
-			chatID, err = s.GetOrCreateDirectChat(userID, recipientID)
+			effectiveChatID, err = s.GetOrCreateDirectChat(userID, recipientID)
 			if err != nil {
-				log.Printf("Failed to get or create chat for %s -> %s: %v", userID, recipientID, err)
+				logger.Err(err).Error("Failed to get or create chat for %s -> %s", userID, recipientID)
 				continue
 			}
 		}
 
 		// Determine status based on active chat subscription and online status
-		s.mu.RLock()
-		activeChat, inChat := s.activeChats[recipientID]
-		_, online := s.connections[recipientID]
-		s.mu.RUnlock()
-
 		status := "SENT"
-		if inChat && activeChat == chatID {
-			status = "READ"
+		if !isGroup {
+			s.mu.RLock()
+			activeChat, inChat := s.activeChats[recipientID]
+			_, online = s.connections[recipientID]
+			s.mu.RUnlock()
+
+			if inChat && activeChat == effectiveChatID {
+				status = "READ"
+			}
 		}
 
 		msg := &model.Message{
 			ID:          uuid.New().String(),
-			ChatID:      chatID,
+			ChatID:      effectiveChatID,
 			SenderID:    userID,
 			RecipientID: recipientID,
-			Content:     strings.TrimSpace(req.Text),
+			Content:     trimmed,
 			Timestamp:   time.Now(),
 			Type:        "TEXT",
 			Status:      status,
@@ -354,27 +469,43 @@ func (s *ChatService) HandleIncomingMessages(userID string) {
 		cancel()
 
 		// Broadcast to all chat members (including sender)
-		s.BroadcastToChat(chatID, enriched)
+		s.BroadcastToChat(effectiveChatID, enriched)
 
-		if !online {
-			log.Printf("Recipient %s is offline. Message cached for delivery on login.", recipientID)
+		if !isGroup && !online {
+			logger.Info("Recipient %s is offline. Message cached for delivery on login.", recipientID)
 		}
 	}
 }
 
 func (s *ChatService) SaveMessage(msg *model.Message) {
 	if db.MsgCollection == nil {
-		log.Println("[WARN] MsgCollection is nil, skipping SaveMessage")
+		logger.Warn("MsgCollection is nil, skipping SaveMessage")
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := db.MsgCollection.InsertOne(ctx, msg)
 	if err != nil {
-		log.Printf("Failed to save message to MongoDB: %v", err)
+		logger.Err(err).Error("Failed to save message to MongoDB")
 		return
 	}
-	log.Printf("[DB SAVE] Message %s from %s -> %s saved", msg.ID, msg.SenderID, msg.RecipientID)
+	logger.Info("Message %s from %s -> %s saved", msg.ID, msg.SenderID, msg.RecipientID)
+
+	s.InvalidateChatListCache(msg.ChatID)
+}
+
+func (s *ChatService) InvalidateChatListCache(chatID string) {
+	if db.RedisClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	members := s.GetChatMembers(chatID)
+	for _, m := range members {
+		if m != "" {
+			db.RedisClient.Del(ctx, "chat:list:"+m)
+		}
+	}
 }
 
 func (s *ChatService) UpdateMessageStatus(msgID, status string) {
@@ -389,7 +520,7 @@ func (s *ChatService) UpdateMessageStatus(msgID, status string) {
 		bson.M{"$set": bson.M{"status": status}},
 	)
 	if err != nil {
-		log.Printf("Failed to update message status in MongoDB: %v", err)
+		logger.Err(err).Error("Failed to update message status in MongoDB")
 	}
 }
 
@@ -409,14 +540,14 @@ func (s *ChatService) GetChatHistory(userID, partnerID string) []*model.Message 
 	opts := options.Find().SetSort(bson.M{"timestamp": 1})
 	cursor, err := db.MsgCollection.Find(ctx, filter, opts)
 	if err != nil {
-		log.Printf("Failed to fetch chat history: %v", err)
+		logger.Err(err).Error("Failed to fetch chat history")
 		return []*model.Message{}
 	}
 	defer cursor.Close(ctx)
 
 	var history []*model.Message
 	if err := cursor.All(ctx, &history); err != nil {
-		log.Printf("Failed to decode chat history: %v", err)
+		logger.Err(err).Error("Failed to decode chat history")
 		return []*model.Message{}
 	}
 	if history == nil {
@@ -458,6 +589,9 @@ type UserCommonInfoResponse struct {
 type ChatRoom struct {
 	ChatID              string           `json:"chatId"`
 	Name                string           `json:"name"`
+	IsGroup             bool             `json:"isGroup"`
+	Avatar              string           `json:"avatar"`
+	AdminID             string           `json:"adminId,omitempty"`
 	Target              *ChatUser        `json:"target"`
 	LatestMessage       *MessageResponse `json:"latestMessage,omitempty"`
 	NotReadMessageCount int              `json:"notReadMessageCount"`
@@ -475,25 +609,51 @@ type ChatUser struct {
 
 // GetChatList returns all unique conversations for the given user, queried from Neo4j and enriched via MongoDB
 func (s *ChatService) GetChatList(userID string) []ChatRoom {
+	if db.RedisClient != nil {
+		ctx := context.Background()
+		cacheKey := "chat:list:" + userID
+		cached, err := db.RedisClient.Get(ctx, cacheKey).Result()
+		if err == nil && cached != "" {
+			var rooms []ChatRoom
+			if json.Unmarshal([]byte(cached), &rooms) == nil {
+				return rooms
+			}
+		}
+	}
+
 	if db.Neo4jDriver == nil {
-		log.Println("[WARN] Neo4j driver is nil, returning empty chat list")
+		logger.Warn("Neo4j driver is nil, returning empty chat list")
 		return []ChatRoom{}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	query := `
-		MATCH (currentUser:User {id: $userId})-[:IS_MEMBER_OF]->(chat:Chat)<-[:IS_MEMBER_OF]-(target:User)
-		WHERE target.id <> $userId
-		RETURN chat.id, target.id, target.username, target.givenName, target.familyName, target.profilePictureId
+		MATCH (currentUser:User {id: $userId})-[:IS_MEMBER_OF]->(chat:Chat)
+		OPTIONAL MATCH (chat)<-[:IS_MEMBER_OF]-(target:User)
+		WHERE (chat.isGroup IS NULL OR chat.isGroup = false) AND target.id <> $userId
+		RETURN chat.id, 
+		       coalesce(chat.isGroup, false) AS isGroup, 
+		       coalesce(chat.name, "") AS name, 
+		       coalesce(chat.avatar, "") AS avatar, 
+		       coalesce(chat.adminId, "") AS adminId,
+		       target.id AS targetId, 
+		       target.username AS targetUsername, 
+		       target.givenName AS targetGivenName, 
+		       target.familyName AS targetFamilyName, 
+		       target.profilePictureId AS targetProfilePictureId
 	`
 
 	type Neo4jChat struct {
 		ChatID           string
+		IsGroup          bool
+		Name             string
+		Avatar           string
+		AdminID          string
 		TargetID         string
 		TargetUser       string
 		GivenName        string
@@ -510,13 +670,33 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 		for res.Next(ctx) {
 			vals := res.Record().Values
 			cid, _ := vals[0].(string)
-			tid, _ := vals[1].(string)
-			tname, _ := vals[2].(string)
-			gname, _ := vals[3].(string)
-			fname, _ := vals[4].(string)
-			pimg, _ := vals[5].(string)
+			isGrp, _ := vals[1].(bool)
+			name, _ := vals[2].(string)
+			avatar, _ := vals[3].(string)
+			adminId, _ := vals[4].(string)
+
+			var tid, tname, gname, fname, pimg string
+			if vals[5] != nil {
+				tid, _ = vals[5].(string)
+			}
+			if vals[6] != nil {
+				tname, _ = vals[6].(string)
+			}
+			if vals[7] != nil {
+				gname, _ = vals[7].(string)
+			}
+			if vals[8] != nil {
+				fname, _ = vals[8].(string)
+			}
+			if vals[9] != nil {
+				pimg, _ = vals[9].(string)
+			}
 			chats = append(chats, Neo4jChat{
 				ChatID:           cid,
+				IsGroup:          isGrp,
+				Name:             name,
+				Avatar:           avatar,
+				AdminID:          adminId,
 				TargetID:         tid,
 				TargetUser:       tname,
 				GivenName:        gname,
@@ -528,42 +708,94 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 	})
 
 	if err != nil {
-		log.Printf("Failed to fetch chat list from Neo4j: %v", err)
+		logger.Err(err).Error("Failed to fetch chat list from Neo4j")
 		return []ChatRoom{}
 	}
 
 	neoChats := neoChatsVal.([]Neo4jChat)
 	var rooms []ChatRoom
 
+	chatIDs := make([]string, 0, len(neoChats))
 	for _, nc := range neoChats {
-		// 1. Get latest message from MongoDB
-		var lastMsg *model.Message
-		if db.MsgCollection != nil {
-			opts := options.FindOne().SetSort(bson.M{"timestamp": -1})
-			var m model.Message
-			err := db.MsgCollection.FindOne(ctx, bson.M{"chat_id": nc.ChatID}, opts).Decode(&m)
-			if err == nil {
-				lastMsg = &m
+		chatIDs = append(chatIDs, nc.ChatID)
+	}
+
+	latestMsgMap := make(map[string]*model.Message)
+	unreadCountMap := make(map[string]int)
+
+	if len(chatIDs) > 0 && db.MsgCollection != nil {
+		// Aggregation for latest messages
+		pipelineLatest := []bson.M{
+			{"$match": bson.M{"chat_id": bson.M{"$in": chatIDs}}},
+			{"$sort": bson.M{"timestamp": -1}},
+			{"$group": bson.M{
+				"_id":       "$chat_id",
+				"latestMsg": bson.M{"$first": "$$ROOT"},
+			}},
+		}
+		cursorLatest, err := db.MsgCollection.Aggregate(ctx, pipelineLatest)
+		if err == nil {
+			defer cursorLatest.Close(ctx)
+			type aggResult struct {
+				ChatID    string        `bson:"_id"`
+				LatestMsg model.Message `bson:"latestMsg"`
 			}
+			var results []aggResult
+			if err := cursorLatest.All(ctx, &results); err == nil {
+				for _, res := range results {
+					msgCopy := res.LatestMsg
+					latestMsgMap[res.ChatID] = &msgCopy
+				}
+			} else {
+				logger.Err(err).Error("Failed to decode aggregation results for latest messages")
+			}
+		} else {
+			logger.Err(err).Error("Failed to aggregate latest messages")
 		}
 
-		// 2. Count unread messages from MongoDB
-		unreadCount := 0
-		if db.MsgCollection != nil {
-			count, err := db.MsgCollection.CountDocuments(ctx, bson.M{
-				"chat_id":   nc.ChatID,
+		// Aggregation for unread counts
+		pipelineUnread := []bson.M{
+			{"$match": bson.M{
+				"chat_id":   bson.M{"$in": chatIDs},
 				"sender_id": bson.M{"$ne": userID},
 				"status":    bson.M{"$ne": "READ"},
-			})
-			if err == nil {
-				unreadCount = int(count)
-			}
+			}},
+			{"$group": bson.M{
+				"_id":   "$chat_id",
+				"count": bson.M{"$sum": 1},
+			}},
 		}
+		cursorUnread, err := db.MsgCollection.Aggregate(ctx, pipelineUnread)
+		if err == nil {
+			defer cursorUnread.Close(ctx)
+			type aggCountResult struct {
+				ChatID string `bson:"_id"`
+				Count  int    `bson:"count"`
+			}
+			var results []aggCountResult
+			if err := cursorUnread.All(ctx, &results); err == nil {
+				for _, res := range results {
+					unreadCountMap[res.ChatID] = res.Count
+				}
+			} else {
+				logger.Err(err).Error("Failed to decode unread counts aggregation results")
+			}
+		} else {
+			logger.Err(err).Error("Failed to aggregate unread counts")
+		}
+	}
 
-		// 3. Online status
-		s.mu.RLock()
-		_, isOnline := s.connections[nc.TargetID]
-		s.mu.RUnlock()
+	for _, nc := range neoChats {
+		lastMsg := latestMsgMap[nc.ChatID]
+		unreadCount := unreadCountMap[nc.ChatID]
+
+		// 3. Online status (only for direct 1-1 chats)
+		isOnline := false
+		if !nc.IsGroup && nc.TargetID != "" {
+			s.mu.RLock()
+			_, isOnline = s.connections[nc.TargetID]
+			s.mu.RUnlock()
+		}
 
 		updatedAt := time.Now()
 		var latestMsgResp *MessageResponse
@@ -577,32 +809,89 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 				Sender: &UserCommonInfoResponse{
 					ID: lastMsg.SenderID,
 				},
-				Type:    lastMsg.Type,
-				IsRead:  lastMsg.Status == "READ",
-				Deleted: lastMsg.Content == "deleted",
+				Type:        lastMsg.Type,
+				IsRead:      lastMsg.Status == "READ",
+				Deleted:     lastMsg.Content == "deleted",
+				CallID:      lastMsg.CallID,
+				CallAt:      lastMsg.CallAt,
+				AnswerAt:    lastMsg.AnswerAt,
+				EndAt:       lastMsg.EndAt,
+				IsAnswered:  lastMsg.IsAnswered,
+				IsVideoCall: lastMsg.IsVideoCall,
 			}
 		}
 
-		fullName := nc.GivenName + " " + nc.FamilyName
-		if fullName == " " {
-			fullName = nc.TargetUser
-		}
+		var target *ChatUser
+		roomName := nc.Name
+		roomAvatar := nc.Avatar
 
-		rooms = append(rooms, ChatRoom{
-			ChatID: nc.ChatID,
-			Name:   fullName,
-			Target: &ChatUser{
+		if !nc.IsGroup {
+			fullName := nc.GivenName + " " + nc.FamilyName
+			if fullName == " " {
+				fullName = nc.TargetUser
+			}
+			roomName = fullName
+			roomAvatar = nc.ProfilePictureId
+
+			target = &ChatUser{
 				ID:                nc.TargetID,
 				Username:          nc.TargetUser,
 				GivenName:         nc.GivenName,
 				FamilyName:        nc.FamilyName,
 				ProfilePictureUrl: nc.ProfilePictureId,
 				IsOnline:          isOnline,
-			},
+			}
+		}
+
+		rooms = append(rooms, ChatRoom{
+			ChatID:              nc.ChatID,
+			Name:                roomName,
+			IsGroup:             nc.IsGroup,
+			Avatar:              roomAvatar,
+			AdminID:             nc.AdminID,
+			Target:              target,
 			LatestMessage:       latestMsgResp,
 			NotReadMessageCount: unreadCount,
 			UpdatedAt:           updatedAt,
 		})
+	}
+
+	// Enrich latest message senders
+	latestMsgSenderIDs := make(map[string]bool)
+	for _, room := range rooms {
+		if room.LatestMessage != nil && room.LatestMessage.Sender != nil && room.LatestMessage.Sender.ID != "" {
+			latestMsgSenderIDs[room.LatestMessage.Sender.ID] = true
+		}
+	}
+	if s.UserClient != nil && len(latestMsgSenderIDs) > 0 {
+		var ids []string
+		for id := range latestMsgSenderIDs {
+			ids = append(ids, id)
+		}
+		grpcCtx, grpcCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer grpcCancel()
+		resp, err := s.UserClient.GetUsersByIds(grpcCtx, &pb.UsersByIdsRequest{UserIds: ids})
+		if err == nil && resp != nil {
+			latestMsgUserMap := make(map[string]*UserCommonInfoResponse)
+			for _, u := range resp.Users {
+				latestMsgUserMap[u.UserId] = &UserCommonInfoResponse{
+					ID:                u.UserId,
+					Username:          u.Username,
+					GivenName:         u.GivenName,
+					FamilyName:        u.FamilyName,
+					ProfilePictureUrl: u.ProfilePictureId,
+					Email:             u.Email,
+				}
+			}
+			for i := range rooms {
+				if rooms[i].LatestMessage != nil && rooms[i].LatestMessage.Sender != nil {
+					senderID := rooms[i].LatestMessage.Sender.ID
+					if u, exists := latestMsgUserMap[senderID]; exists {
+						rooms[i].LatestMessage.Sender = u
+					}
+				}
+			}
+		}
 	}
 
 	sort.Slice(rooms, func(i, j int) bool {
@@ -611,12 +900,20 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 
 	s.enrichChatRoomsWithPresignedURLs(ctx, rooms)
 
+	if db.RedisClient != nil {
+		cacheKey := "chat:list:" + userID
+		bytes, err := json.Marshal(rooms)
+		if err == nil {
+			_ = db.RedisClient.Set(ctx, cacheKey, string(bytes), 10*time.Second).Err()
+		}
+	}
+
 	return rooms
 }
 
 func (s *ChatService) IsMemberOfChat(userID, chatID string) bool {
 	if db.Neo4jDriver == nil {
-		log.Println("[WARN] Neo4j driver is nil, allowing IsMemberOfChat by default")
+		logger.Warn("Neo4j driver is nil, allowing IsMemberOfChat by default")
 		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -643,10 +940,344 @@ func (s *ChatService) IsMemberOfChat(userID, chatID string) bool {
 		return false, nil
 	})
 	if err != nil {
-		log.Printf("Failed to verify chat membership in Neo4j: %v", err)
+		logger.Err(err).Error("Failed to verify chat membership in Neo4j")
 		return false
 	}
 	return res.(bool)
+}
+
+func (s *ChatService) IsGroupChat(chatID string) bool {
+	if db.Neo4jDriver == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	query := `
+		MATCH (c:Chat {id: $chatId})
+		RETURN coalesce(c.isGroup, false)
+	`
+	res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, query, map[string]interface{}{"chatId": chatID})
+		if err != nil {
+			return false, err
+		}
+		if r.Next(ctx) {
+			if isGroup, ok := r.Record().Values[0].(bool); ok {
+				return isGroup, nil
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		return false
+	}
+	return res.(bool)
+}
+
+func (s *ChatService) GetChatMembersDetails(chatID string) []*ChatUser {
+	if db.Neo4jDriver == nil {
+		return []*ChatUser{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	query := `
+		MATCH (u:User)-[:IS_MEMBER_OF]->(c:Chat {id: $chatId})
+		RETURN u.id, u.username, u.givenName, u.familyName, u.profilePictureId
+	`
+	res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(ctx, query, map[string]interface{}{"chatId": chatID})
+		if err != nil {
+			return nil, err
+		}
+		var members []*ChatUser
+		for r.Next(ctx) {
+			vals := r.Record().Values
+			id, _ := vals[0].(string)
+			username, _ := vals[1].(string)
+			givenName, _ := vals[2].(string)
+			familyName, _ := vals[3].(string)
+			profilePictureId, _ := vals[4].(string)
+
+			isOnline := false
+			s.mu.RLock()
+			_, isOnline = s.connections[id]
+			s.mu.RUnlock()
+
+			members = append(members, &ChatUser{
+				ID:                id,
+				Username:          username,
+				GivenName:         givenName,
+				FamilyName:        familyName,
+				ProfilePictureUrl: profilePictureId,
+				IsOnline:          isOnline,
+			})
+		}
+		return members, nil
+	})
+	if err != nil {
+		logger.Err(err).Error("Failed to get chat members details from Neo4j")
+		return []*ChatUser{}
+	}
+
+	members := res.([]*ChatUser)
+	for _, m := range members {
+		if m.ProfilePictureUrl != "" && s.FileClient != nil {
+			if presigned, err := s.FileClient.GetPresignedURL(ctx, m.ProfilePictureUrl); err == nil {
+				m.ProfilePictureUrl = presigned
+			}
+		}
+	}
+	return members
+}
+
+func (s *ChatService) CreateGroupChat(ctx context.Context, adminID string, name string, memberIDs []string) (string, error) {
+	if db.Neo4jDriver == nil {
+		return "", fmt.Errorf("Neo4j driver is nil")
+	}
+
+	chatID := uuid.New().String()
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	uniqueMembers := make(map[string]bool)
+	uniqueMembers[adminID] = true
+	for _, m := range memberIDs {
+		if m != "" {
+			uniqueMembers[m] = true
+		}
+	}
+
+	query := `
+		CREATE (c:Chat {
+			id: $chatId,
+			isGroup: true,
+			name: $name,
+			adminId: $adminId,
+			avatar: ""
+		})
+		WITH c
+		UNWIND $memberIds AS memberId
+		MATCH (u:User {id: memberId})
+		CREATE (u)-[:IS_MEMBER_OF]->(c)
+		RETURN c.id
+	`
+
+	var membersSlice []string
+	for m := range uniqueMembers {
+		membersSlice = append(membersSlice, m)
+	}
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return tx.Run(ctx, query, map[string]interface{}{
+			"chatId":    chatID,
+			"name":      name,
+			"adminId":   adminID,
+			"memberIds": membersSlice,
+		})
+	})
+	if err != nil {
+		logger.Err(err).Error("Failed to create group chat in Neo4j")
+		return "", err
+	}
+
+	return chatID, nil
+}
+
+func (s *ChatService) AddMembersToGroup(ctx context.Context, adminID string, chatID string, memberIDs []string) error {
+	if db.Neo4jDriver == nil {
+		return fmt.Errorf("Neo4j driver is nil")
+	}
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	checkQuery := `
+		MATCH (u:User {id: $adminId})-[:IS_MEMBER_OF]->(c:Chat {id: $chatId})
+		WHERE c.isGroup = true
+		RETURN count(c) > 0
+	`
+	isMemberVal, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		res, err := tx.Run(ctx, checkQuery, map[string]interface{}{
+			"adminId": adminID,
+			"chatId":  chatID,
+		})
+		if err != nil {
+			return false, err
+		}
+		if res.Next(ctx) {
+			return res.Record().Values[0].(bool), nil
+		}
+		return false, nil
+	})
+	if err != nil || !isMemberVal.(bool) {
+		if err != nil {
+			logger.Err(err).Error("Failed to verify group membership")
+			return err
+		}
+		return fmt.Errorf("unauthorized or group not found")
+	}
+
+	addQuery := `
+		MATCH (c:Chat {id: $chatId})
+		UNWIND $memberIds AS memberId
+		MATCH (u:User {id: memberId})
+		MERGE (u)-[:IS_MEMBER_OF]->(c)
+		RETURN count(u)
+	`
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return tx.Run(ctx, addQuery, map[string]interface{}{
+			"chatId":    chatID,
+			"memberIds": memberIDs,
+		})
+	})
+	return err
+}
+
+func (s *ChatService) RemoveMemberFromGroup(ctx context.Context, adminID string, chatID string, userID string) error {
+	if db.Neo4jDriver == nil {
+		return fmt.Errorf("Neo4j driver is nil")
+	}
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	checkQuery := `
+		MATCH (c:Chat {id: $chatId})
+		WHERE c.isGroup = true
+		RETURN c.adminId, (exists((:User {id: $adminId})-[:IS_MEMBER_OF]->(c)))
+	`
+	authVal, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		res, err := tx.Run(ctx, checkQuery, map[string]interface{}{
+			"chatId":  chatID,
+			"adminId": adminID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if res.Next(ctx) {
+			admin, _ := res.Record().Values[0].(string)
+			isMember, _ := res.Record().Values[1].(bool)
+			return map[string]interface{}{
+				"adminId":  admin,
+				"isMember": isMember,
+			}, nil
+		}
+		return nil, nil
+	})
+	if err != nil || authVal == nil {
+		if err != nil {
+			logger.Err(err).Error("Failed to fetch group auth info")
+			return err
+		}
+		return fmt.Errorf("group not found")
+	}
+
+	authMap := authVal.(map[string]interface{})
+	groupAdmin := authMap["adminId"].(string)
+	isMember := authMap["isMember"].(bool)
+
+	if !isMember {
+		return fmt.Errorf("unauthorized: caller is not a member of this group")
+	}
+
+	if groupAdmin != adminID && adminID != userID {
+		return fmt.Errorf("unauthorized: only the group admin can remove members")
+	}
+
+	removeQuery := `
+		MATCH (u:User {id: $userId})-[r:IS_MEMBER_OF]->(c:Chat {id: $chatId})
+		DELETE r
+	`
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return tx.Run(ctx, removeQuery, map[string]interface{}{
+			"chatId": chatID,
+			"userId": userID,
+		})
+	})
+	if err != nil {
+		logger.Err(err).Error("Failed to remove member relationship in Neo4j")
+		return err
+	}
+
+	if groupAdmin == userID {
+		assignAdminQuery := `
+			MATCH (c:Chat {id: $chatId})<-[:IS_MEMBER_OF]-(newAdmin:User)
+			LIMIT 1
+			SET c.adminId = newAdmin.id
+			RETURN newAdmin.id
+		`
+		_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			res, err := tx.Run(ctx, assignAdminQuery, map[string]interface{}{
+				"chatId": chatID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if res.Next(ctx) {
+				return res.Record().Values[0].(string), nil
+			}
+			return "", nil
+		})
+		if err != nil {
+			logger.Err(err).Error("Failed to auto-assign new group admin")
+		}
+	}
+
+	return nil
+}
+
+func (s *ChatService) UpdateGroupChat(ctx context.Context, adminID string, chatID string, name string, avatar string) error {
+	if db.Neo4jDriver == nil {
+		return fmt.Errorf("Neo4j driver is nil")
+	}
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	checkQuery := `
+		MATCH (u:User {id: $adminId})-[:IS_MEMBER_OF]->(c:Chat {id: $chatId})
+		WHERE c.isGroup = true
+		RETURN count(c) > 0
+	`
+	isMemberVal, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		res, err := tx.Run(ctx, checkQuery, map[string]interface{}{
+			"adminId": adminID,
+			"chatId":  chatID,
+		})
+		if err != nil {
+			return false, err
+		}
+		if res.Next(ctx) {
+			return res.Record().Values[0].(bool), nil
+		}
+		return false, nil
+	})
+	if err != nil || !isMemberVal.(bool) {
+		return fmt.Errorf("unauthorized or group not found")
+	}
+
+	updateQuery := `
+		MATCH (c:Chat {id: $chatId})
+		SET c.name = $name, c.avatar = $avatar
+		RETURN c.id
+	`
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return tx.Run(ctx, updateQuery, map[string]interface{}{
+			"chatId": chatID,
+			"name":   name,
+			"avatar": avatar,
+		})
+	})
+	return err
 }
 
 func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*MessageResponse {
@@ -664,14 +1295,14 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 
 	cursor, err := db.MsgCollection.Find(ctx, filter, opts)
 	if err != nil {
-		log.Printf("Failed to fetch messages for chat %s: %v", chatID, err)
+		logger.Err(err).Error("Failed to fetch messages for chat %s", chatID)
 		return []*MessageResponse{}
 	}
 	defer cursor.Close(ctx)
 
 	var msgs []*model.Message
 	if err := cursor.All(ctx, &msgs); err != nil {
-		log.Printf("Failed to decode messages for chat %s: %v", chatID, err)
+		logger.Err(err).Error("Failed to decode messages for chat %s", chatID)
 		return []*MessageResponse{}
 	}
 
@@ -728,6 +1359,12 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 			Type:           m.Type,
 			IsRead:         m.Status == "READ",
 			Deleted:        m.Content == "deleted",
+			CallID:         m.CallID,
+			CallAt:         m.CallAt,
+			AnswerAt:       m.AnswerAt,
+			EndAt:          m.EndAt,
+			IsAnswered:     m.IsAnswered,
+			IsVideoCall:    m.IsVideoCall,
 		})
 	}
 
@@ -737,6 +1374,16 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 }
 
 func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
+	if s.IsGroupChat(chatID) {
+		// For Group Chat, we don't update global status to READ since it is shared,
+		// but we still broadcast the READING command to online members for real-time presence.
+		s.BroadcastToChat(chatID, map[string]interface{}{
+			"command": "READING",
+			"id":      userID,
+		})
+		return
+	}
+
 	if db.MsgCollection == nil {
 		return
 	}
@@ -754,7 +1401,7 @@ func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
 
 	_, err := db.MsgCollection.UpdateMany(ctx, filter, update)
 	if err != nil {
-		log.Printf("Failed to mark messages as read for chat %s, user %s: %v", chatID, userID, err)
+		logger.Err(err).Error("Failed to mark messages as read for chat %s, user %s", chatID, userID)
 	}
 
 	if db.Neo4jDriver != nil {
@@ -772,7 +1419,7 @@ func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
 			})
 		})
 		if err != nil {
-			log.Printf("Failed to mark messages as read in Neo4j: %v", err)
+			logger.Err(err).Error("Failed to mark messages as read in Neo4j")
 		}
 	}
 
@@ -781,6 +1428,8 @@ func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
 		"command": "READING",
 		"id":      userID,
 	})
+
+	s.InvalidateChatListCache(chatID)
 }
 
 func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
@@ -822,6 +1471,12 @@ func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
 		Type:           msg.Type,
 		IsRead:         msg.Status == "READ",
 		Deleted:        msg.Content == "deleted",
+		CallID:         msg.CallID,
+		CallAt:         msg.CallAt,
+		AnswerAt:       msg.AnswerAt,
+		EndAt:          msg.EndAt,
+		IsAnswered:     msg.IsAnswered,
+		IsVideoCall:    msg.IsVideoCall,
 	}
 }
 
@@ -853,7 +1508,7 @@ func (s *ChatService) GetChatMembers(chatID string) []string {
 		return members, nil
 	})
 	if err != nil {
-		log.Printf("Failed to get chat members from Neo4j: %v", err)
+		logger.Err(err).Error("Failed to get chat members from Neo4j")
 		return []string{}
 	}
 	return res.([]string)
@@ -879,6 +1534,7 @@ func (s *ChatService) BroadcastToChat(chatID string, payload interface{}) {
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
+		logger.Err(err).Error("Failed to marshal broadcast payload")
 		return
 	}
 
@@ -899,6 +1555,7 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 
 	receiverResp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: receiverUsername})
 	if err != nil {
+		logger.Err(err).Error("Failed to get common user info for receiver %s", receiverUsername)
 		return nil, fmt.Errorf("receiver not found: %w", err)
 	}
 
@@ -912,6 +1569,7 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 
 	chatID, err := s.GetOrCreateDirectChat(senderID, receiverResp.UserId)
 	if err != nil {
+		logger.Err(err).Error("Failed to get or create direct chat between %s and %s", senderID, receiverResp.UserId)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
@@ -923,7 +1581,7 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 	if inChat && activeChat == chatID {
 		status = "READ"
 	}
-	log.Printf("saving message to DB with content %s", text)
+	logger.Info("saving message to DB with content %s", text)
 	msg := &model.Message{
 		ID:          uuid.New().String(),
 		ChatID:      chatID,
@@ -957,6 +1615,7 @@ func (s *ChatService) SendGif(senderID, receiverUsername, gifURL string) (*Messa
 
 	receiverResp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: receiverUsername})
 	if err != nil {
+		logger.Err(err).Error("Failed to get common user info for receiver %s", receiverUsername)
 		return nil, fmt.Errorf("receiver not found: %w", err)
 	}
 
@@ -970,6 +1629,7 @@ func (s *ChatService) SendGif(senderID, receiverUsername, gifURL string) (*Messa
 
 	chatID, err := s.GetOrCreateDirectChat(senderID, receiverResp.UserId)
 	if err != nil {
+		logger.Err(err).Error("Failed to get or create direct chat between %s and %s", senderID, receiverResp.UserId)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
@@ -1015,6 +1675,7 @@ func (s *ChatService) SendFile(senderID, receiverUsername, fileID string) (*Mess
 
 	receiverResp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: receiverUsername})
 	if err != nil {
+		logger.Err(err).Error("Failed to get common user info for receiver %s", receiverUsername)
 		return nil, fmt.Errorf("receiver not found: %w", err)
 	}
 
@@ -1028,6 +1689,7 @@ func (s *ChatService) SendFile(senderID, receiverUsername, fileID string) (*Mess
 
 	chatID, err := s.GetOrCreateDirectChat(senderID, receiverResp.UserId)
 	if err != nil {
+		logger.Err(err).Error("Failed to get or create direct chat between %s and %s", senderID, receiverResp.UserId)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
@@ -1073,6 +1735,7 @@ func (s *ChatService) SendVoice(senderID, receiverUsername, fileID string) (*Mes
 
 	receiverResp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: receiverUsername})
 	if err != nil {
+		logger.Err(err).Error("Failed to get common user info for receiver %s", receiverUsername)
 		return nil, fmt.Errorf("receiver not found: %w", err)
 	}
 
@@ -1086,6 +1749,7 @@ func (s *ChatService) SendVoice(senderID, receiverUsername, fileID string) (*Mes
 
 	chatID, err := s.GetOrCreateDirectChat(senderID, receiverResp.UserId)
 	if err != nil {
+		logger.Err(err).Error("Failed to get or create direct chat between %s and %s", senderID, receiverResp.UserId)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
@@ -1131,6 +1795,7 @@ func (s *ChatService) DeleteMessage(messageID, userID string) error {
 	var msg model.Message
 	err := db.MsgCollection.FindOne(ctx, bson.M{"_id": messageID}).Decode(&msg)
 	if err != nil {
+		logger.Err(err).Error("Failed to find message %s in MongoDB", messageID)
 		return fmt.Errorf("MESSAGE_NOT_FOUND")
 	}
 
@@ -1145,6 +1810,7 @@ func (s *ChatService) DeleteMessage(messageID, userID string) error {
 	}
 	_, err = db.MsgCollection.UpdateOne(ctx, bson.M{"_id": messageID}, update)
 	if err != nil {
+		logger.Err(err).Error("Failed to update message %s in MongoDB", messageID)
 		return err
 	}
 
@@ -1171,6 +1837,7 @@ func (s *ChatService) EditMessage(messageID, newContent, userID string) error {
 	var msg model.Message
 	err := db.MsgCollection.FindOne(ctx, bson.M{"_id": messageID}).Decode(&msg)
 	if err != nil {
+		logger.Err(err).Error("Failed to find message %s in MongoDB for edit", messageID)
 		return fmt.Errorf("MESSAGE_NOT_FOUND")
 	}
 
@@ -1194,6 +1861,7 @@ func (s *ChatService) EditMessage(messageID, newContent, userID string) error {
 	}
 	_, err = db.MsgCollection.UpdateOne(ctx, bson.M{"_id": messageID}, update)
 	if err != nil {
+		logger.Err(err).Error("Failed to edit message %s in MongoDB", messageID)
 		return err
 	}
 
@@ -1209,7 +1877,7 @@ func (s *ChatService) EditMessage(messageID, newContent, userID string) error {
 
 func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 	if db.Neo4jDriver == nil {
-		log.Println("[WARN] Neo4j driver is nil, returning empty chat list")
+		logger.Warn("Neo4j driver is nil, returning empty chat list")
 		return []ChatRoom{}
 	}
 
@@ -1220,17 +1888,35 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 	defer session.Close(ctx)
 
 	query := `
-		MATCH (currentUser:User {id: $userId})-[:IS_MEMBER_OF]->(chat:Chat)<-[:IS_MEMBER_OF]-(target:User)
-		WHERE target.id <> $userId
-		AND (
-			toLower(target.givenName + ' ' + target.familyName) CONTAINS toLower($searchQuery) OR
-			toLower(target.username) CONTAINS toLower($searchQuery)
+		MATCH (currentUser:User {id: $userId})-[:IS_MEMBER_OF]->(chat:Chat)
+		OPTIONAL MATCH (chat)<-[:IS_MEMBER_OF]-(target:User)
+		WHERE (chat.isGroup IS NULL OR chat.isGroup = false) AND target.id <> $userId
+		WITH chat, target
+		WHERE (
+			(chat.isGroup = true AND toLower(chat.name) CONTAINS toLower($searchQuery)) OR
+			((chat.isGroup IS NULL OR chat.isGroup = false) AND (
+				toLower(target.givenName + ' ' + target.familyName) CONTAINS toLower($searchQuery) OR
+				toLower(target.username) CONTAINS toLower($searchQuery)
+			))
 		)
-		RETURN chat.id, target.id, target.username, target.givenName, target.familyName, target.profilePictureId
+		RETURN chat.id, 
+		       coalesce(chat.isGroup, false) AS isGroup, 
+		       coalesce(chat.name, "") AS name, 
+		       coalesce(chat.avatar, "") AS avatar, 
+		       coalesce(chat.adminId, "") AS adminId,
+		       target.id AS targetId, 
+		       target.username AS targetUsername, 
+		       target.givenName AS targetGivenName, 
+		       target.familyName AS targetFamilyName, 
+		       target.profilePictureId AS targetProfilePictureId
 	`
 
 	type Neo4jChat struct {
 		ChatID           string
+		IsGroup          bool
+		Name             string
+		Avatar           string
+		AdminID          string
 		TargetID         string
 		TargetUser       string
 		GivenName        string
@@ -1247,13 +1933,33 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 		for res.Next(ctx) {
 			vals := res.Record().Values
 			cid, _ := vals[0].(string)
-			tid, _ := vals[1].(string)
-			tname, _ := vals[2].(string)
-			gname, _ := vals[3].(string)
-			fname, _ := vals[4].(string)
-			pimg, _ := vals[5].(string)
+			isGrp, _ := vals[1].(bool)
+			name, _ := vals[2].(string)
+			avatar, _ := vals[3].(string)
+			adminId, _ := vals[4].(string)
+
+			var tid, tname, gname, fname, pimg string
+			if vals[5] != nil {
+				tid, _ = vals[5].(string)
+			}
+			if vals[6] != nil {
+				tname, _ = vals[6].(string)
+			}
+			if vals[7] != nil {
+				gname, _ = vals[7].(string)
+			}
+			if vals[8] != nil {
+				fname, _ = vals[8].(string)
+			}
+			if vals[9] != nil {
+				pimg, _ = vals[9].(string)
+			}
 			chats = append(chats, Neo4jChat{
 				ChatID:           cid,
+				IsGroup:          isGrp,
+				Name:             name,
+				Avatar:           avatar,
+				AdminID:          adminId,
 				TargetID:         tid,
 				TargetUser:       tname,
 				GivenName:        gname,
@@ -1265,7 +1971,7 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 	})
 
 	if err != nil {
-		log.Printf("Failed to search chat list from Neo4j: %v", err)
+		logger.Err(err).Error("Failed to search chat list from Neo4j")
 		return []ChatRoom{}
 	}
 
@@ -1295,9 +2001,12 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 			}
 		}
 
-		s.mu.RLock()
-		_, isOnline := s.connections[nc.TargetID]
-		s.mu.RUnlock()
+		isOnline := false
+		if !nc.IsGroup && nc.TargetID != "" {
+			s.mu.RLock()
+			_, isOnline = s.connections[nc.TargetID]
+			s.mu.RUnlock()
+		}
 
 		updatedAt := time.Now()
 		var latestMsgResp *MessageResponse
@@ -1326,26 +2035,77 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 			}
 		}
 
-		fullName := nc.GivenName + " " + nc.FamilyName
-		if fullName == " " {
-			fullName = nc.TargetUser
-		}
+		var target *ChatUser
+		roomName := nc.Name
+		roomAvatar := nc.Avatar
 
-		rooms = append(rooms, ChatRoom{
-			ChatID: nc.ChatID,
-			Name:   fullName,
-			Target: &ChatUser{
+		if !nc.IsGroup {
+			fullName := nc.GivenName + " " + nc.FamilyName
+			if fullName == " " {
+				fullName = nc.TargetUser
+			}
+			roomName = fullName
+			roomAvatar = nc.ProfilePictureId
+
+			target = &ChatUser{
 				ID:                nc.TargetID,
 				Username:          nc.TargetUser,
 				GivenName:         nc.GivenName,
 				FamilyName:        nc.FamilyName,
 				ProfilePictureUrl: nc.ProfilePictureId,
 				IsOnline:          isOnline,
-			},
+			}
+		}
+
+		rooms = append(rooms, ChatRoom{
+			ChatID:              nc.ChatID,
+			Name:                roomName,
+			IsGroup:             nc.IsGroup,
+			Avatar:              roomAvatar,
+			AdminID:             nc.AdminID,
+			Target:              target,
 			LatestMessage:       latestMsgResp,
 			NotReadMessageCount: unreadCount,
 			UpdatedAt:           updatedAt,
 		})
+	}
+
+	// Enrich latest message senders
+	latestMsgSenderIDs := make(map[string]bool)
+	for _, room := range rooms {
+		if room.LatestMessage != nil && room.LatestMessage.Sender != nil && room.LatestMessage.Sender.ID != "" {
+			latestMsgSenderIDs[room.LatestMessage.Sender.ID] = true
+		}
+	}
+	if s.UserClient != nil && len(latestMsgSenderIDs) > 0 {
+		var ids []string
+		for id := range latestMsgSenderIDs {
+			ids = append(ids, id)
+		}
+		grpcCtx, grpcCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer grpcCancel()
+		resp, err := s.UserClient.GetUsersByIds(grpcCtx, &pb.UsersByIdsRequest{UserIds: ids})
+		if err == nil && resp != nil {
+			latestMsgUserMap := make(map[string]*UserCommonInfoResponse)
+			for _, u := range resp.Users {
+				latestMsgUserMap[u.UserId] = &UserCommonInfoResponse{
+					ID:                u.UserId,
+					Username:          u.Username,
+					GivenName:         u.GivenName,
+					FamilyName:        u.FamilyName,
+					ProfilePictureUrl: u.ProfilePictureId,
+					Email:             u.Email,
+				}
+			}
+			for i := range rooms {
+				if rooms[i].LatestMessage != nil && rooms[i].LatestMessage.Sender != nil {
+					senderID := rooms[i].LatestMessage.Sender.ID
+					if u, exists := latestMsgUserMap[senderID]; exists {
+						rooms[i].LatestMessage.Sender = u
+					}
+				}
+			}
+		}
 	}
 
 	sort.Slice(rooms, func(i, j int) bool {
@@ -1389,6 +2149,7 @@ func (s *ChatService) GetOrCreateDirectChat(userID, partnerID string) (string, e
 		return "", nil
 	})
 	if err != nil {
+		logger.Err(err).Error("Failed to query existing direct chat in Neo4j")
 		return "", err
 	}
 
@@ -1415,6 +2176,7 @@ func (s *ChatService) GetOrCreateDirectChat(userID, partnerID string) (string, e
 		})
 	})
 	if err != nil {
+		logger.Err(err).Error("Failed to create new direct chat relation in Neo4j")
 		return "", err
 	}
 
@@ -1460,103 +2222,363 @@ func (s *ChatService) CheckBlockStatus(userID, partnerID string) string {
 		return "NORMAL", nil
 	})
 	if err != nil {
+		logger.Err(err).Error("Failed to check block status in Neo4j")
 		return "NORMAL"
 	}
 	return val.(string)
 }
 
 func (s *ChatService) enrichMessageResponsesWithPresignedURLs(ctx context.Context, msgs []*MessageResponse) {
-	if s.FileClient == nil || len(msgs) == 0 {
+	if len(msgs) == 0 {
 		return
 	}
-	fileIDs := make([]string, 0)
-	fileIDSet := make(map[string]bool)
-
-	addFileID := func(id string) {
-		if id != "" && !fileIDSet[id] {
-			fileIDs = append(fileIDs, id)
-			fileIDSet[id] = true
-		}
-	}
-
 	for _, m := range msgs {
-		if m.Type == "FILE" || m.Type == "VOICE" {
-			addFileID(m.Content)
+		if (m.Type == "FILE" || m.Type == "VOICE") && m.Content != "" && !strings.HasPrefix(m.Content, "http://") && !strings.HasPrefix(m.Content, "https://") {
+			url := fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Content)
+			m.Attachment = url
+			m.Content = url
 		}
-		if m.Sender != nil {
-			addFileID(m.Sender.ProfilePictureUrl)
-		}
-	}
-
-	if len(fileIDs) == 0 {
-		return
-	}
-
-	urls, err := s.FileClient.GetPresignedURLs(ctx, fileIDs)
-	if err != nil {
-		log.Printf("Error getting presigned URLs for messages: %v", err)
-		return
-	}
-
-	for _, m := range msgs {
-		if m.Type == "FILE" || m.Type == "VOICE" {
-			if url, ok := urls[m.Content]; ok {
-				m.Attachment = url
-				m.Content = url
-			}
-		}
-		if m.Sender != nil {
-			if url, ok := urls[m.Sender.ProfilePictureUrl]; ok {
-				m.Sender.ProfilePictureUrl = url
-			}
+		if m.Sender != nil && m.Sender.ProfilePictureUrl != "" && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "http://") && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "https://") {
+			m.Sender.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Sender.ProfilePictureUrl)
 		}
 	}
 }
 
 func (s *ChatService) enrichChatRoomsWithPresignedURLs(ctx context.Context, rooms []ChatRoom) {
-	if s.FileClient == nil || len(rooms) == 0 {
+	if len(rooms) == 0 {
 		return
 	}
-	fileIDs := make([]string, 0)
-	fileIDSet := make(map[string]bool)
-
-	addFileID := func(id string) {
-		if id != "" && !fileIDSet[id] {
-			fileIDs = append(fileIDs, id)
-			fileIDSet[id] = true
+	for i := range rooms {
+		if rooms[i].Target != nil && rooms[i].Target.ProfilePictureUrl != "" && !strings.HasPrefix(rooms[i].Target.ProfilePictureUrl, "http://") && !strings.HasPrefix(rooms[i].Target.ProfilePictureUrl, "https://") {
+			rooms[i].Target.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, rooms[i].Target.ProfilePictureUrl)
 		}
-	}
-
-	for _, r := range rooms {
-		addFileID(r.Target.ProfilePictureUrl)
-		if r.LatestMessage != nil {
-			if r.LatestMessage.Type == "FILE" || r.LatestMessage.Type == "VOICE" {
-				addFileID(r.LatestMessage.Content)
+		if rooms[i].IsGroup && rooms[i].Avatar != "" && !strings.HasPrefix(rooms[i].Avatar, "http://") && !strings.HasPrefix(rooms[i].Avatar, "https://") {
+			rooms[i].Avatar = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, rooms[i].Avatar)
+		}
+		if rooms[i].LatestMessage != nil {
+			m := rooms[i].LatestMessage
+			if (m.Type == "FILE" || m.Type == "VOICE") && m.Content != "" && !strings.HasPrefix(m.Content, "http://") && !strings.HasPrefix(m.Content, "https://") {
+				url := fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Content)
+				m.Attachment = url
+				m.Content = url
 			}
 		}
 	}
+}
 
-	if len(fileIDs) == 0 {
+func (s *ChatService) SendToUser(userID string, payload interface{}) {
+	s.mu.RLock()
+	conn, online := s.connections[userID]
+	mu := s.writeMutexes[userID]
+	s.mu.RUnlock()
+
+	if !online || conn == nil || mu == nil {
 		return
 	}
 
-	urls, err := s.FileClient.GetPresignedURLs(ctx, fileIDs)
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("Error getting presigned URLs for chat rooms: %v", err)
+		logger.Err(err).Error("Failed to marshal single user payload")
 		return
 	}
 
-	for i := range rooms {
-		if url, ok := urls[rooms[i].Target.ProfilePictureUrl]; ok {
-			rooms[i].Target.ProfilePictureUrl = url
+	mu.Lock()
+	_ = conn.WriteMessage(websocket.TextMessage, payloadBytes)
+	mu.Unlock()
+}
+
+func (s *ChatService) IsInCall(ctx context.Context, username string) bool {
+	if db.RedisClient == nil {
+		return false
+	}
+	exists, err := db.RedisClient.Exists(ctx, "incall:"+username).Result()
+	return err == nil && exists > 0
+}
+
+func (s *ChatService) IsPreparedForCall(ctx context.Context, caller, callee string) bool {
+	if db.RedisClient == nil {
+		return false
+	}
+	exists, err := db.RedisClient.Exists(ctx, "prepared_for_call:"+caller+":"+callee).Result()
+	return err == nil && exists > 0
+}
+
+func (s *ChatService) PrepareCall(ctx context.Context, caller, callee string) {
+	if db.RedisClient == nil {
+		return
+	}
+	db.RedisClient.Set(ctx, "prepared_for_call:"+caller+":"+callee, "true", 2*time.Minute)
+}
+
+func (s *ChatService) InitCall(ctx context.Context, callerID string, calleeUsername string) error {
+	if s.UserClient == nil {
+		return fmt.Errorf("user client not initialized")
+	}
+
+	// Resolve caller username
+	callerResp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{UserId: callerID})
+	if err != nil || callerResp == nil {
+		return exception.NewAppException(exception.UserNotFound)
+	}
+	callerUsername := callerResp.Username
+
+	// Check caller call status
+	if s.IsInCall(ctx, callerUsername) {
+		return exception.NewAppException(exception.AlreadyInCall)
+	}
+
+	// Check callee call status
+	if s.IsInCall(ctx, calleeUsername) {
+		return exception.NewAppException(exception.TargetAlreadyInCall)
+	}
+
+	// Prepare call in Redis
+	s.PrepareCall(ctx, callerUsername, calleeUsername)
+	return nil
+}
+
+func (s *ChatService) StartGroupCall(ctx context.Context, callID string, callerUsername string, chatID string, isVideoCall bool) error {
+	if s.UserClient == nil {
+		return fmt.Errorf("user client not initialized")
+	}
+
+	if s.IsInCall(ctx, callerUsername) {
+		return exception.NewAppException(exception.AlreadyInCall)
+	}
+
+	caller, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: callerUsername})
+	if err != nil || caller == nil {
+		return exception.NewAppException(exception.UserNotFound)
+	}
+
+	now := time.Now()
+	content := "Cuộc gọi nhóm"
+	if isVideoCall {
+		content = "Cuộc gọi video nhóm"
+	}
+
+	falseVal := false
+	msg := &model.Message{
+		ID:          uuid.New().String(),
+		ChatID:      chatID,
+		SenderID:    caller.UserId,
+		RecipientID: "", // Group message
+		Content:     content,
+		Timestamp:   now,
+		Type:        "CALL",
+		Status:      "SENT",
+		CallID:      callID,
+		CallAt:      &now,
+		IsVideoCall: &isVideoCall,
+		IsAnswered:  &falseVal,
+	}
+	s.SaveMessage(msg)
+
+	enriched := s.EnrichMessage(msg)
+	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
+
+	// Broadcast call to all group members
+	s.BroadcastToChat(chatID, enriched)
+
+	// Update call state in Redis for the caller
+	if db.RedisClient != nil {
+		db.RedisClient.Set(ctx, "incall:"+callerUsername, callID, 0)
+		db.RedisClient.SAdd(ctx, "call:"+callID, callerUsername)
+		db.RedisClient.SAdd(ctx, "call_uuid:"+callID, caller.UserId)
+	}
+
+	return nil
+}
+
+func (s *ChatService) StartCall(ctx context.Context, callID string, callerUsername, calleeUsername string, isVideoCall bool) error {
+	if s.UserClient == nil {
+		return fmt.Errorf("user client not initialized")
+	}
+
+	anyInCall := s.IsInCall(ctx, callerUsername) || s.IsInCall(ctx, calleeUsername)
+	preparedForCall := s.IsPreparedForCall(ctx, callerUsername, calleeUsername)
+	if anyInCall || !preparedForCall {
+		return exception.NewAppException(exception.NotReadyForCall)
+	}
+
+	// Resolve caller info
+	caller, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: callerUsername})
+	if err != nil || caller == nil {
+		return exception.NewAppException(exception.UserNotFound)
+	}
+
+	// Resolve callee info
+	callee, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{Username: calleeUsername})
+	if err != nil || callee == nil {
+		return exception.NewAppException(exception.UserNotFound)
+	}
+
+	// Get or create direct chat
+	chatID, err := s.GetOrCreateDirectChat(caller.UserId, callee.UserId)
+	if err != nil {
+		return err
+	}
+
+	// Create and save Call message to MongoDB
+	now := time.Now()
+	content := "Cuộc gọi thoại"
+	if isVideoCall {
+		content = "Cuộc gọi video"
+	}
+
+	falseVal := false
+	msg := &model.Message{
+		ID:          uuid.New().String(),
+		ChatID:      chatID,
+		SenderID:    caller.UserId,
+		RecipientID: callee.UserId,
+		Content:     content,
+		Timestamp:   now,
+		Type:        "CALL",
+		Status:      "SENT",
+		CallID:      callID,
+		CallAt:      &now,
+		IsVideoCall: &isVideoCall,
+		IsAnswered:  &falseVal,
+	}
+	s.SaveMessage(msg)
+
+	enriched := s.EnrichMessage(msg)
+
+	// Enrich with presigned URLs (consistent with other messages)
+	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
+
+	// Broadcast call notification to chat and callee
+	s.BroadcastToChat(chatID, enriched)
+	s.SendToUser(callee.UserId, enriched)
+
+	// Update call state in Redis
+	if db.RedisClient != nil {
+		db.RedisClient.Set(ctx, "incall:"+callerUsername, callID, 0)
+		db.RedisClient.Set(ctx, "incall:"+calleeUsername, callID, 0)
+		db.RedisClient.SAdd(ctx, "call:"+callID, calleeUsername, callerUsername)
+		db.RedisClient.SAdd(ctx, "call_uuid:"+callID, caller.UserId, callee.UserId)
+	}
+
+	return nil
+}
+
+func (s *ChatService) AnswerCall(ctx context.Context, callID string) error {
+	if db.MsgCollection == nil {
+		return fmt.Errorf("message collection not initialized")
+	}
+
+	now := time.Now()
+	answered := true
+	_, err := db.MsgCollection.UpdateOne(ctx, bson.M{"call_id": callID}, bson.M{
+		"$set": bson.M{
+			"is_answered": &answered,
+			"answer_at":   &now,
+		},
+	})
+	return err
+}
+
+func (s *ChatService) AnswerGroupCall(ctx context.Context, callID string, userID string) error {
+	if db.RedisClient == nil {
+		return nil
+	}
+
+	// Resolve username
+	user, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{UserId: userID})
+	if err != nil || user == nil {
+		return nil
+	}
+
+	db.RedisClient.Set(ctx, "incall:"+user.Username, callID, 0)
+	db.RedisClient.SAdd(ctx, "call:"+callID, user.Username)
+	db.RedisClient.SAdd(ctx, "call_uuid:"+callID, userID)
+	return nil
+}
+
+func (s *ChatService) RejectCall(ctx context.Context, callID string, userID string) error {
+	if db.MsgCollection == nil {
+		return fmt.Errorf("message collection not initialized")
+	}
+
+	now := time.Now()
+	rejected := true
+	_, err := db.MsgCollection.UpdateOne(ctx, bson.M{"call_id": callID}, bson.M{
+		"$set": bson.M{
+			"is_rejected": &rejected,
+			"end_at":      &now,
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.EndCall(ctx, callID)
+}
+
+func (s *ChatService) EndCall(ctx context.Context, callID string) error {
+	if db.MsgCollection == nil {
+		return fmt.Errorf("message collection not initialized")
+	}
+
+	// Update endAt in MongoDB
+	now := time.Now()
+	_, err := db.MsgCollection.UpdateOne(ctx, bson.M{"call_id": callID}, bson.M{
+		"$set": bson.M{
+			"end_at": &now,
+		},
+	})
+	if err != nil {
+		logger.Err(err).Error("Failed to update end_at in MongoDB for call %s", callID)
+	}
+
+	if db.RedisClient == nil {
+		return nil
+	}
+
+	// Retrieve call members and user IDs from Redis
+	usernames, _ := db.RedisClient.SMembers(ctx, "call:"+callID).Result()
+	userIDs, _ := db.RedisClient.SMembers(ctx, "call_uuid:"+callID).Result()
+
+	if len(usernames) > 0 {
+		for _, uname := range usernames {
+			db.RedisClient.Del(ctx, "incall:"+uname)
 		}
-		if rooms[i].LatestMessage != nil {
-			if rooms[i].LatestMessage.Type == "FILE" || rooms[i].LatestMessage.Type == "VOICE" {
-				if url, ok := urls[rooms[i].LatestMessage.Content]; ok {
-					rooms[i].LatestMessage.Attachment = url
-					rooms[i].LatestMessage.Content = url
+
+		// Also clean up prepared flags (only relevant for 1-1 but safe to attempt)
+		for _, u1 := range usernames {
+			for _, u2 := range usernames {
+				if u1 != u2 {
+					db.RedisClient.Del(ctx, "prepared_for_call:"+u1+":"+u2)
 				}
 			}
 		}
+
+		db.RedisClient.Del(ctx, "call:"+callID)
+		db.RedisClient.Del(ctx, "call_uuid:"+callID)
+
+		// Broadcast END_CALL command to all members
+		payload := map[string]interface{}{
+			"command": "END_CALL",
+			"id":      callID,
+		}
+		for _, uid := range userIDs {
+			s.SendToUser(uid, payload)
+		}
+	} else {
+		logger.Warn("No members to end call %s in Redis", callID)
 	}
+
+	return nil
+}
+
+func (s *ChatService) EndCallByMemberUsername(ctx context.Context, username string) error {
+	if db.RedisClient == nil {
+		return nil
+	}
+	callID, err := db.RedisClient.Get(ctx, "incall:"+username).Result()
+	if err != nil || callID == "" {
+		return nil
+	}
+	return s.EndCall(ctx, callID)
 }

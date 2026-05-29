@@ -13,7 +13,7 @@ import (
 
 func (s *PostService) CreatePost(ctx context.Context, authorID, content, privacy string, fileIDs []string) (*model.Post, error) {
 	content = strings.TrimSpace(content)
-	
+
 	cleanFileIDs := make([]string, 0)
 	for _, id := range fileIDs {
 		if id != "" {
@@ -149,14 +149,11 @@ func (s *PostService) GetPostsOfUser(ctx context.Context, authorUsername string,
 	validPosts := make([]*model.Post, 0, len(posts))
 	for _, post := range posts {
 		if err := s.ValidateViewPost(ctx, post, currentUserID); err == nil {
-			post.Author = s.ResolveAuthor(ctx, post.AuthorID)
-			if post.OriginalPost != nil {
-				post.OriginalPost.Author = s.ResolveAuthor(ctx, post.OriginalAuthorID)
-			}
 			validPosts = append(validPosts, post)
 		}
 	}
 
+	s.ResolveAuthors(ctx, validPosts)
 	s.enrichPostsWithPresignedURLs(ctx, validPosts)
 	return validPosts, nil
 }
@@ -167,13 +164,7 @@ func (s *PostService) GetAllPosts(ctx context.Context, pageable Pageable) ([]*mo
 		return nil, err
 	}
 
-	for _, post := range posts {
-		post.Author = s.ResolveAuthor(ctx, post.AuthorID)
-		if post.OriginalPost != nil {
-			post.OriginalPost.Author = s.ResolveAuthor(ctx, post.OriginalAuthorID)
-		}
-	}
-
+	s.ResolveAuthors(ctx, posts)
 	s.enrichPostsWithPresignedURLs(ctx, posts)
 	return posts, nil
 }
@@ -192,13 +183,11 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 	validPosts := make([]*model.Post, 0, len(posts))
 	for _, post := range posts {
 		if err := s.ValidateViewPost(ctx, post, currentUserID); err == nil {
-			post.Author = s.ResolveAuthor(ctx, post.AuthorID)
-			if post.OriginalPost != nil {
-				post.OriginalPost.Author = s.ResolveAuthor(ctx, post.OriginalAuthorID)
-			}
 			validPosts = append(validPosts, post)
 		}
 	}
+
+	s.ResolveAuthors(ctx, validPosts)
 
 	if pageType == PageTypeRelevant && s.KeywordInteractor != nil {
 		ids := make([]string, 0, len(validPosts))

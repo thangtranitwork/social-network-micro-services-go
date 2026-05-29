@@ -15,6 +15,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 // ANSI color codes
@@ -34,6 +37,7 @@ const (
 	LevelInfo  Level = "INFO"
 	LevelWarn  Level = "WARN"
 	LevelError Level = "ERROR"
+	LevelFatal Level = "FATAL"
 )
 
 // Fields represents a map of log context
@@ -128,6 +132,12 @@ func (e *Entry) Error(format string, args ...interface{}) {
 	logMessage(LevelError, colorRed, fmt.Sprintf(format, args...), e.fields)
 }
 
+// Fatal prints a FATAL level log with the chained fields and exits the program
+func (e *Entry) Fatal(format string, args ...interface{}) {
+	logMessage(LevelFatal, colorRed, fmt.Sprintf(format, args...), e.fields)
+	os.Exit(1)
+}
+
 // --- Package-level direct logging (without fields) ---
 
 // Info logs immediately at INFO level
@@ -143,6 +153,11 @@ func Warn(format string, args ...interface{}) {
 // Error logs immediately at ERROR level
 func Error(format string, args ...interface{}) {
 	NewEntry().Error(format, args...)
+}
+
+// Fatal logs immediately at FATAL level and exits the program
+func Fatal(format string, args ...interface{}) {
+	NewEntry().Fatal(format, args...)
 }
 
 // --- Package-level entry points for chained logging ---
@@ -258,11 +273,12 @@ func initLogger() {
 			logLevels[strings.TrimSpace(p)] = true
 		}
 	} else {
-		// Default to all 3 levels
+		// Default to all levels
 		logLevels = map[string]bool{
 			"INFO":  true,
 			"WARN":  true,
 			"ERROR": true,
+			"FATAL": true,
 		}
 	}
 
@@ -324,7 +340,7 @@ func serializeVal(v interface{}) string {
 	if v == nil {
 		return `""`
 	}
-	
+
 	var str string
 	if err, ok := v.(error); ok {
 		str = err.Error()
@@ -349,6 +365,14 @@ func serializeVal(v interface{}) string {
 	}
 
 	return str
+}
+
+func isTTY() bool {
+	fileInfo, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
 }
 
 // Internal logging helper
@@ -387,45 +411,51 @@ func logMessage(level Level, color string, message string, ctx map[string]interf
 
 	fileLine := fmt.Sprintf("%s [%s] %s%s\n", timestamp, level, message, ctxFileStr)
 
-	if logFile != nil {
+	// If stdout is NOT redirected, write to logFile directly
+	if logFile != nil && isTTY() {
 		_, _ = logFile.WriteString(fileLine)
 	}
 
-	// 2. Format colored log for console (stdout), filtered by LOG_LEVELS
+	// 2. Format log for console (stdout), filtered by LOG_LEVELS
 	if logLevels[string(level)] {
-		// Make a copy of ctx for console so we can exclude long fields inline
-		consoleCtx := make(map[string]interface{})
-		for k, v := range ctx {
-			if k != "req_body" && k != "resp_body" {
-				consoleCtx[k] = v
+		if isTTY() {
+			// Make a copy of ctx for console so we can exclude long fields inline
+			consoleCtx := make(map[string]interface{})
+			for k, v := range ctx {
+				if k != "req_body" && k != "resp_body" {
+					consoleCtx[k] = v
+				}
 			}
-		}
 
-		ctxStr := ""
-		if len(consoleCtx) > 0 {
-			ctxStr = " " + colorGray + "|" + colorReset
-			for k, v := range consoleCtx {
-				ctxStr += fmt.Sprintf(" %s=%s", colorCyan+k+colorReset, serializeVal(v))
+			ctxStr := ""
+			if len(consoleCtx) > 0 {
+				ctxStr = " " + colorGray + "|" + colorReset
+				for k, v := range consoleCtx {
+					ctxStr += fmt.Sprintf(" %s=%s", colorCyan+k+colorReset, serializeVal(v))
+				}
 			}
-		}
 
-		extraConsole := ""
-		if hasReq {
-			prettyReq := prettyPrintJSON(fmt.Sprintf("%v", reqBodyVal))
-			extraConsole += "\n  " + colorYellow + "► Request Body:" + colorReset + "\n" + prettyReq
-		}
-		if hasResp {
-			prettyResp := prettyPrintJSON(fmt.Sprintf("%v", respBodyVal))
-			extraConsole += "\n  " + colorCyan + "◄ Response Body:" + colorReset + "\n" + prettyResp
-		}
+			extraConsole := ""
+			if hasReq {
+				prettyReq := prettyPrintJSON(fmt.Sprintf("%v", reqBodyVal))
+				extraConsole += "\n  " + colorYellow + "► Request Body:" + colorReset + "\n" + prettyReq
+			}
+			if hasResp {
+				prettyResp := prettyPrintJSON(fmt.Sprintf("%v", respBodyVal))
+				extraConsole += "\n  " + colorCyan + "◄ Response Body:" + colorReset + "\n" + prettyResp
+			}
 
-		fmt.Fprintf(os.Stdout, "%s %s[%s]%s %s%s%s\n",
-			timestamp,
-			color, level, colorReset,
-			message,
-			ctxStr,
-			extraConsole,
-		)
+			fmt.Fprintf(os.Stdout, "%s %s[%s]%s %s%s%s\n",
+				timestamp,
+				color, level, colorReset,
+				message,
+				ctxStr,
+				extraConsole,
+			)
+		} else {
+			// If redirected, write the clean, single-line format directly to stdout
+			fmt.Fprint(os.Stdout, fileLine)
+		}
 	}
 }
 
@@ -448,8 +478,11 @@ func (w bodyLogWriter) WriteString(s string) (int, error) {
 func GinMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// Skip logging for long-running log streams and WebSocket connections
-		if path == "/logs/stream" || strings.Contains(path, "/ws") || strings.Contains(path, "/stream") {
+		isWebSocket := strings.ToLower(c.GetHeader("Upgrade")) == "websocket"
+		// Skip logging for telemetry, log streams, health checks, and WebSocket connections
+		if path == "/logs/stream" || path == "/debug/profiler" || path == "/debug/profiler/reset" ||
+			path == "/logs" || path == "/profiler" || path == "/containers" || path == "/health" ||
+			strings.Contains(path, "/ws") || strings.Contains(path, "/stream") || isWebSocket {
 			c.Next()
 			return
 		}
@@ -522,8 +555,103 @@ func GinMiddleware() gin.HandlerFunc {
 
 		if status >= 500 {
 			logBuilder.Error("%s", msg)
-		}  else {
+		} else {
 			logBuilder.Info("%s", msg)
 		}
+	}
+}
+
+// TraceMiddleware is a Gin middleware that extracts or generates trace and request IDs.
+func TraceMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		traceID := c.GetHeader("X-Trace-ID")
+		if traceID == "" {
+			traceID = c.GetHeader("x-trace-id")
+		}
+		if traceID == "" {
+			traceID = uuid.New().String()
+		}
+
+		requestID := c.GetHeader("X-Request-ID")
+		if requestID == "" {
+			requestID = c.GetHeader("x-request-id")
+		}
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+
+		c.Writer.Header().Set("X-Trace-ID", traceID)
+		c.Writer.Header().Set("X-Request-ID", requestID)
+
+		c.Set("trace_id", traceID)
+		c.Set("request_id", requestID)
+
+		ctx := context.WithValue(c.Request.Context(), "trace_id", traceID)
+		ctx = context.WithValue(ctx, "request_id", requestID)
+		c.Request = c.Request.WithContext(ctx)
+
+		c.Next()
+	}
+}
+
+// UnaryClientInterceptor passes trace_id and request_id over gRPC metadata.
+func UnaryClientInterceptor() grpc.UnaryClientInterceptor {
+	return func(
+		ctx context.Context,
+		method string,
+		req, reply interface{},
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		traceID, _ := ctx.Value("trace_id").(string)
+		requestID, _ := ctx.Value("request_id").(string)
+
+		md, ok := metadata.FromOutgoingContext(ctx)
+		if !ok {
+			md = metadata.New(nil)
+		} else {
+			md = md.Copy()
+		}
+
+		if traceID != "" {
+			md.Set("x-trace-id", traceID)
+		}
+		if requestID != "" {
+			md.Set("x-request-id", requestID)
+		}
+
+		ctx = metadata.NewOutgoingContext(ctx, md)
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+// UnaryServerInterceptor extracts trace_id and request_id from incoming gRPC metadata.
+func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		md, ok := metadata.FromIncomingContext(ctx)
+		var traceID, requestID string
+		if ok {
+			if vals := md.Get("x-trace-id"); len(vals) > 0 {
+				traceID = vals[0]
+			}
+			if vals := md.Get("x-request-id"); len(vals) > 0 {
+				requestID = vals[0]
+			}
+		}
+
+		if traceID != "" {
+			ctx = context.WithValue(ctx, "trace_id", traceID)
+		}
+		if requestID != "" {
+			ctx = context.WithValue(ctx, "request_id", requestID)
+		}
+
+		return handler(ctx, req)
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"social-network-go/admin-service/model"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 )
 
 type AdminRepository interface {
@@ -25,6 +24,10 @@ type AdminRepository interface {
 	QueryWeekPostStats(ctx context.Context, week, year int) (map[string]int, error)
 	QueryMonthPostStats(ctx context.Context, month, year int) (map[string]int, error)
 	QueryYearPostStats(ctx context.Context, year int) (map[string]int, error)
+
+	DeletePost(ctx context.Context, postID string) error
+	SuspendUser(ctx context.Context, userID string, duration time.Duration) error
+	UnsuspendUser(ctx context.Context, userID string) error
 }
 
 type Neo4jAdminRepository struct{}
@@ -45,17 +48,23 @@ func (r *Neo4jAdminRepository) GetUsersStatistics(ctx context.Context) (*model.U
 		}, nil
 	}
 
+	var totalUsers int64
+	var notVerifiedUsers int64
+	if db.PostgresDB != nil {
+		db.PostgresDB.Table("accounts").Count(&totalUsers)
+		db.PostgresDB.Table("accounts").Where("is_verified = ?", false).Count(&notVerifiedUsers)
+	}
+
 	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
 
 	res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		query := `
-			MATCH (u:User)<-[:HAS_INFO]-(a:Account)
-			WITH date() AS today, u, a
+			MATCH (u:User)
+			WITH date() AS today, u
 			RETURN count(u) AS totalUsers,
-				   count(CASE WHEN a.isVerified = false THEN 1 END) AS notVerifiedUsers,
 				   count(CASE WHEN date(u.createdAt) = today THEN 1 END) AS newUsersToday,
-				   count(CASE WHEN u.createdAt.week = today.week AND u.createdAt.year = today.year THEN 1 END) AS newUsersThisWeek,
+				   count(CASE WHEN u.createdAt.week = today.week AND u.createdAt.weekYear = today.weekYear THEN 1 END) AS newUsersThisWeek,
 				   count(CASE WHEN u.createdAt.month = today.month AND u.createdAt.year = today.year THEN 1 END) AS newUsersThisMonth,
 				   count(CASE WHEN u.createdAt.year = today.year THEN 1 END) AS newUsersThisYear
 		`
@@ -65,14 +74,19 @@ func (r *Neo4jAdminRepository) GetUsersStatistics(ctx context.Context) (*model.U
 		}
 		if res.Next(ctx) {
 			vals := res.Record().Values
-			return &model.UserStatisticsResponse{
+			stat := &model.UserStatisticsResponse{
 				TotalUsers:        getIntVal(vals[0]),
-				NotVerifiedUsers:  getIntVal(vals[1]),
-				NewUsersToday:     getIntVal(vals[2]),
-				NewUsersThisWeek:  getIntVal(vals[3]),
-				NewUsersThisMonth: getIntVal(vals[4]),
-				NewUsersThisYear:  getIntVal(vals[5]),
-			}, nil
+				NotVerifiedUsers:  0,
+				NewUsersToday:     getIntVal(vals[1]),
+				NewUsersThisWeek:  getIntVal(vals[2]),
+				NewUsersThisMonth: getIntVal(vals[3]),
+				NewUsersThisYear:  getIntVal(vals[4]),
+			}
+			if db.PostgresDB != nil {
+				stat.TotalUsers = int(totalUsers)
+				stat.NotVerifiedUsers = int(notVerifiedUsers)
+			}
+			return stat, nil
 		}
 		return &model.UserStatisticsResponse{}, nil
 	})
@@ -109,8 +123,8 @@ func (r *Neo4jAdminRepository) GetPostsStatistics(ctx context.Context) (*model.P
 				   count(CASE WHEN post.privacy = "PRIVATE" THEN 1 END) AS privatePostCount,
 				   count(CASE WHEN post.deletedAt IS NOT NULL THEN 1 END) AS deletedPostCount,
 				   count(CASE WHEN date(post.createdAt) = today THEN 1 END) AS newPostsToday,
-				   count(CASE WHEN post.createdAt.week = today.week THEN 1 END) AS newPostsThisWeek,
-				   count(CASE WHEN post.createdAt.month = today.month THEN 1 END) AS newPostsThisMonth,
+				   count(CASE WHEN post.createdAt.week = today.week AND post.createdAt.weekYear = today.weekYear THEN 1 END) AS newPostsThisWeek,
+				   count(CASE WHEN post.createdAt.month = today.month AND post.createdAt.year = today.year THEN 1 END) AS newPostsThisMonth,
 				   count(CASE WHEN post.createdAt.year = today.year THEN 1 END) AS newPostsThisYear
 		`
 		res, err := tx.Run(ctx, query, nil)
@@ -179,11 +193,8 @@ func (r *Neo4jAdminRepository) GetPostsList(ctx context.Context, skip, limit int
 		list := make([]model.PostResponse, 0)
 		for res.Next(ctx) {
 			vals := res.Record().Values
-			
-			createdAtTime := time.Now()
-			if val, ok := vals[3].(dbtype.Time); ok {
-				createdAtTime = val.Time()
-			}
+
+			createdAtTime := getTimeVal(vals[3])
 
 			pfID := formatFileURL(vals[11])
 
@@ -237,27 +248,28 @@ func (r *Neo4jAdminRepository) GetUsersList(ctx context.Context, skip, limit int
 
 	res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		query := `
-			MATCH (u:User)<-[:HAS_INFO]-(a:Account)
-			WITH u, a
+			MATCH (u:User)
+			WITH u
 			ORDER BY u.createdAt DESC
 			SKIP $skip LIMIT $limit
 			
 			OPTIONAL MATCH (u)-[:HAS_PROFILE_PICTURE]->(pf:File)
-			WITH u, a, pf
+			WITH u, pf
 			OPTIONAL MATCH (u)-[:FRIEND]-(friend:User)
-			WITH u, a, pf, count(DISTINCT friend) as friendCount
+			WITH u, pf, count(DISTINCT friend) as friendCount
 			OPTIONAL MATCH (u)-[:POSTED]->(post:Post) WHERE post.deletedAt IS NULL
-			WITH u, a, pf, friendCount, count(DISTINCT post) as postCount
+			WITH u, pf, friendCount, count(DISTINCT post) as postCount
 			OPTIONAL MATCH (u)-[:COMMENTED]->(comment:Comment)
-			WITH u, a, pf, friendCount, postCount, count(DISTINCT comment) as commentCount
+			WITH u, pf, friendCount, postCount, count(DISTINCT comment) as commentCount
 			OPTIONAL MATCH (u)-[:SENT_FRIEND_REQUEST]->(reqSent:User)
-			WITH u, a, pf, friendCount, postCount, commentCount, count(DISTINCT reqSent) as requestSentCount
+			WITH u, pf, friendCount, postCount, commentCount, count(DISTINCT reqSent) as requestSentCount
 			OPTIONAL MATCH (u)<-[:SENT_FRIEND_REQUEST]-(reqRecv:User)
-			WITH u, a, pf, friendCount, postCount, commentCount, requestSentCount, count(DISTINCT reqRecv) as requestReceivedCount
+			WITH u, pf, friendCount, postCount, commentCount, requestSentCount, count(DISTINCT reqRecv) as requestReceivedCount
 			OPTIONAL MATCH (u)-[:BLOCK]->(blocked:User)
-			RETURN u.id, u.givenName, u.familyName, u.username, a.email, u.bio, u.birthdate, u.createdAt,
-				   friendCount, postCount, pf.id AS pfId, a.isVerified AS verified,
-				   commentCount, requestSentCount, requestReceivedCount, count(DISTINCT blocked) AS blockCount
+			RETURN u.id, u.givenName, u.familyName, u.username, u.bio, u.birthdate, u.createdAt,
+				   friendCount, postCount, pf.id AS pfId,
+				   commentCount, requestSentCount, requestReceivedCount, count(DISTINCT blocked) AS blockCount,
+				   u.suspended, u.suspendedUntil
 		`
 		res, err := tx.Run(ctx, query, map[string]interface{}{
 			"skip":  int64(skip),
@@ -269,39 +281,54 @@ func (r *Neo4jAdminRepository) GetUsersList(ctx context.Context, skip, limit int
 		list := make([]model.UserDetailResponse, 0)
 		for res.Next(ctx) {
 			vals := res.Record().Values
-			
-			regTime := time.Now()
-			if val, ok := vals[7].(dbtype.LocalDateTime); ok {
-				regTime = val.Time()
-			}
 
-			pfID := formatFileURL(vals[10])
+			regTime := getTimeVal(vals[6])
+
+			pfID := formatFileURL(vals[9])
 
 			birth := ""
-			if val, ok := vals[6].(dbtype.Date); ok {
-				birth = val.Time().Format("2006-01-02")
+			if t := getTimeVal(vals[5]); !t.IsZero() {
+				birth = t.Format("2006-01-02")
+			}
+
+			suspendedVal := false
+			if vals[14] != nil {
+				suspendedVal = vals[14].(bool)
+			}
+			suspendedUntilVal := ""
+			if vals[15] != nil {
+				suspendedUntilVal = getStringVal(vals[15])
+			}
+			if suspendedVal && suspendedUntilVal != "" {
+				if untilTime, err := time.Parse(time.RFC3339, suspendedUntilVal); err == nil {
+					if time.Now().After(untilTime) {
+						suspendedVal = false
+					}
+				}
 			}
 
 			u := model.UserDetailResponse{
-				ID:                getStringVal(vals[0]),
-				GivenName:         getStringVal(vals[1]),
-				FamilyName:        getStringVal(vals[2]),
-				Username:          getStringVal(vals[3]),
-				Email:             getStringVal(vals[4]),
-				Bio:               getStringVal(vals[5]),
-				Birthdate:         birth,
-				RegistrationDate:  regTime,
-				FriendCount:       getIntVal(vals[8]),
-				PostCount:         getIntVal(vals[9]),
-				MessageCount:      0,
-				CommentCount:      getIntVal(vals[12]),
-				CallCount:         0,
-				RequestSentCount:  getIntVal(vals[13]),
-				RequestReceivedCount: getIntVal(vals[14]),
-				UploadedFileCount: 0,
-				BlockCount:        getIntVal(vals[15]),
-				ProfilePictureUrl: pfID,
-				Verified:          vals[11] != nil && vals[11].(bool),
+				ID:                   getStringVal(vals[0]),
+				GivenName:            getStringVal(vals[1]),
+				FamilyName:           getStringVal(vals[2]),
+				Username:             getStringVal(vals[3]),
+				Email:                "",
+				Bio:                  getStringVal(vals[4]),
+				Birthdate:            birth,
+				RegistrationDate:     regTime,
+				FriendCount:          getIntVal(vals[7]),
+				PostCount:            getIntVal(vals[8]),
+				MessageCount:         0,
+				CommentCount:         getIntVal(vals[10]),
+				CallCount:            0,
+				RequestSentCount:     getIntVal(vals[11]),
+				RequestReceivedCount: getIntVal(vals[12]),
+				UploadedFileCount:    0,
+				BlockCount:           getIntVal(vals[13]),
+				ProfilePictureUrl:    pfID,
+				Verified:             false,
+				Suspended:            suspendedVal,
+				SuspendedUntil:       suspendedUntilVal,
 			}
 			list = append(list, u)
 		}
@@ -310,7 +337,37 @@ func (r *Neo4jAdminRepository) GetUsersList(ctx context.Context, skip, limit int
 	if err != nil {
 		return nil, err
 	}
-	return res.([]model.UserDetailResponse), nil
+
+	list := res.([]model.UserDetailResponse)
+
+	// Fetch details from Postgres
+	if len(list) > 0 && db.PostgresDB != nil {
+		var userIDs []string
+		for _, u := range list {
+			userIDs = append(userIDs, u.ID)
+		}
+
+		type AccountMini struct {
+			ID         string `gorm:"column:id"`
+			Email      string `gorm:"column:email"`
+			IsVerified bool   `gorm:"column:is_verified"`
+		}
+		var accounts []AccountMini
+		if err := db.PostgresDB.Table("accounts").Where("id IN ?", userIDs).Find(&accounts).Error; err == nil {
+			accMap := make(map[string]AccountMini)
+			for _, acc := range accounts {
+				accMap[acc.ID] = acc
+			}
+			for i := range list {
+				if acc, exists := accMap[list[i].ID]; exists {
+					list[i].Email = acc.Email
+					list[i].Verified = acc.IsVerified
+				}
+			}
+		}
+	}
+
+	return list, nil
 }
 
 func (r *Neo4jAdminRepository) QueryWeekUserStats(ctx context.Context, week, year int) (map[string]int, error) {
@@ -322,7 +379,7 @@ func (r *Neo4jAdminRepository) QueryWeekUserStats(ctx context.Context, week, yea
 	defer session.Close(ctx)
 	_, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		res, err := tx.Run(ctx,
-			`MATCH (u:User) WHERE u.createdAt.week=$week AND u.createdAt.year=$year
+			`MATCH (u:User) WHERE u.createdAt.week=$week AND u.createdAt.weekYear=$year
 			 RETURN u.createdAt.dayOfWeek AS dayOfWeek, count(*) AS total`,
 			map[string]interface{}{"week": int64(week), "year": int64(year)})
 		if err != nil {
@@ -404,7 +461,7 @@ func (r *Neo4jAdminRepository) QueryWeekPostStats(ctx context.Context, week, yea
 	defer session.Close(ctx)
 	_, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		res, err := tx.Run(ctx,
-			`MATCH (post:Post) WHERE post.createdAt.week=$week AND post.createdAt.year=$year
+			`MATCH (post:Post) WHERE post.createdAt.week=$week AND post.createdAt.weekYear=$year
 			 RETURN post.createdAt.dayOfWeek AS dayOfWeek, count(*) AS total`,
 			map[string]interface{}{"week": int64(week), "year": int64(year)})
 		if err != nil {
@@ -475,4 +532,94 @@ func (r *Neo4jAdminRepository) QueryYearPostStats(ctx context.Context, year int)
 		return nil, nil
 	})
 	return stats, err
+}
+
+func (r *Neo4jAdminRepository) DeletePost(ctx context.Context, postID string) error {
+	if db.Neo4jDriver == nil {
+		return nil
+	}
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		query := `
+			MATCH (p:Post {id: $postID})
+			SET p.deletedAt = datetime()
+			RETURN p
+		`
+		_, err := tx.Run(ctx, query, map[string]interface{}{"postID": postID})
+		return nil, err
+	})
+	return err
+}
+
+func (r *Neo4jAdminRepository) SuspendUser(ctx context.Context, userID string, duration time.Duration) error {
+	until := time.Now().Add(duration)
+
+	// Dual write 1: Update Neo4j User Node
+	if db.Neo4jDriver != nil {
+		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(ctx)
+
+		_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $userID})
+				SET u.suspended = true, u.suspendedUntil = $until
+				RETURN u
+			`
+			_, err := tx.Run(ctx, query, map[string]interface{}{
+				"userID": userID,
+				"until":  until.Format(time.RFC3339),
+			})
+			return nil, err
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Dual write 2: Set Redis key auth:suspended:user:<id> with TTL
+	if db.RedisClient != nil {
+		redisKey := "auth:suspended:user:" + userID
+		err := db.RedisClient.Set(ctx, redisKey, "true", duration).Err()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *Neo4jAdminRepository) UnsuspendUser(ctx context.Context, userID string) error {
+	// Dual write 1: Update Neo4j User Node
+	if db.Neo4jDriver != nil {
+		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(ctx)
+
+		_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $userID})
+				SET u.suspended = false, u.suspendedUntil = ""
+				RETURN u
+			`
+			_, err := tx.Run(ctx, query, map[string]interface{}{
+				"userID": userID,
+			})
+			return nil, err
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	// Dual write 2: Delete Redis key auth:suspended:user:<id>
+	if db.RedisClient != nil {
+		redisKey := "auth:suspended:user:" + userID
+		err := db.RedisClient.Del(ctx, redisKey).Err()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

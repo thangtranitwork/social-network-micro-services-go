@@ -116,7 +116,7 @@ services:
     environment:
       - NEO4J_URI=neo4j://neo4j:7687
       - REDIS_ADDR=redis:6379
-      - USER_GRPC_ADDR=user-service:50052
+      - USER_GRPC_ADDR=user-service:10052
     networks:
       - sn_network
 
@@ -174,19 +174,19 @@ services:
         SERVICE: api-gateway
     container_name: prod-api-gateway
     ports:
-      - "2003:2003"
+      - "11111:11111"
     depends_on:
       - auth-service
       - user-service
       - post-service
       - chat-service
     environment:
-      - GATEWAY_PORT=2003
-      - AUTH_GRPC_ADDR=auth-service:50051
-      - AUTH_HTTP_ADDR=http://auth-service:8081
-      - USER_HTTP_ADDR=http://user-service:8082
-      - POST_HTTP_ADDR=http://post-service:8083
-      - CHAT_HTTP_ADDR=http://chat-service:8084
+      - GATEWAY_PORT=11111
+      - AUTH_GRPC_ADDR=auth-service:10051
+      - AUTH_HTTP_ADDR=http://auth-service:10081
+      - USER_HTTP_ADDR=http://user-service:10082
+      - POST_HTTP_ADDR=http://post-service:10083
+      - CHAT_HTTP_ADDR=http://chat-service:10084
     networks:
       - sn_network
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -28,18 +29,18 @@ type Config struct {
 }
 
 type Notification struct {
-	ID               string               `json:"id"`
-	Action           string               `json:"action"`
-	TargetType       string               `json:"targetType"`
-	TargetID         string               `json:"targetId"`
-	PostID           string               `json:"postId,omitempty"`
-	CommentID        string               `json:"commentId,omitempty"`
-	RepliedCommentID string               `json:"repliedCommentId,omitempty"`
-	Username         string               `json:"username"`
-	ShortenedContent string               `json:"shortenedContent"`
-	Creator          CreatorInfo          `json:"creator"`
-	SentAt           time.Time            `json:"sentAt"`
-	IsRead           bool                 `json:"isRead"`
+	ID               string      `json:"id"`
+	Action           string      `json:"action"`
+	TargetType       string      `json:"targetType"`
+	TargetID         string      `json:"targetId"`
+	PostID           string      `json:"postId,omitempty"`
+	CommentID        string      `json:"commentId,omitempty"`
+	RepliedCommentID string      `json:"repliedCommentId,omitempty"`
+	Username         string      `json:"username"`
+	ShortenedContent string      `json:"shortenedContent"`
+	Creator          CreatorInfo `json:"creator"`
+	SentAt           time.Time   `json:"sentAt"`
+	IsRead           bool        `json:"isRead"`
 }
 
 type CreatorInfo struct {
@@ -223,9 +224,9 @@ func (s *NotificationService) handleNotificationEvent(event NotificationKafkaEve
 				res, err := tx.Run(ctx, checkQuery, map[string]interface{}{
 					"creatorId":  event.CreatorID,
 					"receiverId": event.ReceiverID,
-					"action":      event.Action,
-					"targetId":    event.TargetID,
-					"targetType":  event.TargetType,
+					"action":     event.Action,
+					"targetId":   event.TargetID,
+					"targetType": event.TargetType,
 				})
 				if err == nil && res.Next(ctx) {
 					notifID = res.Record().Values[0].(string)
@@ -359,7 +360,7 @@ func (s *NotificationService) fetchAndPushNotification(receiverID string, notifI
 		}
 		if res.Next(ctx) {
 			vals := res.Record().Values
-			
+
 			sentAtTime := time.Now()
 			if val, ok := vals[5].(dbtype.LocalDateTime); ok {
 				sentAtTime = val.Time()
@@ -431,7 +432,7 @@ func main() {
 	}
 
 	cfg := &Config{
-		HTTPPort:  getEnv("NOTIF_HTTP_PORT", "8085"),
+		HTTPPort:  getEnv("NOTIF_HTTP_PORT", "10085"),
 		KafkaAddr: getEnv("KAFKA_ADDR", "localhost:9092"),
 		Neo4jURI:  getEnv("NEO4J_URI", "neo4j://localhost:7687"),
 		Neo4jUser: getEnv("NEO4J_USER", "neo4j"),
@@ -453,6 +454,7 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(logger.TraceMiddleware())
 	r.Use(profiler.Middleware("notification-service"))
 	r.Use(logger.GinMiddleware())
 
@@ -564,7 +566,7 @@ func main() {
 			var list []Notification
 			for res.Next(ctx) {
 				vals := res.Record().Values
-				
+
 				sentAtTime := time.Now()
 				if val, ok := vals[5].(dbtype.LocalDateTime); ok {
 					sentAtTime = val.Time()
@@ -747,7 +749,45 @@ func main() {
 	})
 
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "notification-service"})
+		status := "UP"
+		details := gin.H{}
+
+		// Check Neo4j
+		if driver == nil {
+			status = "DOWN"
+			details["neo4j"] = "DOWN (driver not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := driver.VerifyConnectivity(ctx); err != nil {
+				status = "DOWN"
+				details["neo4j"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["neo4j"] = "UP"
+			}
+			cancel()
+		}
+
+		// Check Kafka
+		kafkaConn, err := net.DialTimeout("tcp", cfg.KafkaAddr, 2*time.Second)
+		if err != nil {
+			status = "DOWN"
+			details["kafka"] = "DOWN (" + err.Error() + ")"
+		} else {
+			details["kafka"] = "UP"
+			kafkaConn.Close()
+		}
+
+		httpStatus := http.StatusOK
+		if status == "DOWN" {
+			httpStatus = http.StatusServiceUnavailable
+		}
+
+		c.JSON(httpStatus, gin.H{
+			"status":    status,
+			"service":   "notification-service",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"details":   details,
+		})
 	})
 
 	logger.Info("Notification Service HTTP Server listening on port %s", cfg.HTTPPort)

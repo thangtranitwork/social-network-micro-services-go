@@ -34,6 +34,6 @@ run_service "api-gateway" "./bin/api-gateway"
 
 echo ""
 echo "====== All Services Started! ======"
-echo "API Gateway is listening on: http://localhost:2003"
+echo "API Gateway is listening on: http://localhost:11111"
 echo "To view logs in real-time, run: tail -f logs/*.log"
 echo "To stop all services, run: ./stop-dev.sh"

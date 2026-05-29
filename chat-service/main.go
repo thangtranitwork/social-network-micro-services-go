@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"social-network-go/chat-service/config"
 	"social-network-go/chat-service/db"
@@ -30,7 +32,7 @@ func main() {
 
 	// 2. Initialize Service & Handler
 	chatSvc := service.NewChatService(cfg)
-	
+
 	// Initialize File Client
 	fileClient, err := service.NewGrpcFileClient(cfg.FileGrpcAddr)
 	if err != nil {
@@ -44,12 +46,71 @@ func main() {
 	// 3. Setup HTTP/WebSocket Server (Gin)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(logger.TraceMiddleware())
 	r.Use(profiler.Middleware("chat-service"))
 	r.Use(logger.GinMiddleware())
 
 	// Health Check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "chat-service"})
+		status := "UP"
+		details := gin.H{}
+
+		// Check MongoDB
+		if db.MongoClient == nil {
+			status = "DOWN"
+			details["mongodb"] = "DOWN (client not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := db.MongoClient.Ping(ctx, nil); err != nil {
+				status = "DOWN"
+				details["mongodb"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["mongodb"] = "UP"
+			}
+			cancel()
+		}
+
+		// Check Neo4j
+		if db.Neo4jDriver == nil {
+			status = "DOWN"
+			details["neo4j"] = "DOWN (driver not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := db.Neo4jDriver.VerifyConnectivity(ctx); err != nil {
+				status = "DOWN"
+				details["neo4j"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["neo4j"] = "UP"
+			}
+			cancel()
+		}
+
+		// Check Redis
+		if db.RedisClient == nil {
+			status = "DOWN"
+			details["redis"] = "DOWN (client not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := db.RedisClient.Ping(ctx).Err(); err != nil {
+				status = "DOWN"
+				details["redis"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["redis"] = "UP"
+			}
+			cancel()
+		}
+
+		httpStatus := http.StatusOK
+		if status == "DOWN" {
+			httpStatus = http.StatusServiceUnavailable
+		}
+
+		c.JSON(httpStatus, gin.H{
+			"status":    status,
+			"service":   "chat-service",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"details":   details,
+		})
 	})
 
 	// Profiler
@@ -84,8 +145,15 @@ func main() {
 	r.PUT("/v1/chat/edit", chatHandler.EditMessage)
 	r.DELETE("/v1/chat/:messageId", chatHandler.DeleteMessage)
 
-	// Stringee token generation
-	r.POST("/v1/stringee/create-token", chatHandler.CreateStringeeToken)
+	// WebRTC ICE server configuration (STUN/TURN)
+	r.GET("/v1/call/ice-servers", chatHandler.GetICEServers)
+
+	// Group chat routes
+	r.POST("/v1/chat/groups", chatHandler.CreateGroupChat)
+	r.POST("/v1/chat/groups/:chatId/members", chatHandler.AddMembersToGroup)
+	r.DELETE("/v1/chat/groups/:chatId/members/:userId", chatHandler.RemoveMemberFromGroup)
+	r.PUT("/v1/chat/groups/:chatId", chatHandler.UpdateGroupChat)
+	r.GET("/v1/chat/groups/:chatId/members", chatHandler.GetGroupMembers)
 
 	logger.Info("Chat HTTP & WS Server starting on port %s", cfg.HTTPPort)
 	if err := r.Run(":" + cfg.HTTPPort); err != nil {

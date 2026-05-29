@@ -2,7 +2,7 @@ package redis
 
 import (
 	"context"
-	"log"
+	"social-network-go/logger"
 	"social-network-go/user-service/config"
 
 	"github.com/redis/go-redis/v9"
@@ -20,9 +20,9 @@ func InitRedis(cfg *config.Config) *redis.Client {
 	ctx := context.Background()
 	_, err := RedisClient.Ping(ctx).Result()
 	if err != nil {
-		log.Printf("Warning: Failed to connect to Redis for user-service: %v", err)
+		logger.Err(err).Warn("Failed to connect to Redis for user-service")
 	} else {
-		log.Println("Successfully connected to Redis for user-service")
+		logger.Info("Successfully connected to Redis for user-service")
 	}
 
 	return RedisClient

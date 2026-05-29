@@ -12,18 +12,21 @@ import (
 	"social-network-go/profiler"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 var allowedOrigins = map[string]bool{
-	"http://localhost:3000":      true,
-	"http://localhost:3001":      true,
+	"http://localhost:3000":     true,
+	"http://localhost:3001":     true,
+	"http://localhost:10000":    true,
 	"http://192.168.1.48:3000":  true,
+	"http://192.168.1.48:10000": true,
 	"https://pocpoc.online":     true,
 	"https://www.pocpoc.online": true,
 }
 
 // SetupRoutes registers all routing policies for API Gateway
-func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceClient) {
+func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceClient, rdb *redis.Client) {
 	// CORS Setup - Must use explicit origin (not wildcard) when credentials: true
 	r.Use(func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
@@ -44,6 +47,25 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 		c.Next()
 	})
 
+	// Rate limit definitions
+	publicRateLimit := middleware.RateLimiter(rdb, 100, 1*time.Minute)
+	authRateLimit := middleware.RateLimiter(rdb, 300, 1*time.Minute)
+	authMiddleware := middleware.AuthRequired(authClient)
+
+	adminOnly := func(c *gin.Context) {
+		role, exists := c.Get("role")
+		if !exists || role != "ADMIN" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":      403,
+				"message":   "FORBIDDEN_ADMIN_ONLY",
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -53,62 +75,90 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 		})
 	})
 
-	// Logs & Dashboard
+	// Public HTML Dashboards (Authentication is checked inside JS using localStorage token)
 	r.GET("/logs", handler.LogDashboard)
-	r.GET("/logs/stream", handler.StreamLogs)
-
-	// Profiler
+	r.GET("/containers", handler.ContainersDashboard)
 	r.GET("/profiler", handler.ProfilerDashboard)
-	r.GET("/debug/profiler", handler.ProfilerAggregatorHandler(cfg))
-	r.POST("/debug/profiler/reset", func(c *gin.Context) {
-		profiler.Reset()
 
-		services := []string{
-			cfg.AuthHttpAddr,
-			cfg.UserHttpAddr,
-			cfg.PostHttpAddr,
-			cfg.ChatHttpAddr,
-			cfg.NotificationHttpAddr,
-			cfg.FileHttpAddr,
-			cfg.AdminHttpAddr,
-		}
+	// Protected Admin Observability APIs
+	adminObsGroup := r.Group("")
+	adminObsGroup.Use(authMiddleware, adminOnly)
+	{
+		adminObsGroup.GET("/logs/stream", handler.StreamLogs)
+		adminObsGroup.GET("/logs/search", handler.SearchLogs)
+		adminObsGroup.GET("/debug/profiler", handler.ProfilerAggregatorHandler(cfg))
+		adminObsGroup.POST("/debug/profiler/reset", func(c *gin.Context) {
+			serviceQuery := c.Query("service")
 
-		client := &http.Client{Timeout: 100 * time.Millisecond}
-		for _, addr := range services {
-			go func(addr string) {
-				_, _ = client.Post(addr+"/debug/profiler/reset", "application/json", nil)
-			}(addr)
-		}
+			services := map[string]string{
+				"auth-service":         cfg.AuthHttpAddr,
+				"user-service":         cfg.UserHttpAddr,
+				"post-service":         cfg.PostHttpAddr,
+				"chat-service":         cfg.ChatHttpAddr,
+				"notification-service": cfg.NotificationHttpAddr,
+				"file-service":         cfg.FileHttpAddr,
+				"admin-service":        cfg.AdminHttpAddr,
+			}
 
-		c.JSON(http.StatusOK, gin.H{"status": "success"})
-	})
+			client := &http.Client{Timeout: 100 * time.Millisecond}
+
+			if serviceQuery != "" {
+				if serviceQuery == "api-gateway" {
+					profiler.Reset()
+				} else if addr, exists := services[serviceQuery]; exists {
+					_, _ = client.Post(addr+"/debug/profiler/reset", "application/json", nil)
+				} else {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid service name"})
+					return
+				}
+			} else {
+				// Reset all
+				profiler.Reset()
+				for _, addr := range services {
+					go func(addr string) {
+						_, _ = client.Post(addr+"/debug/profiler/reset", "application/json", nil)
+					}(addr)
+				}
+			}
+
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+	}
 
 	// Public Routes (No authentication required)
-	r.Any("/v1/auth/*any", proxy.ProxyTo(cfg.AuthHttpAddr))
-	r.Any("/v1/register/*any", proxy.ProxyTo(cfg.AuthHttpAddr))
-	r.Any("/v1/register", proxy.ProxyTo(cfg.AuthHttpAddr))
-	r.Any("/v1/forgot-password", proxy.ProxyTo(cfg.AuthHttpAddr))
-	r.Any("/v1/reset-password", proxy.ProxyTo(cfg.AuthHttpAddr))
-	r.Any("/v1/update-password", proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.Any("/v1/auth/*any", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.Any("/v1/register/*any", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.Any("/v1/register", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.Any("/v1/forgot-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.Any("/v1/reset-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.Any("/v1/update-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.Any("/v1/stringee/answer", publicRateLimit, proxy.ProxyTo(cfg.ChatHttpAddr))
+	r.Any("/v1/stringee/event", publicRateLimit, proxy.ProxyTo(cfg.ChatHttpAddr))
 
 	// Authenticated Routes (Requires JWT Token)
-	authMiddleware := middleware.AuthRequired(authClient)
 
 	// File Service Routes
-	r.GET("/v1/files/:id", proxy.ProxyTo(cfg.FileHttpAddr))
-	r.POST("/v1/files/upload", authMiddleware, proxy.ProxyTo(cfg.FileHttpAddr))
-	r.POST("/v1/files/upload-multiple", authMiddleware, proxy.ProxyTo(cfg.FileHttpAddr))
-	r.GET("/v1/files/upload/presigned", authMiddleware, proxy.ProxyTo(cfg.FileHttpAddr))
-	r.GET("/v1/files/:id/presigned", authMiddleware, proxy.ProxyTo(cfg.FileHttpAddr))
-	r.DELETE("/v1/files/:id", authMiddleware, proxy.ProxyTo(cfg.FileHttpAddr))
-	r.POST("/v1/files/delete-multiple", authMiddleware, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.GET("/v1/files/:id", publicRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.POST("/v1/files/upload", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.POST("/v1/files/upload-multiple", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.GET("/v1/files/upload/presigned", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.GET("/v1/files/:id/presigned", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.DELETE("/v1/files/:id", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.POST("/v1/files/delete-multiple", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
 
 	authGroup := r.Group("")
-	authGroup.Use(authMiddleware)
+	authGroup.Use(authMiddleware, authRateLimit)
 	{
-		// Proxy to Admin Service
-		authGroup.Any("/v2/statistics/*any", proxy.ProxyTo(cfg.AdminHttpAddr))
-		authGroup.Any("/v2/statistics", proxy.ProxyTo(cfg.AdminHttpAddr))
+		// Proxy to Admin Service (Restricted to Admin role only)
+
+		adminGroup := authGroup.Group("")
+		adminGroup.Use(adminOnly)
+		{
+			adminGroup.Any("/v2/statistics/*any", proxy.ProxyTo(cfg.AdminHttpAddr))
+			adminGroup.Any("/v2/statistics", proxy.ProxyTo(cfg.AdminHttpAddr))
+			adminGroup.Any("/v1/admin/*any", proxy.ProxyTo(cfg.AdminHttpAddr))
+			adminGroup.Any("/v1/admin", proxy.ProxyTo(cfg.AdminHttpAddr))
+		}
 
 		// Proxy to User Service
 		authGroup.Any("/v1/users/*any", proxy.ProxyTo(cfg.UserHttpAddr))
@@ -141,8 +191,9 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 		// Proxy to Chat Service
 		authGroup.Any("/v1/chat/*any", proxy.ProxyTo(cfg.ChatHttpAddr))
 		authGroup.Any("/v1/chat", proxy.ProxyTo(cfg.ChatHttpAddr))
-		authGroup.Any("/v1/stringee/*any", proxy.ProxyTo(cfg.ChatHttpAddr))
-		authGroup.Any("/v1/stringee", proxy.ProxyTo(cfg.ChatHttpAddr))
+		authGroup.POST("/v1/stringee/create-token", proxy.ProxyTo(cfg.ChatHttpAddr))
+		authGroup.Any("/v1/call/*any", proxy.ProxyTo(cfg.ChatHttpAddr))
+		authGroup.Any("/v1/call", proxy.ProxyTo(cfg.ChatHttpAddr))
 
 		// Proxy to Notification Service
 		authGroup.Any("/v1/notifications/*any", proxy.ProxyTo(cfg.NotificationHttpAddr))

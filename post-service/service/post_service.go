@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	"social-network-go/logger"
 	"social-network-go/pb"
 	"social-network-go/post-service/config"
 	"social-network-go/post-service/model"
@@ -58,22 +58,25 @@ type KeywordInteractor interface {
 }
 
 type PostService struct {
-	Cfg         *config.Config
+	Cfg        *config.Config
 	Redis      *redis.Client
 	UserClient pb.UserServiceClient
 	Repo       repository.PostRepository
 
 	FileClient        FileClient
-	Notification     NotificationPublisher
+	Notification      NotificationPublisher
 	KeywordInteractor KeywordInteractor
 }
 
 func NewPostService(cfg *config.Config, repo repository.PostRepository) *PostService {
 	var userClient pb.UserServiceClient
-
-	conn, err := grpc.Dial(cfg.UserGrpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(
+		cfg.UserGrpcAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(logger.UnaryClientInterceptor()),
+	)
 	if err != nil {
-		log.Printf("Warning: failed to connect User gRPC %s: %v", cfg.UserGrpcAddr, err)
+		logger.Err(err).Warn("failed to connect User gRPC %s", cfg.UserGrpcAddr)
 	} else {
 		userClient = pb.NewUserServiceClient(conn)
 	}
@@ -117,7 +120,9 @@ func (s *PostService) ResolveAuthor(ctx context.Context, authorID string) model.
 		defer cancel()
 
 		resp, err := s.UserClient.GetCommonUserInfo(callCtx, &pb.UserRequest{UserId: authorID})
-		if err == nil && resp != nil {
+		if err != nil {
+			logger.Err(err).Error("Failed to get common user info for author %s", authorID)
+		} else if resp != nil {
 			info := model.AuthorInfo{
 				ID:                resp.UserId,
 				Username:          resp.Username,
@@ -134,6 +139,117 @@ func (s *PostService) ResolveAuthor(ctx context.Context, authorID string) model.
 	}
 
 	return model.AuthorInfo{ID: authorID}
+}
+
+func (s *PostService) ResolveAuthors(ctx context.Context, posts []*model.Post) {
+	if len(posts) == 0 {
+		return
+	}
+
+	uniqueIDsMap := make(map[string]bool)
+	for _, post := range posts {
+		if post.AuthorID != "" {
+			uniqueIDsMap[post.AuthorID] = true
+		}
+		if post.OriginalPost != nil && post.OriginalAuthorID != "" {
+			uniqueIDsMap[post.OriginalAuthorID] = true
+		}
+	}
+
+	if len(uniqueIDsMap) == 0 {
+		return
+	}
+
+	authorMap := make(map[string]model.AuthorInfo)
+	uncachedIDs := make([]string, 0, len(uniqueIDsMap))
+
+	if s.Redis != nil {
+		keys := make([]string, 0, len(uniqueIDsMap))
+		idToKey := make(map[string]string)
+		for id := range uniqueIDsMap {
+			key := fmt.Sprintf("user:profile:%s", id)
+			keys = append(keys, key)
+			idToKey[key] = id
+		}
+
+		vals, err := s.Redis.MGet(ctx, keys...).Result()
+		if err == nil {
+			for i, val := range vals {
+				if val != nil {
+					if strVal, ok := val.(string); ok && strVal != "" {
+						var info model.AuthorInfo
+						if json.Unmarshal([]byte(strVal), &info) == nil {
+							authorMap[info.ID] = info
+							continue
+						}
+					}
+				}
+				key := keys[i]
+				uncachedIDs = append(uncachedIDs, idToKey[key])
+			}
+		} else {
+			for id := range uniqueIDsMap {
+				uncachedIDs = append(uncachedIDs, id)
+			}
+		}
+	} else {
+		for id := range uniqueIDsMap {
+			uncachedIDs = append(uncachedIDs, id)
+		}
+	}
+
+	if len(uncachedIDs) > 0 && s.UserClient != nil {
+		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		resp, err := s.UserClient.GetUsersByIds(callCtx, &pb.UsersByIdsRequest{UserIds: uncachedIDs})
+		if err != nil {
+			logger.Err(err).Error("Failed to GetUsersByIds for %v", uncachedIDs)
+		} else if resp != nil && len(resp.Users) > 0 {
+			var pipe redis.Pipeliner
+			if s.Redis != nil {
+				pipe = s.Redis.Pipeline()
+			}
+
+			for _, u := range resp.Users {
+				info := model.AuthorInfo{
+					ID:                u.UserId,
+					Username:          u.Username,
+					GivenName:         u.GivenName,
+					FamilyName:        u.FamilyName,
+					ProfilePictureUrl: u.ProfilePictureId,
+				}
+				authorMap[info.ID] = info
+
+				if pipe != nil {
+					cacheKey := fmt.Sprintf("user:profile:%s", info.ID)
+					bytes, _ := json.Marshal(info)
+					_ = pipe.Set(ctx, cacheKey, string(bytes), 10*time.Minute)
+				}
+			}
+
+			if pipe != nil {
+				_, _ = pipe.Exec(ctx)
+			}
+		}
+	}
+
+	for _, post := range posts {
+		if post.AuthorID != "" {
+			if info, ok := authorMap[post.AuthorID]; ok {
+				post.Author = info
+			} else {
+				post.Author = model.AuthorInfo{ID: post.AuthorID}
+			}
+		}
+		if post.OriginalPost != nil && post.OriginalAuthorID != "" {
+			if info, ok := authorMap[post.OriginalAuthorID]; ok {
+				post.OriginalPost.Author = info
+			} else {
+				post.OriginalPost.Author = model.AuthorInfo{ID: post.OriginalAuthorID}
+			}
+		}
+	}
 }
 
 func validatePostRequest(content string, files []string) error {
@@ -184,108 +300,48 @@ func truncateByWord(s string) string {
 }
 
 func (s *PostService) enrichPostsWithPresignedURLs(ctx context.Context, posts []*model.Post) {
-	if s.FileClient == nil || len(posts) == 0 {
+	if len(posts) == 0 {
 		return
 	}
-	fileIDs := make([]string, 0)
-	fileIDSet := make(map[string]bool)
-	
-	addFileID := func(id string) {
-		if id != "" && !fileIDSet[id] {
-			fileIDs = append(fileIDs, id)
-			fileIDSet[id] = true
-		}
-	}
-
-	for _, post := range posts {
-		for _, fileID := range post.Files {
-			addFileID(fileID)
-		}
-		addFileID(post.Author.ProfilePictureUrl)
-		if post.OriginalPost != nil {
-			for _, fileID := range post.OriginalPost.Files {
-				addFileID(fileID)
-			}
-			addFileID(post.OriginalPost.Author.ProfilePictureUrl)
-		}
-	}
-
-	if len(fileIDs) == 0 {
-		return
-	}
-
-	urls, err := s.FileClient.GetPresignedURLs(ctx, fileIDs)
-	if err != nil {
-		log.Printf("Error getting presigned URLs for posts: %v", err)
-		return
-	}
-
 	for _, post := range posts {
 		for i, fileID := range post.Files {
-			if url, ok := urls[fileID]; ok {
-				post.Files[i] = url
+			if fileID != "" && !strings.HasPrefix(fileID, "http://") && !strings.HasPrefix(fileID, "https://") {
+				post.Files[i] = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, fileID)
 			}
 		}
 		post.Images = post.Files
-		if url, ok := urls[post.Author.ProfilePictureUrl]; ok {
-			post.Author.ProfilePictureUrl = url
+		if post.Author.ProfilePictureUrl != "" && !strings.HasPrefix(post.Author.ProfilePictureUrl, "http://") && !strings.HasPrefix(post.Author.ProfilePictureUrl, "https://") {
+			post.Author.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, post.Author.ProfilePictureUrl)
 		}
 		if post.OriginalPost != nil {
 			for i, fileID := range post.OriginalPost.Files {
-				if url, ok := urls[fileID]; ok {
-					post.OriginalPost.Files[i] = url
+				if fileID != "" && !strings.HasPrefix(fileID, "http://") && !strings.HasPrefix(fileID, "https://") {
+					post.OriginalPost.Files[i] = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, fileID)
 				}
 			}
 			post.OriginalPost.Images = post.OriginalPost.Files
-			if url, ok := urls[post.OriginalPost.Author.ProfilePictureUrl]; ok {
-				post.OriginalPost.Author.ProfilePictureUrl = url
+			if post.OriginalPost.Author.ProfilePictureUrl != "" && !strings.HasPrefix(post.OriginalPost.Author.ProfilePictureUrl, "http://") && !strings.HasPrefix(post.OriginalPost.Author.ProfilePictureUrl, "https://") {
+				post.OriginalPost.Author.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, post.OriginalPost.Author.ProfilePictureUrl)
 			}
 		}
 	}
 }
 
 func (s *PostService) enrichCommentsWithPresignedURLs(ctx context.Context, comments []*model.Comment) {
-	if s.FileClient == nil || len(comments) == 0 {
+	if len(comments) == 0 {
 		return
 	}
-	fileIDs := make([]string, 0)
-	fileIDSet := make(map[string]bool)
-
-	addFileID := func(id string) {
-		if id != "" && !fileIDSet[id] {
-			fileIDs = append(fileIDs, id)
-			fileIDSet[id] = true
-		}
-	}
-
-	for _, comment := range comments {
-		for _, fileID := range comment.Files {
-			addFileID(fileID)
-		}
-		addFileID(comment.Author.ProfilePictureUrl)
-	}
-
-	if len(fileIDs) == 0 {
-		return
-	}
-
-	urls, err := s.FileClient.GetPresignedURLs(ctx, fileIDs)
-	if err != nil {
-		log.Printf("Error getting presigned URLs for comments: %v", err)
-		return
-	}
-
 	for _, comment := range comments {
 		for i, fileID := range comment.Files {
-			if url, ok := urls[fileID]; ok {
-				comment.Files[i] = url
+			if fileID != "" && !strings.HasPrefix(fileID, "http://") && !strings.HasPrefix(fileID, "https://") {
+				comment.Files[i] = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, fileID)
 			}
 		}
-		if url, ok := urls[comment.FileUrl]; ok {
-			comment.FileUrl = url
+		if comment.FileUrl != "" && !strings.HasPrefix(comment.FileUrl, "http://") && !strings.HasPrefix(comment.FileUrl, "https://") {
+			comment.FileUrl = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, comment.FileUrl)
 		}
-		if url, ok := urls[comment.Author.ProfilePictureUrl]; ok {
-			comment.Author.ProfilePictureUrl = url
+		if comment.Author.ProfilePictureUrl != "" && !strings.HasPrefix(comment.Author.ProfilePictureUrl, "http://") && !strings.HasPrefix(comment.Author.ProfilePictureUrl, "https://") {
+			comment.Author.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, comment.Author.ProfilePictureUrl)
 		}
 	}
 }

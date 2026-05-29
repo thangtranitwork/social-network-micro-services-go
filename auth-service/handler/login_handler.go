@@ -49,15 +49,18 @@ func (h *AuthHandler) LoginAdmin(c *gin.Context) {
 		return
 	}
 
-	// Set HTTP-Only Cookie with Refresh Token
-	c.SetCookie("token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()), "/", "", false, true)
+	// Set HTTP-Only Cookie with Admin Refresh Token
+	c.SetCookie("admin_token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()), "/", "", false, true)
 
 	sendSuccess(c, TokenResp{Token: accessToken})
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	// Retrieve from Cookie
-	cookieToken, err := c.Cookie("token")
+	// Retrieve from Cookie: try admin_token first, then token
+	cookieToken, err := c.Cookie("admin_token")
+	if err != nil || cookieToken == "" {
+		cookieToken, err = c.Cookie("token")
+	}
 	if err != nil || cookieToken == "" {
 		exception.SendError(c, exception.Unauthorized)
 		return
@@ -78,12 +81,15 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	cookieToken, err := c.Cookie("token")
-	if err == nil && cookieToken != "" {
+	if cookieToken, err := c.Cookie("admin_token"); err == nil && cookieToken != "" {
+		_ = h.AuthSvc.Logout(cookieToken)
+	}
+	if cookieToken, err := c.Cookie("token"); err == nil && cookieToken != "" {
 		_ = h.AuthSvc.Logout(cookieToken)
 	}
 
-	// Delete cookie
+	// Delete cookies
+	c.SetCookie("admin_token", "", -1, "/", "", false, true)
 	c.SetCookie("token", "", -1, "/", "", false, true)
 
 	sendSuccess(c, gin.H{"message": "LOGGED_OUT_SUCCESSFULLY"})

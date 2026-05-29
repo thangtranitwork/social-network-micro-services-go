@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"social-network-go/api-gateway/config"
 	"social-network-go/profiler"
+	"sort"
 	"sync"
 )
 
@@ -219,4 +220,97 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// LogSearchResult represents a matched log line
+type LogSearchResult struct {
+	Service   string `json:"service"`
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+	RawLine   string `json:"rawLine"`
+}
 
+// SearchLogs searches all microservice log files for a specific request_id
+func SearchLogs(c *gin.Context) {
+	reqID := c.Query("request_id")
+	if reqID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request_id query param required"})
+		return
+	}
+
+	validServices := []string{
+		"api-gateway",
+		"auth-service",
+		"user-service",
+		"post-service",
+		"chat-service",
+		"notification-service",
+		"file-service",
+		"ai-service",
+		"admin-service",
+	}
+
+	results := []LogSearchResult{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, service := range validServices {
+		wg.Add(1)
+		go func(srvName string) {
+			defer wg.Done()
+			logFile := "logs/" + srvName + ".log"
+
+			file, err := os.Open(logFile)
+			if err != nil {
+				return // Ignore if file doesn't exist yet
+			}
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+			const maxCapacity = 1024 * 1024 // 1MB buffer limit
+			buf := make([]byte, maxCapacity)
+			scanner.Buffer(buf, maxCapacity)
+
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.Contains(line, reqID) {
+					timestamp := ""
+					level := ""
+					msg := line
+
+					// Extract timestamp and level: YYYY/MM/DD HH:MM:SS [LEVEL] message...
+					parts := strings.SplitN(line, " [", 2)
+					if len(parts) == 2 {
+						timestamp = parts[0]
+						subparts := strings.SplitN(parts[1], "] ", 2)
+						if len(subparts) == 2 {
+							level = subparts[0]
+							msg = subparts[1]
+						}
+					}
+
+					mu.Lock()
+					results = append(results, LogSearchResult{
+						Service:   srvName,
+						Timestamp: timestamp,
+						Level:     level,
+						Message:   msg,
+						RawLine:   line,
+					})
+					mu.Unlock()
+				}
+			}
+		}(service)
+	}
+
+	wg.Wait()
+
+	// Sort results chronologically by timestamp
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Timestamp == results[j].Timestamp {
+			return results[i].Service < results[j].Service
+		}
+		return results[i].Timestamp < results[j].Timestamp
+	})
+
+	c.JSON(http.StatusOK, results)
+}

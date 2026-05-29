@@ -26,7 +26,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	// Perform registration
-	verifyCode, err := h.AuthSvc.Register(req.Email, req.Password, req.GivenName, req.FamilyName, req.Birthdate)
+	verifyCode, err := h.AuthSvc.Register(req.Email, req.Password, req.GivenName, req.FamilyName, req.Birthdate, c.ClientIP())
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("Register failed")
 		if mapped, found := exception.MapAppError(err); found {
@@ -79,7 +79,7 @@ func (h *AuthHandler) ResendEmail(c *gin.Context) {
 		return
 	}
 
-	_, err := h.AuthSvc.ResendEmail(email)
+	_, err := h.AuthSvc.ResendEmail(email, c.ClientIP())
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("ResendEmail failed")
 		if mapped, found := exception.MapAppError(err); found {

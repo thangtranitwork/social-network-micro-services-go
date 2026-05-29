@@ -21,10 +21,10 @@ func (h *AdminHandler) GetUsersStatistics(c *gin.Context) {
 	stats.OnlineStatistics = h.svc.GetOnlineStatisticsLogs("")
 
 	now := time.Now()
-	_, isoWeek := now.ISOWeek()
+	isoYear, isoWeek := now.ISOWeek()
 	year := now.Year()
 	month := int(now.Month())
-	stats.ThisWeekStatistics = h.svc.QueryWeekUserStats(ctx, isoWeek, year)
+	stats.ThisWeekStatistics = h.svc.QueryWeekUserStats(ctx, isoWeek, isoYear)
 	stats.ThisMonthStatistics = h.svc.QueryMonthUserStats(ctx, month, year)
 	stats.ThisYearStatistics = h.svc.QueryYearUserStats(ctx, year)
 
@@ -38,8 +38,7 @@ func (h *AdminHandler) GetUsersWeekStatistics(c *gin.Context) {
 		fmt.Sscanf(weekStr, "%d-W%d", &year, &week)
 	}
 	if year == 0 || week == 0 {
-		_, week = time.Now().ISOWeek()
-		year = time.Now().Year()
+		year, week = time.Now().ISOWeek()
 	}
 	sendSuccess(c, h.svc.QueryWeekUserStats(c.Request.Context(), week, year))
 }
@@ -78,10 +77,10 @@ func (h *AdminHandler) GetPostsStatistics(c *gin.Context) {
 	}
 
 	pNow := time.Now()
-	_, pWeek := pNow.ISOWeek()
+	pIsoYear, pWeek := pNow.ISOWeek()
 	pYear := pNow.Year()
 	pMonth := int(pNow.Month())
-	stats.ThisWeekStatistics = h.svc.QueryWeekPostStats(ctx, pWeek, pYear)
+	stats.ThisWeekStatistics = h.svc.QueryWeekPostStats(ctx, pWeek, pIsoYear)
 	stats.ThisMonthStatistics = h.svc.QueryMonthPostStats(ctx, pMonth, pYear)
 	stats.ThisYearStatistics = h.svc.QueryYearPostStats(ctx, pYear)
 
@@ -95,8 +94,7 @@ func (h *AdminHandler) GetPostsWeekStatistics(c *gin.Context) {
 		fmt.Sscanf(weekStr, "%d-W%d", &year, &week)
 	}
 	if year == 0 || week == 0 {
-		_, week = time.Now().ISOWeek()
-		year = time.Now().Year()
+		year, week = time.Now().ISOWeek()
 	}
 	sendSuccess(c, h.svc.QueryWeekPostStats(c.Request.Context(), week, year))
 }

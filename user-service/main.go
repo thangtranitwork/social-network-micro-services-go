@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"social-network-go/user-service/config"
 	"social-network-go/user-service/db"
@@ -31,8 +33,8 @@ func main() {
 	redis.InitRedis(cfg)
 
 	// 4. Initialize Core Service & Handler
-	userSvc := service.NewUserService()
-	
+	userSvc := service.NewUserService(cfg)
+
 	// Initialize File Client
 	fileClient, err := service.NewGrpcFileClient(cfg.FileGrpcAddr)
 	if err != nil {
@@ -54,7 +56,50 @@ func main() {
 
 	// Health Check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "user-service"})
+		status := "UP"
+		details := gin.H{}
+
+		// Check Neo4j
+		if db.Neo4jDriver == nil {
+			status = "DOWN"
+			details["neo4j"] = "DOWN (driver not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := db.Neo4jDriver.VerifyConnectivity(ctx); err != nil {
+				status = "DOWN"
+				details["neo4j"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["neo4j"] = "UP"
+			}
+			cancel()
+		}
+
+		// Check Redis
+		if redis.RedisClient == nil {
+			status = "DOWN"
+			details["redis"] = "DOWN (client not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := redis.RedisClient.Ping(ctx).Err(); err != nil {
+				status = "DOWN"
+				details["redis"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["redis"] = "UP"
+			}
+			cancel()
+		}
+
+		httpStatus := http.StatusOK
+		if status == "DOWN" {
+			httpStatus = http.StatusServiceUnavailable
+		}
+
+		c.JSON(httpStatus, gin.H{
+			"status":    status,
+			"service":   "user-service",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"details":   details,
+		})
 	})
 
 	// Profiler

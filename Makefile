@@ -1,14 +1,17 @@
 .PHONY: all tidy build test run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean dev-restart
 
 # Environment defaults
-export PORT ?= 2003
-export AUTH_GRPC_PORT ?= 50051
-export AUTH_HTTP_PORT ?= 8081
-export USER_GRPC_PORT ?= 50052
-export USER_HTTP_PORT ?= 8082
-export POST_HTTP_PORT ?= 8083
-export CHAT_HTTP_PORT ?= 8084
-export NOTIF_HTTP_PORT ?= 8085
+export PORT ?= 11111
+export AUTH_GRPC_PORT ?= 10051
+export AUTH_HTTP_PORT ?= 10081
+export USER_GRPC_PORT ?= 10052
+export USER_HTTP_PORT ?= 10082
+export POST_HTTP_PORT ?= 10083
+export CHAT_HTTP_PORT ?= 10084
+export NOTIF_HTTP_PORT ?= 10085
+export FILE_GRPC_PORT ?= 10057
+export FILE_HTTP_PORT ?= 10087
+export ADMIN_HTTP_PORT ?= 10088
 
 all: tidy build
 

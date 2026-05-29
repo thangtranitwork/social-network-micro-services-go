@@ -7,16 +7,17 @@ import (
 )
 
 type Config struct {
-	Port           string
-	AuthGrpcAddr   string
-	AuthHttpAddr   string
-	UserHttpAddr   string
-	PostHttpAddr   string
-	ChatHttpAddr   string
-	ChatWsAddr     string
+	Port                 string
+	AuthGrpcAddr         string
+	AuthHttpAddr         string
+	UserHttpAddr         string
+	PostHttpAddr         string
+	ChatHttpAddr         string
+	ChatWsAddr           string
 	NotificationHttpAddr string
-	FileHttpAddr   string
-	AdminHttpAddr  string
+	FileHttpAddr         string
+	AdminHttpAddr        string
+	RedisAddr            string
 }
 
 func LoadConfig() *Config {
@@ -29,15 +30,16 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		Port:           getEnv("GATEWAY_PORT", "2003"), // Matching Spring Boot's port for seamless frontend compatibility
-		AuthGrpcAddr:   getEnv("AUTH_GRPC_ADDR", "localhost:50051"),
-		AuthHttpAddr:   getEnv("AUTH_HTTP_ADDR", "http://localhost:8081"),
-		UserHttpAddr:   getEnv("USER_HTTP_ADDR", "http://localhost:8082"),
-		PostHttpAddr:   getEnv("POST_HTTP_ADDR", "http://localhost:8083"),
-		ChatHttpAddr:   getEnv("CHAT_HTTP_ADDR", "http://localhost:8084"),
-		ChatWsAddr:     getEnv("CHAT_WS_ADDR", "ws://localhost:8084"),
-		NotificationHttpAddr: getEnv("NOTIFICATION_HTTP_ADDR", "http://localhost:8085"),
-		FileHttpAddr:   getEnv("FILE_HTTP_ADDR", "http://localhost:8087"),
-		AdminHttpAddr:  getEnv("ADMIN_HTTP_ADDR", "http://localhost:8088"),
+		Port:                 getEnv("GATEWAY_PORT", "11111"), // Matching Spring Boot's port for seamless frontend compatibility
+		AuthGrpcAddr:         getEnv("AUTH_GRPC_ADDR", "localhost:10051"),
+		AuthHttpAddr:         getEnv("AUTH_HTTP_ADDR", "http://localhost:10081"),
+		UserHttpAddr:         getEnv("USER_HTTP_ADDR", "http://localhost:10082"),
+		PostHttpAddr:         getEnv("POST_HTTP_ADDR", "http://localhost:10083"),
+		ChatHttpAddr:         getEnv("CHAT_HTTP_ADDR", "http://localhost:10084"),
+		ChatWsAddr:           getEnv("CHAT_WS_ADDR", "ws://localhost:10084"),
+		NotificationHttpAddr: getEnv("NOTIFICATION_HTTP_ADDR", "http://localhost:10085"),
+		FileHttpAddr:         getEnv("FILE_HTTP_ADDR", "http://localhost:10087"),
+		AdminHttpAddr:        getEnv("ADMIN_HTTP_ADDR", "http://localhost:10088"),
+		RedisAddr:            getEnv("REDIS_ADDR", "localhost:6379"),
 	}
 }

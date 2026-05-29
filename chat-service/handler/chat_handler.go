@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"fmt"
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,8 +11,6 @@ import (
 	"social-network-go/chat-service/service"
 	"social-network-go/exception"
 	"social-network-go/logger"
-
-	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -33,6 +31,11 @@ type ChatServiceInterface interface {
 	SendVoice(senderID, receiverUsername, fileID string) (*service.MessageResponse, error)
 	DeleteMessage(messageID, userID string) error
 	EditMessage(messageID, newContent, userID string) error
+	UpdateGroupChat(ctx context.Context, adminID string, chatID string, name string, avatar string) error
+	CreateGroupChat(ctx context.Context, adminID string, name string, memberIDs []string) (string, error)
+	AddMembersToGroup(ctx context.Context, adminID string, chatID string, memberIDs []string) error
+	RemoveMemberFromGroup(ctx context.Context, adminID string, chatID string, userID string) error
+	GetChatMembersDetails(chatID string) []*service.ChatUser
 }
 
 type ChatHandler struct {
@@ -160,34 +163,27 @@ func (h *ChatHandler) GetChatMessages(c *gin.Context) {
 	sendSuccess(c, messages)
 }
 
-func (h *ChatHandler) CreateStringeeToken(c *gin.Context) {
-	userID := getCurrentUser(c)
-	if userID == "" {
-		exception.SendError(c, exception.Unauthorized)
-		return
-	}
-
+// GetICEServers returns STUN/TURN ICE server configuration for WebRTC clients.
+func (h *ChatHandler) GetICEServers(c *gin.Context) {
 	cfg := config.LoadConfig()
-	now := time.Now()
-	exp := now.Add(24 * time.Hour).Unix()
 
-	claims := jwt.MapClaims{
-		"jti":       fmt.Sprintf("%s-%d", cfg.StringeeSid, now.Unix()),
-		"iss":       cfg.StringeeSid,
-		"exp":       exp,
-		"userId":    userID,
-		"rest_api":  true,
+	iceServers := []gin.H{
+		// Public Google STUN (always included)
+		{"urls": []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}},
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(cfg.StringeeSecret))
-	if err != nil {
-		logger.WithContext(c.Request.Context()).Err(err).Error("Failed to generate Stringee token")
-		exception.SendError(c, exception.AuthenticationFailed)
-		return
+	// Append TURN server only when configured
+	if cfg.TurnURL != "" {
+		iceServers = append(iceServers, gin.H{
+			"urls":       []string{cfg.TurnURL},
+			"username":   cfg.TurnUser,
+			"credential": cfg.TurnPass,
+		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"access_token": tokenString})
+	c.JSON(http.StatusOK, gin.H{
+		"iceServers": iceServers,
+	})
 }
 
 func (h *ChatHandler) SearchChats(c *gin.Context) {
@@ -370,4 +366,155 @@ func (h *ChatHandler) DeleteMessage(c *gin.Context) {
 		return
 	}
 	sendSuccess(c, nil)
+}
+
+func (h *ChatHandler) CreateGroupChat(c *gin.Context) {
+	userID := c.GetHeader("X-User-ID")
+	if userID == "" {
+		userID = getCurrentUser(c)
+	}
+	if userID == "" {
+		exception.SendError(c, exception.Unauthorized)
+		return
+	}
+
+	var req struct {
+		Name      string   `json:"name"`
+		MemberIDs []string `json:"memberIds"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	if req.Name == "" {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	chatID, err := h.ChatSvc.CreateGroupChat(c.Request.Context(), userID, req.Name, req.MemberIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	sendSuccess(c, gin.H{"chatId": chatID})
+}
+
+func (h *ChatHandler) AddMembersToGroup(c *gin.Context) {
+	userID := c.GetHeader("X-User-ID")
+	if userID == "" {
+		userID = getCurrentUser(c)
+	}
+	if userID == "" {
+		exception.SendError(c, exception.Unauthorized)
+		return
+	}
+
+	chatID := c.Param("chatId")
+	if chatID == "" {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	var req struct {
+		MemberIDs []string `json:"memberIds"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	err := h.ChatSvc.AddMembersToGroup(c.Request.Context(), userID, chatID, req.MemberIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	sendSuccess(c, gin.H{"status": "success"})
+}
+
+func (h *ChatHandler) RemoveMemberFromGroup(c *gin.Context) {
+	userID := c.GetHeader("X-User-ID")
+	if userID == "" {
+		userID = getCurrentUser(c)
+	}
+	if userID == "" {
+		exception.SendError(c, exception.Unauthorized)
+		return
+	}
+
+	chatID := c.Param("chatId")
+	targetUserID := c.Param("userId")
+	if chatID == "" || targetUserID == "" {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	err := h.ChatSvc.RemoveMemberFromGroup(c.Request.Context(), userID, chatID, targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	sendSuccess(c, gin.H{"status": "success"})
+}
+
+func (h *ChatHandler) UpdateGroupChat(c *gin.Context) {
+	userID := c.GetHeader("X-User-ID")
+	if userID == "" {
+		userID = getCurrentUser(c)
+	}
+	if userID == "" {
+		exception.SendError(c, exception.Unauthorized)
+		return
+	}
+
+	chatID := c.Param("chatId")
+	if chatID == "" {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	var req struct {
+		Name   string `json:"name"`
+		Avatar string `json:"avatar"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	err := h.ChatSvc.UpdateGroupChat(c.Request.Context(), userID, chatID, req.Name, req.Avatar)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	sendSuccess(c, gin.H{"status": "success"})
+}
+
+func (h *ChatHandler) GetGroupMembers(c *gin.Context) {
+	userID := c.GetHeader("X-User-ID")
+	if userID == "" {
+		userID = getCurrentUser(c)
+	}
+	if userID == "" {
+		exception.SendError(c, exception.Unauthorized)
+		return
+	}
+
+	chatID := c.Param("chatId")
+	if chatID == "" {
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	if !h.ChatSvc.IsMemberOfChat(userID, chatID) {
+		exception.SendError(c, exception.Unauthorized)
+		return
+	}
+
+	members := h.ChatSvc.GetChatMembersDetails(chatID)
+	sendSuccess(c, members)
 }

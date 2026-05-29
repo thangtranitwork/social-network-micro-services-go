@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -33,7 +35,11 @@ func main() {
 	redis.InitRedis(cfg)
 
 	// 4. Dial User Service via gRPC
-	userConn, err := grpc.Dial(cfg.UserGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	userConn, err := grpc.Dial(
+		cfg.UserGRPCAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(logger.UnaryClientInterceptor()),
+	)
 	if err != nil {
 		logger.Error("Failed to connect to User Service: %v", err)
 		os.Exit(1)
@@ -50,7 +56,9 @@ func main() {
 	authgrpc.StartGrpcServer(cfg.GRPCPort, authSvc)
 
 	// 6. Setup and Start HTTP/REST Server (Gin)
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(logger.TraceMiddleware())
 
 	// CORS Middleware
 	r.Use(func(c *gin.Context) {
@@ -69,7 +77,56 @@ func main() {
 
 	// Health Check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "auth-service"})
+		status := "UP"
+		details := gin.H{}
+
+		// Check PostgreSQL (GORM)
+		if db.DB == nil {
+			status = "DOWN"
+			details["postgres"] = "DOWN (DB client not initialized)"
+		} else {
+			sqlDB, err := db.DB.DB()
+			if err != nil {
+				status = "DOWN"
+				details["postgres"] = "DOWN (failed to get SQL DB client: " + err.Error() + ")"
+			} else {
+				ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+				if err := sqlDB.PingContext(ctx); err != nil {
+					status = "DOWN"
+					details["postgres"] = "DOWN (" + err.Error() + ")"
+				} else {
+					details["postgres"] = "UP"
+				}
+				cancel()
+			}
+		}
+
+		// Check Redis
+		if redis.RedisClient == nil {
+			status = "DOWN"
+			details["redis"] = "DOWN (client not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := redis.RedisClient.Ping(ctx).Err(); err != nil {
+				status = "DOWN"
+				details["redis"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["redis"] = "UP"
+			}
+			cancel()
+		}
+
+		httpStatus := http.StatusOK
+		if status == "DOWN" {
+			httpStatus = http.StatusServiceUnavailable
+		}
+
+		c.JSON(httpStatus, gin.H{
+			"status":    status,
+			"service":   "auth-service",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"details":   details,
+		})
 	})
 
 	// Profiler

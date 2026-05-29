@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"social-network-go/logger"
 	"social-network-go/pb"
 
 	"google.golang.org/grpc"
@@ -13,7 +14,11 @@ type GrpcFileClient struct {
 }
 
 func NewGrpcFileClient(addr string) (*GrpcFileClient, error) {
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(
+		addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(logger.UnaryClientInterceptor()),
+	)
 	if err != nil {
 		return nil, err
 	}

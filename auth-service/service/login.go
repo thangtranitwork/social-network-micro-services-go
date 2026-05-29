@@ -57,6 +57,13 @@ func (s *AuthService) validateLogin(ctx context.Context, account *model.Account)
 		return nil
 	}
 
+	// Check if user is suspended in Redis
+	suspendedKey := fmt.Sprintf("auth:suspended:user:%s", account.ID.String())
+	existsSuspended, err := red.RedisClient.Exists(ctx, suspendedKey).Result()
+	if err == nil && existsSuspended > 0 {
+		return fmt.Errorf("USER_SUSPENDED")
+	}
+
 	exists, err := red.RedisClient.Exists(ctx, loginLockKey(account.ID)).Result()
 	if err != nil {
 		return err

@@ -2,10 +2,10 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"social-network-go/chat-service/model"
@@ -82,6 +82,21 @@ func (m *MockChatService) DeleteMessage(messageID, userID string) error {
 func (m *MockChatService) EditMessage(messageID, newContent, userID string) error {
 	return m.Err
 }
+func (m *MockChatService) CreateGroupChat(ctx context.Context, adminID string, name string, memberIDs []string) (string, error) {
+	return "group-123", m.Err
+}
+func (m *MockChatService) AddMembersToGroup(ctx context.Context, adminID string, chatID string, memberIDs []string) error {
+	return m.Err
+}
+func (m *MockChatService) RemoveMemberFromGroup(ctx context.Context, adminID string, chatID string, userID string) error {
+	return m.Err
+}
+func (m *MockChatService) UpdateGroupChat(ctx context.Context, adminID string, chatID string, name string, avatar string) error {
+	return m.Err
+}
+func (m *MockChatService) GetChatMembersDetails(chatID string) []*service.ChatUser {
+	return []*service.ChatUser{}
+}
 
 func setupTestRouter(svc *MockChatService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -99,7 +114,7 @@ func setupTestRouter(svc *MockChatService) *gin.Engine {
 	r.POST("/v1/chat/send-voice", h.SendVoice)
 	r.PUT("/v1/chat/edit", h.EditMessage)
 	r.DELETE("/v1/chat/:messageId", h.DeleteMessage)
-	r.POST("/v1/stringee/create-token", h.CreateStringeeToken)
+	r.GET("/v1/call/ice-servers", h.GetICEServers)
 
 	return r
 }
@@ -158,20 +173,12 @@ func TestGetChatMessages(t *testing.T) {
 	}
 }
 
-func TestCreateStringeeToken(t *testing.T) {
-	os.Setenv("STRINGEE_SID", "sid123")
-	os.Setenv("STRINGEE_SECRET", "secret123")
-	defer func() {
-		os.Unsetenv("STRINGEE_SID")
-		os.Unsetenv("STRINGEE_SECRET")
-	}()
-
+func TestGetICEServers(t *testing.T) {
 	mockSvc := &MockChatService{}
 	r := setupTestRouter(mockSvc)
 	w := httptest.NewRecorder()
 
-	req, _ := http.NewRequest("POST", "/v1/stringee/create-token", nil)
-	req.Header.Set("X-User-ID", "user-1")
+	req, _ := http.NewRequest("GET", "/v1/call/ice-servers", nil)
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
