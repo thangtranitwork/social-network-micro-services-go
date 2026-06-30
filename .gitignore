@@ -1,0 +1,49 @@
+# Local environment
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs and runtime output
+logs/
+**/logs/
+*.log
+profiler/*_profiler.test.json
+profiler/profiler_stats_*.json
+
+# Build output and binaries
+bin/
+dist/
+build/
+tmp/
+*.out
+*.test
+*.prof
+coverage.out
+api-gateway/api-gateway
+
+# Go workspace/cache artifacts
+vendor/
+
+# Node/Next.js frontend
+node_modules/
+.next/
+out/
+.turbo/
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary/generated local files
+artifacts/
+*.resolved
