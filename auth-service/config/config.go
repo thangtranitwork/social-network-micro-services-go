@@ -27,6 +27,9 @@ type Config struct {
 	PasswordResetDuration time.Duration
 	EmailRateLimitCount   int
 	EmailRateLimitWindow  time.Duration
+	GoogleClientID        string
+	GoogleClientSecret    string
+	GoogleRedirectURL     string
 }
 
 func LoadConfig() *Config {
@@ -71,5 +74,8 @@ func LoadConfig() *Config {
 		PasswordResetDuration: 15 * time.Minute,
 		EmailRateLimitCount:   emailLimitCount,
 		EmailRateLimitWindow:  emailLimitWindow,
+		GoogleClientID:        getEnv("GOOGLE_CLIENT_ID", ""),
+		GoogleClientSecret:    getEnv("GOOGLE_CLIENT_SECRET", ""),
+		GoogleRedirectURL:     getEnv("GOOGLE_REDIRECT_URL", "http://localhost:11111/v1/auth/google/callback"),
 	}
 }

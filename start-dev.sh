@@ -29,6 +29,8 @@ run_service "chat-service" "./bin/chat-service"
 run_service "notification-service" "./bin/notification-service"
 run_service "ai-service" "./bin/ai-service"
 run_service "admin-service" "./bin/admin-service"
+run_service "search-service" "./bin/search-service"
+run_service "story-service" "./bin/story-service"
 sleep 1
 run_service "api-gateway" "./bin/api-gateway"
 

@@ -89,6 +89,7 @@
                     <a href="/containers" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">🐳 Containers</a>
                     <a href="/logs" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">📜 Logs</a>
                     <a href="/profiler" class="px-4 py-1.5 rounded-lg text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]">📊 Profiler</a>
+                    <a href="/monitor" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">🌐 Service Map</a>
                 </div>
             </div>
             
@@ -244,6 +245,16 @@
                         Admin
                         <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-admin-service"></span>
                     </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="search-service">
+                        Search
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-search-service"></span>
+                    </button>
+
+                    <button class="filter-btn bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 text-xs px-3 py-1.5 rounded-md font-semibold flex items-center gap-1.5" data-filter="story-service">
+                        Story
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-900" id="status-story-service"></span>
+                    </button>
                 </div>
             </div>
 
@@ -252,16 +263,16 @@
                 <table class="w-full text-left border-collapse">
                     <thead>
                         <tr class="border-b border-gray-800 text-xs uppercase tracking-wider text-gray-400 font-semibold bg-gray-900/30">
-                            <th class="py-3 px-4">Service</th>
-                            <th class="py-3 px-4">Method</th>
-                            <th class="py-3 px-4">Path</th>
-                            <th class="py-3 px-4 text-right">Req Count</th>
-                            <th class="py-3 px-4 text-right">RPS</th>
-                            <th class="py-3 px-4 text-right">Active</th>
-                            <th class="py-3 px-4 text-right">P50</th>
-                            <th class="py-3 px-4 text-right">P90</th>
-                            <th class="py-3 px-4 text-right">P99</th>
-                            <th class="py-3 px-4 text-right">Total Time</th>
+                            <th class="py-3 px-4 cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('service')">Service <span id="sort-icon-service"></span></th>
+                            <th class="py-3 px-4 cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('method')">Method <span id="sort-icon-method"></span></th>
+                            <th class="py-3 px-4 cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('path')">Path <span id="sort-icon-path"></span></th>
+                            <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('requestCount')">Req Count <span id="sort-icon-requestCount"></span></th>
+                            <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('rps')">RPS <span id="sort-icon-rps"></span></th>
+                            <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('pendingCount')">Active <span id="sort-icon-pendingCount"></span></th>
+                            <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('p50')">P50 <span id="sort-icon-p50"></span></th>
+                            <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('p90')">P90 <span id="sort-icon-p90"></span></th>
+                            <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('p99')">P99 <span id="sort-icon-p99"></span></th>
+                            <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-800 hover:text-white transition-colors select-none" onclick="setSort('totalExecutionTime')">Total Time <span id="sort-icon-totalExecutionTime"></span></th>
                         </tr>
                     </thead>
                     <tbody id="statsTableBody" class="divide-y divide-gray-800/40 text-sm font-medium">
@@ -276,6 +287,34 @@
         let updateTimer = null;
         let currentFilter = 'all';
         let latestData = null;
+        let sortField = 'requestCount';
+        let sortDirection = 'desc';
+
+        function setSort(field) {
+            if (sortField === field) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortField = field;
+                sortDirection = 'desc';
+            }
+            renderDashboard();
+        }
+
+        function updateSortIcons() {
+            const fields = ['service', 'method', 'path', 'requestCount', 'rps', 'pendingCount', 'p50', 'p90', 'p99', 'totalExecutionTime'];
+            fields.forEach(field => {
+                const el = document.getElementById(`sort-icon-${field}`);
+                if (el) {
+                    if (sortField === field) {
+                        el.textContent = sortDirection === 'asc' ? ' ▲' : ' ▼';
+                        el.className = 'text-cyan-400 font-bold text-xs';
+                    } else {
+                        el.textContent = '';
+                        el.className = '';
+                    }
+                }
+            });
+        }
 
         function formatDuration(ns) {
             if (ns === 0) return '0';
@@ -412,11 +451,14 @@
 
                             if (searchVal && !cmdName.toLowerCase().includes(searchVal)) continue;
 
+                            const elapsedSeconds = (Date.now() - new Date(svc.startTime).getTime()) / 1000;
+                            const rps = elapsedSeconds > 0 ? (stats.requestCount / elapsedSeconds) : 0;
                             rows.push({
                                 service: name,
                                 method,
                                 path,
                                 startTime: svc.startTime,
+                                rps: rps,
                                 ...stats
                             });
                         }
@@ -457,11 +499,14 @@
 
                             if (searchVal && !cmdName.toLowerCase().includes(searchVal)) continue;
 
+                            const elapsedSeconds = (Date.now() - new Date(svc.startTime).getTime()) / 1000;
+                            const rps = elapsedSeconds > 0 ? (stats.requestCount / elapsedSeconds) : 0;
                             rows.push({
                                 service: currentFilter,
                                 method,
                                 path,
                                 startTime: svc.startTime,
+                                rps: rps,
                                 ...stats
                             });
                         }
@@ -503,12 +548,33 @@
                 case 'file-service': return 'text-sky-300 bg-sky-950/30 border border-sky-800/20';
                 case 'notification-service': return 'text-pink-300 bg-pink-950/30 border border-pink-800/20';
                 case 'admin-service': return 'text-orange-300 bg-orange-950/30 border border-orange-800/20';
+                case 'search-service': return 'text-lime-300 bg-lime-950/30 border border-lime-800/20';
+                case 'story-service': return 'text-rose-300 bg-rose-950/30 border border-rose-800/20';
                 default: return 'text-gray-300 bg-gray-850 border border-gray-850';
             }
         }
 
         function renderTable(rows) {
-            rows.sort((a, b) => b.requestCount - a.requestCount);
+            // Sort rows
+            rows.sort((a, b) => {
+                let valA = a[sortField];
+                let valB = b[sortField];
+
+                if (valA === undefined) valA = 0;
+                if (valB === undefined) valB = 0;
+
+                if (typeof valA === 'string') {
+                    valA = valA.toLowerCase();
+                    valB = valB.toLowerCase();
+                }
+
+                if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+                if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            // Update header sort icons
+            updateSortIcons();
 
             const tbody = document.getElementById('statsTableBody');
             tbody.innerHTML = '';
@@ -528,8 +594,7 @@
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-gray-900/20 transition-colors';
 
-                const elapsedSeconds = (Date.now() - new Date(r.startTime).getTime()) / 1000;
-                const rps = elapsedSeconds > 0 ? (r.requestCount / elapsedSeconds).toFixed(2) : '0.00';
+                const rps = r.rps.toFixed(2);
 
                 tr.innerHTML = `
                     <td class="py-3.5 px-4">

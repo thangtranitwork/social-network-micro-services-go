@@ -18,6 +18,8 @@ type Config struct {
 	FileHttpAddr         string
 	AdminHttpAddr        string
 	RedisAddr            string
+	SearchHttpAddr       string
+	StoryHttpAddr        string
 }
 
 func LoadConfig() *Config {
@@ -41,5 +43,7 @@ func LoadConfig() *Config {
 		FileHttpAddr:         getEnv("FILE_HTTP_ADDR", "http://localhost:10087"),
 		AdminHttpAddr:        getEnv("ADMIN_HTTP_ADDR", "http://localhost:10088"),
 		RedisAddr:            getEnv("REDIS_ADDR", "localhost:6379"),
+		SearchHttpAddr:       getEnv("SEARCH_HTTP_ADDR", "http://localhost:10089"),
+		StoryHttpAddr:        getEnv("STORY_HTTP_ADDR", "http://localhost:10090"),
 	}
 }

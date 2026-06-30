@@ -1,0 +1,1732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌌 Enterprise Service Topology Map</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #080911;
+            --panel-bg: rgba(13, 17, 33, 0.75);
+            --card-bg: rgba(22, 28, 54, 0.55);
+            --border-color: rgba(255, 255, 255, 0.06);
+            --primary: #6366f1;
+            --primary-glow: rgba(99, 102, 241, 0.35);
+            --text-color: #f8fafc;
+            --text-muted: #64748b;
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.25);
+            --error: #ef4444;
+            --error-glow: rgba(239, 68, 68, 0.25);
+            --warn: #f59e0b;
+            --info: #06b6d4;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-image:
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
+        }
+
+        /* Header Style */
+        header {
+            padding: 1.25rem 2rem;
+            background: rgba(8, 10, 20, 0.85);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 10;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .brand {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .brand h1 {
+            font-size: 1.4rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(to right, #ffffff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .brand p {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .system-health-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.8rem;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--success);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--success);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 14px var(--success); }
+            100% { transform: scale(0.9); opacity: 0.6; }
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            border-color: transparent;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .btn-primary:hover {
+            background: #4f46e5;
+            box-shadow: 0 6px 16px var(--primary-glow);
+        }
+
+        select {
+            background: rgba(13, 17, 33, 0.85);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 0.5rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            outline: none;
+            cursor: pointer;
+        }
+
+        /* Workspace Grid */
+        .workspace {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Interactive Canvas */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            background-size: 30px 30px;
+            background-image:
+                linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+            overflow: hidden;
+            cursor: grab;
+        }
+
+        .canvas-container:active {
+            cursor: grabbing;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            user-select: none;
+        }
+
+        /* Node Styling */
+        .node {
+            cursor: move;
+            transition: filter 0.2s;
+        }
+
+        .node:hover {
+            filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.4));
+        }
+
+        .node-rect {
+            fill: rgba(17, 24, 48, 0.85);
+            stroke: rgba(255, 255, 255, 0.08);
+            stroke-width: 1.5px;
+            rx: 12px;
+            transition: stroke 0.3s, fill 0.3s;
+        }
+
+        .node-rect.gateway {
+            stroke: var(--info);
+        }
+
+        .node-rect.service {
+            stroke: var(--primary);
+        }
+
+        .node-rect.db {
+            stroke: var(--warn);
+        }
+
+        .node-rect.mq {
+            stroke: #a855f7;
+        }
+
+        .node-rect.search {
+            stroke: #ec4899;
+        }
+
+        .node.unhealthy .node-rect {
+            stroke: var(--error);
+            fill: rgba(239, 68, 68, 0.15);
+        }
+
+        .node.selected .node-rect {
+            stroke: #ffffff !important;
+            stroke-width: 2.5px;
+            filter: drop-shadow(0 0 16px rgba(99, 102, 241, 0.6));
+        }
+
+        .node-title {
+            font-size: 13px;
+            font-weight: 700;
+            fill: #ffffff;
+        }
+
+        .node-meta {
+            font-size: 10px;
+            fill: var(--text-muted);
+            font-family: 'Fira Code', monospace;
+        }
+
+        .node-ping {
+            font-size: 10px;
+            font-weight: 600;
+            fill: var(--success);
+        }
+
+        /* Flowing Connections */
+        .edge {
+            fill: none;
+            stroke-width: 1.5px;
+            transition: stroke 0.3s, stroke-width 0.2s;
+        }
+
+        .edge.active {
+            stroke-dasharray: 6, 6;
+            animation: flow 25s linear infinite;
+        }
+
+        .edge.unhealthy-edge {
+            stroke: var(--error) !important;
+            stroke-dasharray: 4, 4;
+            animation: flow 10s linear infinite;
+        }
+
+        @keyframes flow {
+            to {
+                stroke-dashoffset: -1000;
+            }
+        }
+
+        /* Side Info Panel */
+        .side-panel {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 400px;
+            background: rgba(13, 17, 33, 0.92);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem;
+            gap: 1.5rem;
+            overflow-y: auto;
+            z-index: 50;
+            box-shadow: -10px 0 40px rgba(0, 0, 0, 0.6);
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .side-panel.collapsed {
+            transform: translateX(100%);
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 1rem;
+        }
+
+        .panel-header h2 {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.75rem;
+        }
+
+        .service-detail-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+        }
+
+        .detail-label {
+            color: var(--text-muted);
+        }
+
+        .detail-value {
+            font-weight: 600;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.8rem;
+        }
+
+        .detail-value.status-up {
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.15);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .detail-value.status-down {
+            color: var(--error);
+            background: rgba(239, 68, 68, 0.15);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .action-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .btn-action {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            padding: 0.6rem;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-action:hover {
+            background: var(--primary);
+            color: white;
+            border-color: transparent;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .container-state-running {
+            color: #10b981 !important;
+            font-weight: bold;
+        }
+
+        .container-state-stopped {
+            color: #ef4444 !important;
+            font-weight: bold;
+        }
+
+        .btn-action.btn-stop {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+        }
+
+        .btn-action.btn-stop:hover {
+            background: #ef4444;
+            color: white;
+            border-color: transparent;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-action.btn-start {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: #a7f3d0;
+        }
+
+        .btn-action.btn-start:hover {
+            background: #10b981;
+            color: white;
+            border-color: transparent;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-action.btn-restart {
+            background: rgba(245, 158, 11, 0.1) !important;
+            border: 1px solid rgba(245, 158, 11, 0.2) !important;
+            color: #fde047 !important;
+        }
+
+        .btn-action.btn-restart:hover {
+            background: #f59e0b !important;
+            color: white !important;
+            border-color: transparent !important;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3) !important;
+        }
+
+        /* Legend */
+        .legend {
+            position: absolute;
+            bottom: 1.5rem;
+            left: 1.5rem;
+            background: rgba(13, 17, 33, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 0.75rem 1rem;
+            display: flex;
+            gap: 1rem;
+            font-size: 0.75rem;
+            z-index: 5;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            color: var(--text-muted);
+        }
+
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.gateway { background-color: var(--info); }
+        .legend-dot.service { background-color: var(--primary); }
+        .legend-dot.db { background-color: var(--warn); }
+        .legend-dot.mq { background-color: #a855f7; }
+        .legend-dot.search { background-color: #ec4899; }
+
+        /* Tooltip */
+        .tooltip {
+            position: absolute;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.75rem;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+            z-index: 20;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+        }
+
+        .tooltip-header {
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: #ffffff;
+        }
+
+        .tooltip-meta {
+            color: var(--text-muted);
+            font-family: 'Fira Code', monospace;
+        }
+
+        /* Filter Panel */
+        .filter-panel {
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(13, 17, 33, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 0.4rem;
+            position: absolute;
+            top: 1.5rem;
+            left: 1.5rem;
+            z-index: 5;
+        }
+
+        .filter-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 0.3rem 0.7rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-btn.active {
+            background: rgba(255, 255, 255, 0.08);
+            color: #ffffff;
+        }
+
+        /* Login Card */
+        #loginCard {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #080914;
+            z-index: 100;
+        }
+        .login-panel {
+            background: rgba(15, 17, 36, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            border-radius: 16px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            text-align: center;
+        }
+        .login-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            text-align: left;
+        }
+        .login-input-group label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .login-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-color);
+            outline: none;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .login-input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+        }
+        .login-btn-submit {
+            padding: 0.75rem;
+            background: linear-gradient(to right, var(--primary), #a855f7);
+            border: none;
+            color: #fff;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .login-btn-submit:hover {
+            opacity: 0.9;
+        }
+        .login-alert {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: var(--error);
+            padding: 0.75rem;
+            border-radius: 8px;
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Login Portal -->
+    <div id="loginCard" style="display: none;">
+        <div class="login-panel">
+            <div style="font-size: 2.5rem;">🌌</div>
+            <h2 style="font-size: 1.5rem; font-weight: 800; background: linear-gradient(to right, var(--primary), #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0;">
+                Service Map Admin Portal
+            </h2>
+            <p style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; margin: 0;">Sign in with admin credentials to access service topology monitoring</p>
+
+            <div id="loginAlert" style="display: none;" class="login-alert">
+                Invalid email or password.
+            </div>
+
+            <div class="login-input-group">
+                <label>Email Address</label>
+                <input id="loginEmail" type="email" value="admin@admin.com" class="login-input">
+            </div>
+            <div class="login-input-group">
+                <label>Password</label>
+                <input id="loginPassword" type="password" value="123456Aa@" class="login-input">
+            </div>
+            <button onclick="performLogin()" id="btnLoginSubmit" class="login-btn-submit">
+                Sign In
+            </button>
+        </div>
+    </div>
+
+    <div id="dashboardContent" style="display: none; height: 100vh; flex-direction: column;">
+        <header>
+            <div class="header-left">
+                <div class="brand">
+                    <h1>🌌 Topology Monitoring Map</h1>
+                    <p>Real-time microservice interactions and state graph</p>
+                    <!-- Navigation Tabs -->
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+                        <a href="/containers" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">🐳 Containers</a>
+                        <a href="/logs" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">📜 Logs</a>
+                        <a href="/profiler" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">📊 Profiler</a>
+                        <a href="/monitor" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 700; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.2); color: #fff; text-decoration: none; transition: all 0.2s; box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);">🌐 Service Map</a>
+                    </div>
+                </div>
+                <div class="system-health-badge" id="overall-health">
+                    <div class="pulse-dot"></div>
+                    <span>ALL SYSTEMS OPERATIONAL</span>
+                </div>
+            </div>
+
+            <div class="controls">
+                <!-- Admin Auth Indicator Button -->
+                <button id="authBtn" onclick="handleAuthClick()" class="btn" style="cursor: pointer;">
+                    🔑 <span id="authStatusText">Auth Token</span>
+                </button>
+                <select id="poll-rate">
+                    <option value="1000">Poll: 1s</option>
+                    <option value="3000" selected>Poll: 3s</option>
+                    <option value="5000">Poll: 5s</option>
+                    <option value="10000">Poll: 10s</option>
+                    <option value="0">Poll: Manual</option>
+                </select>
+                <button class="btn" id="btn-refresh">
+                    🔄 Sync State
+                </button>
+                <button class="btn btn-primary" id="btn-reset">
+                    🎯 Auto Layout
+                </button>
+            </div>
+        </header>
+
+    <div class="workspace">
+        <!-- Filter Tabs -->
+        <div class="filter-panel">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="service">Services</button>
+            <button class="filter-btn" data-filter="db">Databases</button>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="canvas-container" id="canvas-container">
+            <svg id="svg-canvas">
+                <!-- Grid background patterns or markers can go here -->
+                <defs>
+                    <marker id="arrow" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255, 255, 255, 0.15)"/>
+                    </marker>
+                    <marker id="arrow-active" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#6366f1"/>
+                    </marker>
+                    <marker id="arrow-error" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444"/>
+                    </marker>
+                </defs>
+                <g id="connections-group"></g>
+                <g id="nodes-group"></g>
+            </svg>
+        </div>
+
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-item"><div class="legend-dot gateway"></div>Gateway</div>
+            <div class="legend-item"><div class="legend-dot service"></div>Service</div>
+            <div class="legend-item"><div class="legend-dot db"></div>Database</div>
+            <div class="legend-item"><div class="legend-dot mq"></div>Kafka MQ</div>
+            <div class="legend-item"><div class="legend-dot search"></div>Elasticsearch</div>
+        </div>
+
+        <!-- Side Detail Panel -->
+        <div class="side-panel" id="side-panel">
+            <div class="panel-header">
+                <h2 id="detail-name">Select Node</h2>
+                <button class="btn" id="btn-close-panel" style="padding: 0.25rem 0.5rem; font-size: 0.7rem;">✕ Close</button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                <div>
+                    <div class="section-title">Component Specifications</div>
+                    <div class="service-detail-card">
+                        <div class="detail-row">
+                            <span class="detail-label">Status</span>
+                            <span class="detail-value status-up" id="detail-status">UNKNOWN</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Service Type</span>
+                            <span class="detail-value" id="detail-type">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">HTTP Port</span>
+                            <span class="detail-value" id="detail-http">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">gRPC Port</span>
+                            <span class="detail-value" id="detail-grpc">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Avg Latency</span>
+                            <span class="detail-value" id="detail-latency">-</span>
+                        </div>
+                        <div class="detail-row" id="error-row" style="display: none;">
+                            <span class="detail-label" style="color: var(--error)">Last Error</span>
+                            <span class="detail-value" id="detail-error" style="color: var(--error); font-size: 0.7rem; text-align: right; max-width: 200px;">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Container Management Controls -->
+                <div id="container-section" style="display: none;">
+                    <div class="section-title">Container Management</div>
+                    <div class="service-detail-card" style="margin-bottom: 0.75rem;">
+                        <div class="detail-row">
+                            <span class="detail-label">Docker Container</span>
+                            <span class="detail-value" id="container-name" style="font-weight: 600;">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Docker State</span>
+                            <span class="detail-value" id="container-state">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Docker Status</span>
+                            <span class="detail-value" id="container-status" style="font-size: 0.75rem;">-</span>
+                        </div>
+                    </div>
+                    <div class="action-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 0.5rem;">
+                        <button class="btn-action" id="btn-container-toggle" style="cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                            <!-- Dynamically populated -->
+                        </button>
+                        <button class="btn-action btn-restart" id="btn-container-restart" style="cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                            🔄 Restart
+                        </button>
+                    </div>
+                    <div id="container-action-status" style="margin-top: 0.5rem; font-size: 0.75rem; text-align: center; color: var(--text-muted); display: none;"></div>
+                </div>
+
+                <div id="action-section" style="display: none;">
+                    <div class="section-title">Diagnostics & Actions</div>
+                    <div class="action-grid">
+                        <a href="/logs" class="btn-action" id="link-logs" target="_blank">
+                            📋 View Logs
+                        </a>
+                        <a href="/profiler" class="btn-action" id="link-profiler" target="_blank">
+                            ⚡ Run Profiler
+                        </a>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="section-title">Network Interactions</div>
+                    <div style="font-size: 0.8rem; line-height: 1.5; color: var(--text-muted);">
+                        Click and drag components to align your topology structure dynamically. Curved arrows indicate communication channels and active protocols.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // Define topological nodes & default coordinates
+        const initialNodes = {
+            "api-gateway": { name: "api-gateway", type: "gateway", x: 450, y: 50 },
+            "auth-service": { name: "auth-service", type: "service", x: 200, y: 180 },
+            "user-service": { name: "user-service", type: "service", x: 450, y: 180 },
+            "post-service": { name: "post-service", type: "service", x: 700, y: 180 },
+            "chat-service": { name: "chat-service", type: "service", x: 100, y: 320 },
+            "notification-service": { name: "notification-service", type: "service", x: 320, y: 320 },
+            "file-service": { name: "file-service", type: "service", x: 580, y: 320 },
+            "admin-service": { name: "admin-service", type: "service", x: 800, y: 320 },
+            "search-service": { name: "search-service", type: "service", x: 320, y: 460 },
+            "story-service": { name: "story-service", type: "service", x: 580, y: 460 },
+            "ai-service": { name: "ai-service", type: "service", x: 820, y: 460 },
+            "PostgreSQL": { name: "PostgreSQL", type: "db", x: 150, y: 600 },
+            "Redis": { name: "Redis", type: "db", x: 380, y: 600 },
+            "MongoDB": { name: "MongoDB", type: "db", x: 600, y: 600 },
+            "Neo4j": { name: "Neo4j", type: "db", x: 820, y: 600 },
+            "Kafka": { name: "Kafka", type: "mq", x: 50, y: 460 },
+            "Elasticsearch": { name: "Elasticsearch", type: "search", x: 970, y: 460 }
+        };
+
+        // Deep copy coordinates
+        let nodes = JSON.parse(JSON.stringify(initialNodes));
+
+        // Define Directed Connections
+        const connections = [
+            { from: "api-gateway", to: "auth-service", protocol: "HTTP/gRPC" },
+            { from: "api-gateway", to: "user-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "post-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "chat-service", protocol: "HTTP/WS" },
+            { from: "api-gateway", to: "notification-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "file-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "admin-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "search-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "story-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "Redis", protocol: "TCP" },
+
+            { from: "auth-service", to: "PostgreSQL", protocol: "SQL" },
+            { from: "auth-service", to: "Redis", protocol: "TCP" },
+            { from: "auth-service", to: "user-service", protocol: "gRPC" },
+            { from: "auth-service", to: "Kafka", protocol: "TCP" },
+
+            { from: "user-service", to: "Neo4j", protocol: "Bolt" },
+            { from: "user-service", to: "Redis", protocol: "TCP" },
+
+            { from: "post-service", to: "MongoDB", protocol: "BSON" },
+            { from: "post-service", to: "Redis", protocol: "TCP" },
+            { from: "post-service", to: "Kafka", protocol: "TCP" },
+            { from: "post-service", to: "search-service", protocol: "HTTP" },
+
+            { from: "chat-service", to: "MongoDB", protocol: "BSON" },
+            { from: "chat-service", to: "Redis", protocol: "TCP" },
+            { from: "chat-service", to: "user-service", protocol: "gRPC" },
+
+            { from: "notification-service", to: "Redis", protocol: "TCP" },
+            { from: "notification-service", to: "Kafka", protocol: "TCP" },
+
+            { from: "admin-service", to: "PostgreSQL", protocol: "SQL" },
+            { from: "admin-service", to: "Redis", protocol: "TCP" },
+            { from: "admin-service", to: "post-service", protocol: "gRPC" },
+
+            { from: "search-service", to: "Elasticsearch", protocol: "HTTP" },
+            { from: "search-service", to: "Redis", protocol: "TCP" },
+            { from: "search-service", to: "user-service", protocol: "gRPC" },
+
+            { from: "story-service", to: "Neo4j", protocol: "Bolt" },
+            { from: "story-service", to: "Redis", protocol: "TCP" },
+            { from: "story-service", to: "user-service", protocol: "gRPC" },
+
+            { from: "ai-service", to: "Elasticsearch", protocol: "HTTP" }
+        ];
+
+        let serverData = {};
+        let containersList = [];
+        let activeFilter = "all";
+        let selectedNodeId = null;
+        let dragTarget = null;
+        let dragOffset = { x: 0, y: 0 };
+        let pollInterval = null;
+
+        const nodesGroup = document.getElementById("nodes-group");
+        const connectionsGroup = document.getElementById("connections-group");
+        const svgCanvas = document.getElementById("svg-canvas");
+        const sidePanel = document.getElementById("side-panel");
+        const tooltip = document.getElementById("tooltip");
+
+        // Initialization
+        function init() {
+            checkAuth();
+        }
+
+        // Render Nodes to SVG
+        function renderNodes() {
+            nodesGroup.innerHTML = "";
+            Object.keys(nodes).forEach(id => {
+                const node = nodes[id];
+
+                // Hide if filtered out
+                if (activeFilter === "service" && node.type !== "service" && node.type !== "gateway") return;
+                if (activeFilter === "db" && node.type !== "db" && node.type !== "mq" && node.type !== "search") return;
+
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.setAttribute("class", `node ${id === selectedNodeId ? 'selected' : ''}`);
+                g.setAttribute("id", `node-${id}`);
+                g.setAttribute("transform", `translate(${node.x}, ${node.y})`);
+                g.setAttribute("data-id", id);
+
+                const width = 160;
+                const height = 70;
+
+                // Card background rect
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("width", width);
+                rect.setAttribute("height", height);
+                rect.setAttribute("class", `node-rect ${node.type}`);
+                rect.setAttribute("x", -width/2);
+                rect.setAttribute("y", -height/2);
+                g.appendChild(rect);
+
+                // Ping Status Pulse Ring
+                const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                ring.setAttribute("cx", -width/2 + 20);
+                ring.setAttribute("cy", 0);
+                ring.setAttribute("r", 6);
+                ring.setAttribute("fill", "#64748b");
+                ring.setAttribute("id", `status-ring-${id}`);
+                ring.setAttribute("style", "transition: fill 0.3s;");
+                g.appendChild(ring);
+
+                // Service Name Text
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("class", "node-title");
+                text.setAttribute("x", -width/2 + 36);
+                text.setAttribute("y", -6);
+                text.textContent = node.name;
+                g.appendChild(text);
+
+                // Port / Meta text
+                const meta = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                meta.setAttribute("class", "node-meta");
+                meta.setAttribute("x", -width/2 + 36);
+                meta.setAttribute("y", 12);
+
+                const stats = serverData[id] || {};
+                let portStr = "";
+                if (stats.httpPort) portStr = `:${stats.httpPort}`;
+                else if (stats.grpcPort) portStr = `:${stats.grpcPort}`;
+
+                meta.textContent = stats.type ? `${stats.type.toUpperCase()}${portStr}` : (node.type ? node.type.toUpperCase() : "");
+                meta.setAttribute("id", `meta-${id}`);
+                g.appendChild(meta);
+
+                // Latency Badge text
+                const ping = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                ping.setAttribute("class", "node-ping");
+                ping.setAttribute("x", width/2 - 15);
+                ping.setAttribute("y", 22);
+                ping.setAttribute("text-anchor", "end");
+                ping.setAttribute("id", `ping-${id}`);
+                ping.textContent = "";
+                g.appendChild(ping);
+
+                // Tooltip trigger events
+                g.addEventListener("mouseenter", (e) => showTooltip(e, id));
+                g.addEventListener("mouseleave", hideTooltip);
+                g.addEventListener("click", (e) => {
+                    console.log("Node clicked:", id);
+                    e.stopPropagation();
+                    selectNode(id);
+                });
+
+                nodesGroup.appendChild(g);
+            });
+        }
+
+        // Render Connections
+        function renderEdges() {
+            connectionsGroup.innerHTML = "";
+            connections.forEach(conn => {
+                const sourceNode = nodes[conn.from];
+                const targetNode = nodes[conn.to];
+
+                // Skip if nodes are filtered out
+                if (!sourceNode || !targetNode) return;
+                if (activeFilter === "service" && (sourceNode.type !== "service" && sourceNode.type !== "gateway" || targetNode.type !== "service" && targetNode.type !== "gateway")) return;
+                if (activeFilter === "db" && (sourceNode.type !== "db" && sourceNode.type !== "mq" && sourceNode.type !== "search" && targetNode.type !== "db" && targetNode.type !== "mq" && targetNode.type !== "search")) return;
+
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                path.setAttribute("id", `edge-${conn.from}-${conn.to}`);
+                path.setAttribute("class", "edge active");
+                path.setAttribute("marker-end", "url(#arrow)");
+                path.setAttribute("stroke", "rgba(255, 255, 255, 0.08)");
+                updatePathGeometry(path, sourceNode, targetNode);
+
+                // Show connection specs on hover
+                path.addEventListener("mouseenter", (e) => {
+                    path.setAttribute("stroke-width", "3px");
+                    tooltip.innerHTML = `
+                        <div class="tooltip-header">${conn.from} ➔ ${conn.to}</div>
+                        <div class="tooltip-meta">Protocol: ${conn.protocol}</div>
+                    `;
+                    tooltip.style.opacity = 1;
+                });
+
+                path.addEventListener("mousemove", (e) => {
+                    tooltip.style.left = (e.pageX + 15) + "px";
+                    tooltip.style.top = (e.pageY + 15) + "px";
+                });
+
+                path.addEventListener("mouseleave", () => {
+                    path.setAttribute("stroke-width", "1.5px");
+                    tooltip.style.opacity = 0;
+                });
+
+                connectionsGroup.appendChild(path);
+            });
+        }
+
+        // Calculate Curved Cubic Bezier Paths dynamically between nodes
+        function updatePathGeometry(path, source, target) {
+            const width = 160;
+            const height = 70;
+
+            // Get boundaries and centers
+            const startX = source.x;
+            const startY = source.y;
+            const endX = target.x;
+            const endY = target.y;
+
+            // Compute docking points
+            let sX = startX, sY = startY;
+            let tX = endX, tY = endY;
+
+            if (Math.abs(startX - endX) > Math.abs(startY - endY)) {
+                // Dock side-to-side
+                sX = startX > endX ? startX - width/2 : startX + width/2;
+                tX = startX > endX ? endX + width/2 : endX - width/2;
+            } else {
+                // Dock top-to-bottom
+                sY = startY > endY ? startY - height/2 : startY + height/2;
+                tY = startY > endY ? endY + height/2 : endY - height/2;
+            }
+
+            // Draw curved line
+            const controlOffset = Math.abs(tX - sX) * 0.4;
+            const d = `M ${sX} ${sY} C ${sX + (sX < tX ? controlOffset : -controlOffset)} ${sY}, ${tX - (sX < tX ? controlOffset : -controlOffset)} ${tY}, ${tX} ${tY}`;
+            path.setAttribute("d", d);
+        }
+
+        // Drag & Drop Nodes handler
+        function setupDragAndDrop() {
+            svgCanvas.addEventListener("mousedown", (e) => {
+                const targetG = e.target.closest(".node");
+                if (targetG) {
+                    dragTarget = targetG.getAttribute("data-id");
+
+                    // Select node immediately on mousedown
+                    selectNode(dragTarget);
+
+                    const nodeObj = nodes[dragTarget];
+                    const rect = svgCanvas.getBoundingClientRect();
+
+                    // Store cursor offset relative to node origin
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+                    dragOffset.x = mouseX - nodeObj.x;
+                    dragOffset.y = mouseY - nodeObj.y;
+
+                    // Bring node to front of SVG
+                    nodesGroup.appendChild(targetG);
+                }
+            });
+
+            svgCanvas.addEventListener("mousemove", (e) => {
+                if (dragTarget) {
+                    const nodeObj = nodes[dragTarget];
+                    const rect = svgCanvas.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+
+                    // Update position
+                    nodeObj.x = Math.max(80, Math.min(rect.width - 80, mouseX - dragOffset.x));
+                    nodeObj.y = Math.max(40, Math.min(rect.height - 40, mouseY - dragOffset.y));
+
+                    // Redraw node
+                    const nodeElement = document.getElementById(`node-${dragTarget}`);
+                    if (nodeElement) {
+                        nodeElement.setAttribute("transform", `translate(${nodeObj.x}, ${nodeObj.y})`);
+                    }
+
+                    // Redraw active edges
+                    connections.forEach(conn => {
+                        if (conn.from === dragTarget || conn.to === dragTarget) {
+                            const path = document.getElementById(`edge-${conn.from}-${conn.to}`);
+                            if (path) {
+                                updatePathGeometry(path, nodes[conn.from], nodes[conn.to]);
+                            }
+                        }
+                    });
+                }
+            });
+
+            document.addEventListener("mouseup", () => {
+                dragTarget = null;
+            });
+        }
+
+        // Polling Data
+        function startPolling() {
+            stopPolling();
+            const pollRate = parseInt(document.getElementById("poll-rate").value);
+            if (pollRate > 0) {
+                pollInterval = setInterval(fetchHealthData, pollRate);
+            }
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+
+        // Fetch Live Microservice / DB Health from backend API
+        async function fetchHealthData() {
+            const token = getAuthToken();
+            if (!token) {
+                checkAuth();
+                return;
+            }
+
+            fetchContainers();
+
+            try {
+                let response = await fetch("/monitor/health", {
+                    headers: {
+                        "Authorization": `Bearer ${token}`
+                    }
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    const newToken = await refreshAdminToken();
+                    if (newToken) {
+                        response = await fetch("/monitor/health", {
+                            headers: {
+                                "Authorization": `Bearer ${newToken}`
+                            }
+                        });
+                    } else {
+                        return;
+                    }
+                }
+
+                if (!response.ok) throw new Error("Sync failed");
+                const data = await response.json();
+
+                // Map array response to serverData map
+                let allHealthy = true;
+                data.forEach(item => {
+                    serverData[item.name] = item;
+                    if (item.status !== "UP") {
+                        // Ignore some non-critical database mocks during dev
+                        if (item.type === "service" || item.type === "gateway") {
+                            allHealthy = false;
+                        }
+                    }
+                });
+
+                // Update Overall Status Badge
+                const overallBadge = document.getElementById("overall-health");
+                const pulseDot = overallBadge.querySelector(".pulse-dot");
+                const textSpan = overallBadge.querySelector("span");
+
+                if (allHealthy) {
+                    overallBadge.style.background = "rgba(16, 185, 129, 0.1)";
+                    overallBadge.style.borderColor = "rgba(16, 185, 129, 0.2)";
+                    overallBadge.style.color = "var(--success)";
+                    pulseDot.style.backgroundColor = "var(--success)";
+                    pulseDot.style.boxShadow = "0 0 10px var(--success)";
+                    textSpan.textContent = "ALL SYSTEMS OPERATIONAL";
+                } else {
+                    overallBadge.style.background = "rgba(239, 68, 68, 0.1)";
+                    overallBadge.style.borderColor = "rgba(239, 68, 68, 0.2)";
+                    overallBadge.style.color = "var(--error)";
+                    pulseDot.style.backgroundColor = "var(--error)";
+                    pulseDot.style.boxShadow = "0 0 10px var(--error)";
+                    textSpan.textContent = "DEGRADED PERFORMANCE / OUTAGES DETECTED";
+                }
+
+                // Update SVG elements with status colors
+                data.forEach(item => {
+                    const id = item.name;
+                    const ring = document.getElementById(`status-ring-${id}`);
+                    const pingText = document.getElementById(`ping-${id}`);
+                    const metaText = document.getElementById(`meta-${id}`);
+                    const nodeElement = document.getElementById(`node-${id}`);
+
+                    if (ring) {
+                        if (item.status === "UP") {
+                            ring.setAttribute("fill", "var(--success)");
+                            ring.setAttribute("box-shadow", "0 0 10px var(--success)");
+                            if (nodeElement) nodeElement.classList.remove("unhealthy");
+                        } else {
+                            ring.setAttribute("fill", "var(--error)");
+                            if (nodeElement) nodeElement.classList.add("unhealthy");
+                        }
+                    }
+
+                    if (pingText) {
+                        pingText.textContent = item.status === "UP" ? `${item.pingTime}ms` : "OFFLINE";
+                        pingText.setAttribute("fill", item.status === "UP" ? "var(--success)" : "var(--error)");
+                    }
+
+                    if (metaText) {
+                        let portStr = "";
+                        if (item.httpPort) portStr = `:${item.httpPort}`;
+                        else if (item.grpcPort) portStr = `:${item.grpcPort}`;
+                        metaText.textContent = `${item.type.toUpperCase()}${portStr}`;
+                    }
+
+                    // Update edges connected to/from this node if unhealthy
+                    connections.forEach(conn => {
+                        if (conn.from === id || conn.to === id) {
+                            const path = document.getElementById(`edge-${conn.from}-${conn.to}`);
+                            if (path) {
+                                const fromNodeData = serverData[conn.from] || {};
+                                const toNodeData = serverData[conn.to] || {};
+                                if (fromNodeData.status === "DOWN" || toNodeData.status === "DOWN") {
+                                    path.classList.add("unhealthy-edge");
+                                    path.setAttribute("marker-end", "url(#arrow-error)");
+                                    path.setAttribute("stroke", "var(--error)");
+                                } else {
+                                    path.classList.remove("unhealthy-edge");
+                                    path.setAttribute("marker-end", "url(#arrow-active)");
+                                    path.setAttribute("stroke", "var(--primary)");
+                                }
+                            }
+                        }
+                    });
+                });
+
+                // Update side detail panel if open
+                if (selectedNodeId) {
+                    selectNode(selectedNodeId);
+                }
+
+            } catch (err) {
+                console.error("Health fetch error:", err);
+            }
+        }
+
+        // Select node and show details
+        function selectNode(id) {
+            console.log("Selecting node:", id);
+            selectedNodeId = id;
+
+            // Remove previous selections styling
+            document.querySelectorAll(".node").forEach(el => el.classList.remove("selected"));
+
+            const nodeEl = document.getElementById(`node-${id}`);
+            if (nodeEl) nodeEl.classList.add("selected");
+
+            const spec = nodes[id];
+            if (!spec) {
+                console.error("No specification found for node:", id);
+                return;
+            }
+
+            const stats = serverData[id] || { status: "DOWN", pingTime: 0, httpPort: "-", grpcPort: "-" };
+
+            // Fill Panel Details
+            document.getElementById("detail-name").textContent = spec.name;
+            const statusBadge = document.getElementById("detail-status");
+            statusBadge.textContent = stats.status;
+            statusBadge.className = `detail-value ${stats.status === 'UP' ? 'status-up' : 'status-down'}`;
+
+            document.getElementById("detail-type").textContent = (spec.type || '').toUpperCase();
+            document.getElementById("detail-http").textContent = stats.httpPort || "-";
+            document.getElementById("detail-grpc").textContent = stats.grpcPort || "-";
+            document.getElementById("detail-latency").textContent = stats.status === "UP" ? `${stats.pingTime} ms` : "-";
+
+            // Error display
+            const errorRow = document.getElementById("error-row");
+            if (stats.error) {
+                errorRow.style.display = "flex";
+                document.getElementById("detail-error").textContent = stats.error;
+            } else {
+                errorRow.style.display = "none";
+            }
+
+            // Update container management UI
+            updateContainerSection(id);
+
+            // Logs/Profiler dynamic actions (Only for microservices, not DBs)
+            const actionSection = document.getElementById("action-section");
+            if (spec.type === "service" || spec.type === "gateway") {
+                actionSection.style.display = "block";
+                document.getElementById("link-logs").href = `/logs?service=${spec.name}`;
+                document.getElementById("link-profiler").href = `/profiler?service=${spec.name}`;
+            } else {
+                actionSection.style.display = "none";
+            }
+
+            // Open Side Drawer
+            sidePanel.classList.remove("collapsed");
+        }
+
+        const containerNameMapping = {
+            "api-gateway": ["api-gateway", "prod-api-gateway"],
+            "auth-service": ["auth-service", "prod-auth-service"],
+            "user-service": ["user-service", "prod-user-service"],
+            "post-service": ["post-service", "prod-post-service"],
+            "chat-service": ["chat-service", "prod-chat-service"],
+            "notification-service": ["notification-service", "prod-notification-service"],
+            "file-service": ["file-service", "prod-file-service"],
+            "admin-service": ["admin-service", "prod-admin-service"],
+            "search-service": ["search-service", "prod-search-service"],
+            "story-service": ["story-service", "prod-story-service"],
+            "ai-service": ["ai-service", "prod-ai-service"],
+            "PostgreSQL": ["postgres-auth", "prod-postgres", "postgres"],
+            "Redis": ["redis-cache", "prod-redis", "redis"],
+            "MongoDB": ["mongodb-chat", "prod-mongodb", "mongodb"],
+            "Neo4j": ["neo4j-graph", "prod-neo4j", "neo4j"],
+            "Kafka": ["kafka-broker", "prod-kafka", "kafka"],
+            "Elasticsearch": ["elasticsearch", "prod-elasticsearch"]
+        };
+
+        function findContainerForNode(nodeId) {
+            const possibleNames = containerNameMapping[nodeId] || [nodeId];
+            return containersList.find(c => {
+                const cName = c.name.toLowerCase();
+                return possibleNames.some(pName => {
+                    const pLower = pName.toLowerCase();
+                    return cName === pLower || cName.includes(pLower);
+                });
+            });
+        }
+
+        function updateContainerSection(id) {
+            const containerSection = document.getElementById("container-section");
+            const container = findContainerForNode(id);
+            const statusEl = document.getElementById("container-action-status");
+
+            if (container) {
+                console.log("Container found for node:", id, container.name);
+                containerSection.style.display = "block";
+                document.getElementById("container-name").textContent = container.name;
+
+                const stateEl = document.getElementById("container-state");
+                stateEl.textContent = container.state.toUpperCase();
+                stateEl.className = `detail-value ${container.state === 'running' ? 'container-state-running' : 'container-state-stopped'}`;
+
+                document.getElementById("container-status").textContent = container.status || "-";
+
+                const toggleBtn = document.getElementById("btn-container-toggle");
+                const restartBtn = document.getElementById("btn-container-restart");
+
+                if (toggleBtn && restartBtn) {
+                    toggleBtn.style.display = "flex";
+                    restartBtn.style.display = "flex";
+                    statusEl.style.display = "none";
+
+                    // Clear old listeners
+                    const newToggleBtn = toggleBtn.cloneNode(true);
+                    const newRestartBtn = restartBtn.cloneNode(true);
+                    toggleBtn.parentNode.replaceChild(newToggleBtn, toggleBtn);
+                    restartBtn.parentNode.replaceChild(newRestartBtn, restartBtn);
+
+                    if (container.state === 'running') {
+                        newToggleBtn.innerHTML = `🛑 Stop`;
+                        newToggleBtn.className = "btn-action btn-stop";
+                        newToggleBtn.addEventListener("click", () => performContainerAction(container.id, 'stop'));
+                    } else {
+                        newToggleBtn.innerHTML = `▶️ Start`;
+                        newToggleBtn.className = "btn-action btn-start";
+                        newToggleBtn.addEventListener("click", () => performContainerAction(container.id, 'start'));
+                    }
+
+                    newRestartBtn.className = "btn-action btn-restart";
+                    newRestartBtn.addEventListener("click", () => performContainerAction(container.id, 'restart'));
+                }
+            } else {
+                console.log("No container matched for node:", id);
+                const isGoService = ["api-gateway", "auth-service", "user-service", "post-service", "chat-service", "notification-service", "file-service", "admin-service", "search-service", "story-service", "ai-service"].includes(id);
+                if (isGoService) {
+                    containerSection.style.display = "block";
+                    document.getElementById("container-name").textContent = "Native Process";
+
+                    const stateEl = document.getElementById("container-state");
+                    stateEl.textContent = "RUNNING";
+                    stateEl.className = `detail-value container-state-running`;
+
+                    document.getElementById("container-status").textContent = "Local Dev Mode (Host)";
+
+                    const toggleBtn = document.getElementById("btn-container-toggle");
+                    const restartBtn = document.getElementById("btn-container-restart");
+                    if (toggleBtn && restartBtn) {
+                        toggleBtn.style.display = "none";
+                        restartBtn.style.display = "none";
+                    }
+
+                    statusEl.textContent = "Service running natively on host. Docker controls disabled.";
+                    statusEl.style.display = "block";
+                    statusEl.style.color = "var(--text-muted)";
+                } else {
+                    containerSection.style.display = "none";
+                }
+            }
+        }
+
+        async function fetchContainers() {
+            const token = getAuthToken();
+            if (!token) return;
+
+            try {
+                let response = await fetch('/v1/admin/containers', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    const newToken = await refreshAdminToken();
+                    if (newToken) {
+                        response = await fetch('/v1/admin/containers', {
+                            headers: {
+                                'Authorization': `Bearer ${newToken}`
+                            }
+                        });
+                    } else {
+                        return;
+                    }
+                }
+
+                const data = await response.json();
+                if (data.code === 200) {
+                    containersList = data.body || [];
+                    // Update side panel if open
+                    if (selectedNodeId) {
+                        updateContainerSection(selectedNodeId);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to fetch containers:', err);
+            }
+        }
+
+        async function performContainerAction(id, action) {
+            const token = getAuthToken();
+            if (!token) return;
+
+            const statusEl = document.getElementById("container-action-status");
+            statusEl.style.display = "block";
+            statusEl.style.color = "var(--text-muted)";
+            statusEl.textContent = `Performing ${action} action...`;
+
+            try {
+                let response = await fetch(`/v1/admin/containers/${id}/${action}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    const newToken = await refreshAdminToken();
+                    if (newToken) {
+                        response = await fetch(`/v1/admin/containers/${id}/${action}`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${newToken}`
+                            }
+                        });
+                    } else {
+                        statusEl.textContent = "Authentication expired.";
+                        statusEl.style.color = "var(--error)";
+                        return;
+                    }
+                }
+
+                const data = await response.json();
+                if (response.ok && data.code === 200) {
+                    statusEl.textContent = `Container ${action}ed successfully!`;
+                    statusEl.style.color = "var(--success)";
+
+                    // Refresh stats immediately
+                    await fetchContainers();
+                    await fetchHealthData();
+
+                    setTimeout(() => {
+                        statusEl.style.display = "none";
+                    }, 3000);
+                } else {
+                    statusEl.textContent = `Action failed: ${data.message || 'Unknown error'}`;
+                    statusEl.style.color = "var(--error)";
+                }
+            } catch (err) {
+                console.error(`Failed to perform container action ${action}:`, err);
+                statusEl.textContent = "Failed to communicate with admin service.";
+                statusEl.style.color = "var(--error)";
+            }
+        }
+
+        function closePanel() {
+            selectedNodeId = null;
+            document.querySelectorAll(".node").forEach(el => el.classList.remove("selected"));
+            sidePanel.classList.add("collapsed");
+        }
+
+        // Tooltip handlers
+        function showTooltip(e, id) {
+            const spec = nodes[id];
+            const stats = serverData[id] || {};
+
+            tooltip.innerHTML = `
+                <div class="tooltip-header">${spec.name}</div>
+                <div class="tooltip-meta">Role: ${(spec.type || '').toUpperCase()}</div>
+                <div class="tooltip-meta">Status: ${stats.status || 'UNKNOWN'}</div>
+                ${stats.pingTime ? `<div class="tooltip-meta" style="color: var(--success)">Ping: ${stats.pingTime}ms</div>` : ''}
+            `;
+            tooltip.style.opacity = 1;
+        }
+
+        function hideTooltip() {
+            tooltip.style.opacity = 0;
+        }
+
+        // Global Event Listeners
+        function setupEventListeners() {
+            document.getElementById("poll-rate").addEventListener("change", startPolling);
+            document.getElementById("btn-refresh").addEventListener("click", fetchHealthData);
+            document.getElementById("btn-close-panel").addEventListener("click", closePanel);
+
+            // Auto Reset layout coordinates
+            document.getElementById("btn-reset").addEventListener("click", () => {
+                nodes = JSON.parse(JSON.stringify(initialNodes));
+                renderNodes();
+                renderEdges();
+                fetchHealthData();
+            });
+
+            // Filters
+            document.querySelectorAll(".filter-btn").forEach(btn => {
+                btn.addEventListener("click", (e) => {
+                    document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+                    btn.classList.add("active");
+                    activeFilter = btn.getAttribute("data-filter");
+                    renderNodes();
+                    renderEdges();
+                    fetchHealthData();
+                });
+            });
+
+            // Close sidepanel when clicking canvas background
+            svgCanvas.addEventListener("click", (e) => {
+                if (e.target === svgCanvas) {
+                    closePanel();
+                }
+            });
+        }
+
+        // Auto load token
+        let isRefreshing = false;
+        let refreshPromise = null;
+
+        async function refreshAdminToken() {
+            if (isRefreshing) return refreshPromise;
+            isRefreshing = true;
+            refreshPromise = (async () => {
+                try {
+                    const response = await fetch('/v1/auth/refresh', {
+                        method: 'POST'
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.code === 200 && data.body && data.body.token) {
+                            localStorage.setItem('admin_token', data.body.token);
+                            updateAuthIndicator();
+                            return data.body.token;
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to auto-refresh token:', err);
+                } finally {
+                    isRefreshing = false;
+                    refreshPromise = null;
+                }
+                localStorage.removeItem('admin_token');
+                checkAuth();
+                return null;
+            })();
+            return refreshPromise;
+        }
+
+        function getAuthToken() {
+            return localStorage.getItem('admin_token') || '';
+        }
+
+        function updateAuthIndicator() {
+            const token = getAuthToken();
+            const badge = document.getElementById('authBtn');
+            const text = document.getElementById('authStatusText');
+            if (!badge) return;
+            if (token) {
+                text.innerText = 'Logout (ADMIN)';
+                badge.style.background = 'rgba(16, 185, 129, 0.15)';
+                badge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+                badge.style.color = '#10b981';
+            } else {
+                text.innerText = 'Sign In';
+                badge.style.background = 'rgba(239, 68, 68, 0.15)';
+                badge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                badge.style.color = '#ef4444';
+            }
+        }
+
+        function handleAuthClick() {
+            const token = getAuthToken();
+            if (token) {
+                if (confirm('Are you sure you want to log out from the Admin Portal?')) {
+                    localStorage.removeItem('admin_token');
+                    checkAuth();
+                }
+            } else {
+                checkAuth();
+            }
+        }
+
+        function checkAuth() {
+            const token = getAuthToken();
+            const loginCard = document.getElementById('loginCard');
+            const dashboardContent = document.getElementById('dashboardContent');
+
+            updateAuthIndicator();
+
+            if (token) {
+                if (loginCard) loginCard.style.display = 'none';
+                if (dashboardContent) dashboardContent.style.display = 'flex';
+
+                // If we haven't loaded elements, run initialization
+                if (!document.getElementById("node-api-gateway")) {
+                    renderNodes();
+                    renderEdges();
+                    setupDragAndDrop();
+                    setupEventListeners();
+                    startPolling();
+                    fetchHealthData();
+                    closePanel();
+                }
+            } else {
+                if (loginCard) loginCard.style.display = 'flex';
+                if (dashboardContent) dashboardContent.style.display = 'none';
+                stopPolling();
+            }
+        }
+
+        async function performLogin() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const btn = document.getElementById('btnLoginSubmit');
+            const alertBox = document.getElementById('loginAlert');
+
+            if (!email || !password) {
+                alertBox.textContent = 'Please fill in both email and password.';
+                alertBox.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = `Signing In...`;
+            alertBox.style.display = 'none';
+
+            try {
+                const response = await fetch('/v1/auth/login-admin', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+                if (response.ok && data.code === 200 && data.body && data.body.token) {
+                    localStorage.setItem('admin_token', data.body.token);
+                    checkAuth();
+                } else {
+                    alertBox.textContent = data.message || 'Login failed. Please verify credentials.';
+                    alertBox.style.display = 'block';
+                }
+            } catch (err) {
+                console.error('Login error:', err);
+                alertBox.textContent = 'Failed to connect to authentication service.';
+                alertBox.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        window.onload = () => {
+            // Check if token exists in query string
+            const urlParams = new URLSearchParams(window.location.search);
+            const queryToken = urlParams.get('token');
+            if (queryToken) {
+                localStorage.setItem('admin_token', queryToken);
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+            init();
+        };
+    </script>
+</body>
+</html>

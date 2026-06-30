@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"time"
 	"unicode"
@@ -12,7 +13,7 @@ import (
 )
 
 type AuthServiceInterface interface {
-	Login(email, password string, isAdmin bool) (string, string, error)
+	Login(email, password, twoFactorCode string, isAdmin bool) (string, string, error)
 	RefreshToken(tokenStr string) (string, error)
 	Logout(refreshToken string) error
 	Register(email, password, givenName, familyName, birthdate, clientIP string) (*model.VerifyCode, error)
@@ -22,6 +23,13 @@ type AuthServiceInterface interface {
 	ResetPassword(code, newPassword string) error
 	ChangePassword(userID uuid.UUID, oldPassword, newPassword string) error
 	GetRefreshTokenDuration() time.Duration
+	GetGoogleAuthURL() string
+	GetFrontendURL() string
+	GoogleCallback(ctx context.Context, code string) (string, string, string, string, error)
+	Generate2FA(userID uuid.UUID, email string) (string, string, error)
+	Verify2FA(userID uuid.UUID, code string) error
+	Disable2FA(userID uuid.UUID, code string) error
+	Get2FAStatus(userID uuid.UUID) (bool, error)
 }
 
 type AuthHandler struct {
@@ -49,8 +57,9 @@ func sendSuccess(c *gin.Context, body interface{}) {
 }
 
 type LoginReq struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
+	TwoFactorCode string `json:"twoFactorCode"`
+	Email         string `json:"email" binding:"required,email"`
+	Password      string `json:"password" binding:"required"`
 }
 
 type RegisterReq struct {

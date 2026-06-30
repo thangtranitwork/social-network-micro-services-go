@@ -1,7 +1,7 @@
 # ==========================================
 # Giai đoạn 1: Biên dịch mã nguồn Go siêu tối ưu
 # ==========================================
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Cài đặt các gói hệ thống cần thiết cho biên dịch
 RUN apk add --no-cache git gcc musl-dev

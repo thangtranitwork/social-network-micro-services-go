@@ -10,12 +10,16 @@ import (
 	"google.golang.org/grpc"
 )
 
-type GrpcServer struct {
-	pb.UserServiceServer
+type UserGrpcServer struct {
+	pb.UnimplementedUserServiceServer
 	UserSvc *service.UserService
 }
 
-func (s *GrpcServer) GetCommonUserInfo(ctx context.Context, req *pb.UserRequest) (*pb.UserCommonInfoResponse, error) {
+func NewUserGrpcServer(userSvc *service.UserService) *UserGrpcServer {
+	return &UserGrpcServer{UserSvc: userSvc}
+}
+
+func (s *UserGrpcServer) GetCommonUserInfo(ctx context.Context, req *pb.UserRequest) (*pb.UserCommonInfoResponse, error) {
 	searchKey := req.UserId
 	if searchKey == "" {
 		searchKey = req.Username
@@ -42,7 +46,7 @@ func (s *GrpcServer) GetCommonUserInfo(ctx context.Context, req *pb.UserRequest)
 	}, nil
 }
 
-func (s *GrpcServer) CheckFriendship(ctx context.Context, req *pb.FriendshipRequest) (*pb.FriendshipResponse, error) {
+func (s *UserGrpcServer) CheckFriendship(ctx context.Context, req *pb.FriendshipRequest) (*pb.FriendshipResponse, error) {
 	// Simply fetch target profile and check relationships
 	profileA, err := s.UserSvc.GetUserProfile(ctx, req.UserIdA, "")
 	if err != nil {
@@ -83,7 +87,7 @@ func (s *GrpcServer) CheckFriendship(ctx context.Context, req *pb.FriendshipRequ
 	}, nil
 }
 
-func (s *GrpcServer) GetUsersByIds(ctx context.Context, req *pb.UsersByIdsRequest) (*pb.UsersByIdsResponse, error) {
+func (s *UserGrpcServer) GetUsersByIds(ctx context.Context, req *pb.UsersByIdsRequest) (*pb.UsersByIdsResponse, error) {
 	var users []*pb.UserCommonInfoResponse
 	for _, id := range req.UserIds {
 		profile, err := s.UserSvc.GetUserProfile(ctx, id, "")
@@ -98,11 +102,10 @@ func (s *GrpcServer) GetUsersByIds(ctx context.Context, req *pb.UsersByIdsReques
 			})
 		}
 	}
-
 	return &pb.UsersByIdsResponse{Users: users}, nil
 }
 
-func (s *GrpcServer) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
+func (s *UserGrpcServer) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
 	user, err := s.UserSvc.EnsureProfile(ctx, req.UserId, req.Email, req.GivenName, req.FamilyName, req.Birthdate)
 	if err != nil {
 		return nil, err
@@ -113,19 +116,22 @@ func (s *GrpcServer) CreateUser(ctx context.Context, req *pb.CreateUserRequest) 
 	}, nil
 }
 
-func StartGrpcServer(port string, userSvc *service.UserService) {
+func StartGrpcServer(port string, userSvc *service.UserService) *grpc.Server {
 	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		logger.Err(err).Fatal("Failed to listen on gRPC TCP port %s", port)
+		logger.Err(err).Error("Failed to listen on gRPC TCP port %s", port)
+		return nil
 	}
 
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logger.UnaryServerInterceptor()))
-	pb.RegisterUserServiceServer(grpcServer, &GrpcServer{UserSvc: userSvc})
+	pb.RegisterUserServiceServer(grpcServer, NewUserGrpcServer(userSvc))
 
 	logger.Info("User Service gRPC server listening on port %s", port)
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
-			logger.Err(err).Fatal("Failed to serve gRPC")
+			logger.Err(err).Error("Failed to serve gRPC")
 		}
 	}()
+
+	return grpcServer
 }

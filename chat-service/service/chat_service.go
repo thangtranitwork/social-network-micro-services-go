@@ -49,7 +49,7 @@ type ChatService struct {
 
 func NewChatService(cfg *config.Config) *ChatService {
 	var userClient pb.UserServiceClient
-	conn, err := grpc.Dial(cfg.UserGrpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(cfg.UserGrpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Err(err).Warn("Failed to connect to User gRPC at %s", cfg.UserGrpcAddr)
 	} else {
@@ -1346,6 +1346,8 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 		if m.Type == "FILE" || m.Type == "VOICE" {
 			attachment = m.Content
 			attachmentName = m.Content
+		} else if m.Type == "GIF" {
+			attachment = m.Content
 		}
 
 		response = append(response, &MessageResponse{
@@ -1458,6 +1460,8 @@ func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
 	if msg.Type == "FILE" || msg.Type == "VOICE" {
 		attachment = "/v1/files/" + msg.Content
 		attachmentName = msg.Content
+	} else if msg.Type == "GIF" {
+		attachment = msg.Content
 	}
 
 	return &MessageResponse{
@@ -2233,11 +2237,13 @@ func (s *ChatService) enrichMessageResponsesWithPresignedURLs(ctx context.Contex
 		return
 	}
 	for _, m := range msgs {
+		// FILE/VOICE: build full URL from Content (raw fileId), skip if already a full URL
 		if (m.Type == "FILE" || m.Type == "VOICE") && m.Content != "" && !strings.HasPrefix(m.Content, "http://") && !strings.HasPrefix(m.Content, "https://") {
 			url := fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Content)
 			m.Attachment = url
 			m.Content = url
 		}
+		// GIF: attachment is already set to the external GIF URL (e.g. giphy.com), no processing needed
 		if m.Sender != nil && m.Sender.ProfilePictureUrl != "" && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "http://") && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "https://") {
 			m.Sender.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Sender.ProfilePictureUrl)
 		}

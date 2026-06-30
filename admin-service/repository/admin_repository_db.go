@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"os"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
@@ -63,5 +64,12 @@ func formatFileURL(id interface{}) string {
 	if len(str) > 4 && str[:4] == "http" {
 		return str
 	}
-	return "http://localhost:11111/v1/files/" + str
+	fileServiceURL := os.Getenv("FILE_SERVICE_URL")
+	if fileServiceURL == "" {
+		fileServiceURL = "http://localhost:11111/v1/files"
+	}
+	if len(fileServiceURL) > 0 && fileServiceURL[len(fileServiceURL)-1] == '/' {
+		fileServiceURL = fileServiceURL[:len(fileServiceURL)-1]
+	}
+	return fileServiceURL + "/" + str
 }

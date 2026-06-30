@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +22,7 @@ type MockAuthService struct {
 	Err              error
 }
 
-func (m *MockAuthService) Login(email, password string, isAdmin bool) (string, string, error) {
+func (m *MockAuthService) Login(email, password, twoFactorCode string, isAdmin bool) (string, string, error) {
 	return m.MockAccessToken, m.MockRefreshToken, m.Err
 }
 
@@ -59,6 +60,34 @@ func (m *MockAuthService) ChangePassword(userID uuid.UUID, oldPassword, newPassw
 
 func (m *MockAuthService) GetRefreshTokenDuration() time.Duration {
 	return 24 * time.Hour
+}
+
+func (m *MockAuthService) GetGoogleAuthURL() string {
+	return ""
+}
+
+func (m *MockAuthService) GetFrontendURL() string {
+	return ""
+}
+
+func (m *MockAuthService) GoogleCallback(ctx context.Context, code string) (string, string, string, string, error) {
+	return "", "", "", "", nil
+}
+
+func (m *MockAuthService) Generate2FA(userID uuid.UUID, email string) (string, string, error) {
+	return "", "", nil
+}
+
+func (m *MockAuthService) Verify2FA(userID uuid.UUID, code string) error {
+	return nil
+}
+
+func (m *MockAuthService) Disable2FA(userID uuid.UUID, code string) error {
+	return nil
+}
+
+func (m *MockAuthService) Get2FAStatus(userID uuid.UUID) (bool, error) {
+	return false, nil
 }
 
 func setupTestRouter(svc *MockAuthService) *gin.Engine {

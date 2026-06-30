@@ -111,4 +111,23 @@ func (h *AdminHandler) RegisterRoutes(r *gin.Engine) {
 	r.DELETE("/v1/admin/posts/:id", h.DeletePost)
 	r.POST("/v1/admin/users/:id/suspend", h.SuspendUser)
 	r.POST("/v1/admin/users/:id/unsuspend", h.UnsuspendUser)
+
+	// Announcement Routes
+	r.GET("/v1/announcement", h.GetAnnouncement)
+	r.POST("/v1/admin/announcement", h.SetAnnouncement)
+	r.DELETE("/v1/admin/announcement", h.DeleteAnnouncement)
+
+	// Advertisement Routes (Advertisers)
+	r.POST("/v1/ads/campaigns", h.CreateAdCampaign)
+	r.GET("/v1/ads/campaigns", h.GetAdCampaigns)
+	r.GET("/v1/ads/campaigns/:id", h.GetAdCampaignByID)
+	r.PUT("/v1/ads/campaigns/:id/status", h.UpdateAdCampaignStatus)
+	r.POST("/v1/ads/interactions", h.LogAdInteraction)
+	r.GET("/v1/ads/active", h.GetActiveAdsForFeed)
+
+	// Advertisement Routes (Admin)
+	r.GET("/v1/admin/ads/pending", h.GetPendingAdCampaigns)
+	r.POST("/v1/admin/ads/:id/approve", h.ApproveAdCampaign)
+	r.POST("/v1/admin/ads/:id/reject", h.RejectAdCampaign)
+	r.GET("/v2/statistics/ads", h.GetAdStatistics)
 }

@@ -17,6 +17,9 @@ const (
 )
 
 type User struct {
+	EmailNotifications      bool      `json:"emailNotifications"`
+	PushNotifications       bool      `json:"pushNotifications"`
+	DigestFrequency         string    `json:"digestFrequency"`
 	ID                      string    `json:"id"`
 	GivenName               string    `json:"givenName"`
 	FamilyName              string    `json:"familyName"`
@@ -44,6 +47,9 @@ type User struct {
 
 // UserProfileResponse matches Java UserProfileResponse
 type UserProfileResponse struct {
+	EmailNotifications      bool      `json:"emailNotifications"`
+	PushNotifications       bool      `json:"pushNotifications"`
+	DigestFrequency         string    `json:"digestFrequency"`
 	ID                      string    `json:"id"`
 	GivenName               string    `json:"givenName"`
 	FamilyName              string    `json:"familyName"`
@@ -101,4 +107,11 @@ type UpdateUsernameRequest struct {
 // UpdateBirthdateRequest
 type UpdateBirthdateRequest struct {
 	Birthdate string `json:"birthdate" binding:"required"` // Format: YYYY-MM-DD
+}
+
+// UpdateNotificationPreferencesRequest
+type UpdateNotificationPreferencesRequest struct {
+	EmailNotifications bool   `json:"emailNotifications"`
+	PushNotifications  bool   `json:"pushNotifications"`
+	DigestFrequency    string `json:"digestFrequency" binding:"required,oneof=NONE DAILY WEEKLY"`
 }

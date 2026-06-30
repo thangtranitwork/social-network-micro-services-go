@@ -35,7 +35,7 @@ func (h *PostHandler) GetNewsfeed(c *gin.Context) {
 		exception.SendError(c, exception.FailToGetPost)
 		return
 	}
-
+	logger.WithContext(c.Request.Context()).JsonField("posts", posts).Info("GetNewsfeed success")
 	sendSuccess(c, posts)
 }
 

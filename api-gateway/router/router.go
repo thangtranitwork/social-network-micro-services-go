@@ -79,6 +79,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 	r.GET("/logs", handler.LogDashboard)
 	r.GET("/containers", handler.ContainersDashboard)
 	r.GET("/profiler", handler.ProfilerDashboard)
+	r.GET("/monitor", handler.MonitorDashboard)
+	r.GET("/monitor/health", handler.CheckHealth(cfg))
 
 	// Protected Admin Observability APIs
 	adminObsGroup := r.Group("")
@@ -98,6 +100,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 				"notification-service": cfg.NotificationHttpAddr,
 				"file-service":         cfg.FileHttpAddr,
 				"admin-service":        cfg.AdminHttpAddr,
+				"search-service":       cfg.SearchHttpAddr,
+				"story-service":        cfg.StoryHttpAddr,
 			}
 
 			client := &http.Client{Timeout: 100 * time.Millisecond}
@@ -126,14 +130,19 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 	}
 
 	// Public Routes (No authentication required)
-	r.Any("/v1/auth/*any", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.POST("/v1/auth/login", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.POST("/v1/auth/login-admin", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.POST("/v1/auth/refresh", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.POST("/v1/auth/forgot-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.POST("/v1/auth/reset-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.GET("/v1/auth/google/login", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.GET("/v1/auth/google/callback", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.Any("/v1/register/*any", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.Any("/v1/register", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.Any("/v1/forgot-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.Any("/v1/reset-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.Any("/v1/update-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
-	r.Any("/v1/stringee/answer", publicRateLimit, proxy.ProxyTo(cfg.ChatHttpAddr))
-	r.Any("/v1/stringee/event", publicRateLimit, proxy.ProxyTo(cfg.ChatHttpAddr))
+	r.GET("/v1/announcement", publicRateLimit, proxy.ProxyTo(cfg.AdminHttpAddr))
 
 	// Authenticated Routes (Requires JWT Token)
 
@@ -149,6 +158,12 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 	authGroup := r.Group("")
 	authGroup.Use(authMiddleware, authRateLimit)
 	{
+		// Proxy to Auth Service (Protected routes)
+		authGroup.DELETE("/v1/auth/logout", proxy.ProxyTo(cfg.AuthHttpAddr))
+		authGroup.POST("/v1/auth/change-password", proxy.ProxyTo(cfg.AuthHttpAddr))
+		authGroup.Any("/v1/auth/2fa/*any", proxy.ProxyTo(cfg.AuthHttpAddr))
+		authGroup.Any("/v1/auth/2fa", proxy.ProxyTo(cfg.AuthHttpAddr))
+
 		// Proxy to Admin Service (Restricted to Admin role only)
 
 		adminGroup := authGroup.Group("")
@@ -159,6 +174,10 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 			adminGroup.Any("/v1/admin/*any", proxy.ProxyTo(cfg.AdminHttpAddr))
 			adminGroup.Any("/v1/admin", proxy.ProxyTo(cfg.AdminHttpAddr))
 		}
+
+		// Proxy to Admin Service for Advertisers
+		authGroup.Any("/v1/ads/*any", proxy.ProxyTo(cfg.AdminHttpAddr))
+		authGroup.Any("/v1/ads", proxy.ProxyTo(cfg.AdminHttpAddr))
 
 		// Proxy to User Service
 		authGroup.Any("/v1/users/*any", proxy.ProxyTo(cfg.UserHttpAddr))
@@ -198,5 +217,13 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 		// Proxy to Notification Service
 		authGroup.Any("/v1/notifications/*any", proxy.ProxyTo(cfg.NotificationHttpAddr))
 		authGroup.Any("/v1/notifications", proxy.ProxyTo(cfg.NotificationHttpAddr))
+
+		// Proxy to Search Service
+		authGroup.Any("/v1/search/*any", proxy.ProxyTo(cfg.SearchHttpAddr))
+		authGroup.Any("/v1/search", proxy.ProxyTo(cfg.SearchHttpAddr))
+
+		// Proxy to Story Service
+		authGroup.Any("/v1/stories/*any", proxy.ProxyTo(cfg.StoryHttpAddr))
+		authGroup.Any("/v1/stories", proxy.ProxyTo(cfg.StoryHttpAddr))
 	}
 }

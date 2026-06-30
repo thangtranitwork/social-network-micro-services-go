@@ -89,6 +89,38 @@ func (m *MockAdminRepository) UnsuspendUser(ctx context.Context, userID string) 
 	return m.Err
 }
 
+func (m *MockAdminRepository) CreateAdCampaign(ctx context.Context, campaign *model.AdCampaign) error {
+	return m.Err
+}
+
+func (m *MockAdminRepository) GetAdCampaigns(ctx context.Context, advertiserID string) ([]model.AdCampaign, error) {
+	return nil, m.Err
+}
+
+func (m *MockAdminRepository) GetAdCampaignByID(ctx context.Context, campaignID string) (*model.AdCampaign, error) {
+	return nil, m.Err
+}
+
+func (m *MockAdminRepository) UpdateAdCampaignStatus(ctx context.Context, campaignID string, status string) error {
+	return m.Err
+}
+
+func (m *MockAdminRepository) GetPendingAdCampaigns(ctx context.Context) ([]model.AdCampaign, error) {
+	return nil, m.Err
+}
+
+func (m *MockAdminRepository) GetActiveAdCampaigns(ctx context.Context) ([]model.AdCampaign, error) {
+	return nil, m.Err
+}
+
+func (m *MockAdminRepository) LogAdInteraction(ctx context.Context, interaction *model.AdInteraction) error {
+	return m.Err
+}
+
+func (m *MockAdminRepository) GetAdStatistics(ctx context.Context) (map[string]interface{}, error) {
+	return nil, m.Err
+}
+
 func setupTestRouter(repo *MockAdminRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

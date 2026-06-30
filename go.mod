@@ -11,17 +11,21 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/minio/minio-go/v7 v7.1.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.20.0
+	github.com/pquerna/otp v1.5.0
 	github.com/redis/go-redis/v9 v9.5.1
 	github.com/segmentio/kafka-go v0.4.47
 	go.mongodb.org/mongo-driver v1.17.9
 	golang.org/x/crypto v0.49.0
+	golang.org/x/oauth2 v0.36.0
 	google.golang.org/grpc v1.80.0
 	gorm.io/driver/postgres v1.5.7
 	gorm.io/gorm v1.25.10
 )
 
 require (
+	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

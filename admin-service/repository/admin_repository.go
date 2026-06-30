@@ -28,6 +28,16 @@ type AdminRepository interface {
 	DeletePost(ctx context.Context, postID string) error
 	SuspendUser(ctx context.Context, userID string, duration time.Duration) error
 	UnsuspendUser(ctx context.Context, userID string) error
+
+	// Advertisement Repository Methods
+	CreateAdCampaign(ctx context.Context, campaign *model.AdCampaign) error
+	GetAdCampaigns(ctx context.Context, advertiserID string) ([]model.AdCampaign, error)
+	GetAdCampaignByID(ctx context.Context, campaignID string) (*model.AdCampaign, error)
+	UpdateAdCampaignStatus(ctx context.Context, campaignID string, status string) error
+	GetPendingAdCampaigns(ctx context.Context) ([]model.AdCampaign, error)
+	GetActiveAdCampaigns(ctx context.Context) ([]model.AdCampaign, error)
+	LogAdInteraction(ctx context.Context, interaction *model.AdInteraction) error
+	GetAdStatistics(ctx context.Context) (map[string]interface{}, error)
 }
 
 type Neo4jAdminRepository struct{}

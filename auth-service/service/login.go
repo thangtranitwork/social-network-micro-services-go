@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/pquerna/otp/totp"
 	"strconv"
 	"strings"
 	"time"
@@ -112,7 +113,7 @@ func (s *AuthService) processLoginSucceeded(ctx context.Context, accountID uuid.
 
 // Authentication service
 // Java equivalent: AuthenticationServiceImpl
-func (s *AuthService) Login(email, password string, isAdmin bool) (string, string, error) {
+func (s *AuthService) Login(email, password, twoFactorCode string, isAdmin bool) (string, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -135,6 +136,16 @@ func (s *AuthService) Login(email, password string, isAdmin bool) (string, strin
 	}
 
 	s.processLoginSucceeded(ctx, account.ID)
+
+	if account.IsTwoFactorEnabled {
+		if twoFactorCode == "" {
+			return "", "", exception.NewAppException(exception.NewAppError(401, "2FA_REQUIRED", "Two-factor authentication is required"))
+		}
+		valid := totp.Validate(twoFactorCode, account.TwoFactorSecret)
+		if !valid {
+			return "", "", exception.NewAppException(exception.NewAppError(401, "INVALID_2FA_CODE", "Invalid 2FA code"))
+		}
+	}
 
 	accessToken, err := s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTSecret, s.Cfg.AccessTokenDuration)
 	if err != nil {

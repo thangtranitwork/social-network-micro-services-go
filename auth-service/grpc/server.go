@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	red "social-network-go/auth-service/redis"
 	"social-network-go/auth-service/service"
 	"social-network-go/logger"
@@ -13,12 +12,16 @@ import (
 	"google.golang.org/grpc"
 )
 
-type GrpcServer struct {
-	pb.AuthServiceServer
+type AuthGrpcServer struct {
+	pb.UnimplementedAuthServiceServer
 	AuthSvc *service.AuthService
 }
 
-func (s *GrpcServer) ValidateToken(ctx context.Context, req *pb.TokenRequest) (*pb.TokenResponse, error) {
+func NewAuthGrpcServer(authSvc *service.AuthService) *AuthGrpcServer {
+	return &AuthGrpcServer{AuthSvc: authSvc}
+}
+
+func (s *AuthGrpcServer) ValidateToken(ctx context.Context, req *pb.TokenRequest) (*pb.TokenResponse, error) {
 	claims, err := s.AuthSvc.ValidateToken(req.Token)
 	logger.WithContext(ctx).Field("token", req.Token).Info("Validating token")
 	if err != nil {
@@ -52,21 +55,22 @@ func (s *GrpcServer) ValidateToken(ctx context.Context, req *pb.TokenRequest) (*
 	}, nil
 }
 
-func StartGrpcServer(port string, authSvc *service.AuthService) {
+func StartGrpcServer(port string, authSvc *service.AuthService) *grpc.Server {
 	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		logger.Field("port", port).Field("error", err).Error("Failed to listen on TCP port")
-		os.Exit(1)
+		return nil
 	}
 
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(logger.UnaryServerInterceptor()))
-	pb.RegisterAuthServiceServer(grpcServer, &GrpcServer{AuthSvc: authSvc})
+	pb.RegisterAuthServiceServer(grpcServer, NewAuthGrpcServer(authSvc))
 
 	logger.Field("port", port).Info("Auth Service gRPC server listening")
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
 			logger.Field("error", err).Error("Failed to serve gRPC")
-			os.Exit(1)
 		}
 	}()
+
+	return grpcServer
 }

@@ -112,6 +112,10 @@ func (m *MockUserRepository) RecordProfileView(ctx context.Context, viewerID, ta
 	return m.Err
 }
 
+func (m *MockUserRepository) UpdateNotificationPreferences(ctx context.Context, currentUserID string, email bool, push bool, digest string) error {
+	return m.Err
+}
+
 func setupTestRouter(repo *MockUserRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

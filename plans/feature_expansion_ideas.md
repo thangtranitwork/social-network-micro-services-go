@@ -140,16 +140,40 @@ Sau khi hoàn thành tối ưu hóa hệ thống, dưới đây là các hướn
 | 8 | Admin: Content Moderation Actions | ⭐⭐⭐⭐⭐ | Cao | 🟢 **Hoàn thành** |
 | 9 | User Report System | ⭐⭐⭐⭐ | Cao | 🟠 **Q1** |
 | 12 | Hashtag & Trending (hoàn thiện) | ⭐⭐⭐ | Cao | 🟠 **Q1** |
-| 1 | Global Search Service | ⭐⭐⭐⭐ | Trung bình | 🟠 **Q1** |
+| 1 | Global Search Service | ⭐⭐⭐⭐ | Trung bình | 🟢 **Hoàn thành** |
 | 3 | AI Content Moderation | ⭐⭐⭐⭐ | Trung bình | 🟡 **Q2** |
-| 10 | Two-Factor Authentication | ⭐⭐⭐⭐ | Trung bình | 🟡 **Q2** |
+| 10 | Two-Factor Authentication | ⭐⭐⭐⭐ | Trung bình | 🟢 **Hoàn thành** |
 | 13 | Mobile Push (FCM) | ⭐⭐⭐⭐ | Trung bình | 🟡 **Q2** |
 | 4 | Real-time Presence | ⭐⭐⭐ | Cao | 🟡 **Q2** |
-| 14 | Notification Preferences | ⭐⭐⭐ | Trung bình | 🟢 **Q3** |
-| 2 | Story Service | ⭐⭐⭐ | Trung bình | 🟢 **Q3** |
+| 14 | Notification Preferences | ⭐⭐⭐ | Trung bình | 🟢 **Hoàn thành** |
+| 2 | Story Service | ⭐⭐⭐ | Trung bình | 🟢 **Hoàn thành** |
 | 5 | User Analytics Dashboard | ⭐⭐ | Thấp | 🟢 **Q3** |
 | 6 | Community/Group Service | ⭐⭐ | Thấp | 🔵 **Q4** |
 
 ---
 **Người thực hiện:** Antigravity AI
-**Cập nhật lần cuối:** 2026-05-29 (Đã hoàn thành 3 tính năng hạ tầng & admin cốt lõi)
+**Cập nhật lần cuối:** 2026-05-31 (Triển khai thành công Search và Story Services)
+
+## 10. Two-Factor Authentication (2FA) - IMPLEMENTED
+Implemented 2FA with TOTP (Generate, Verify, Disable). Added to User settings and Auth Login form.
+
+## 11. Google OAuth2 - IMPLEMENTED
+Implemented Google OAuth2 backend structure and frontend UI with i18n support.
+
+## 1. Global Search Service - IMPLEMENTED
+- **Trạng thái**: 🟢 Hoàn thành.
+- **Chi tiết đã triển khai**:
+  - Xây dựng microservice độc lập `search-service` kết nối với Neo4j để tìm kiếm mờ không phân biệt chữ hoa chữ thường.
+  - Hỗ trợ tìm kiếm người dùng (theo username, givenName, familyName) và bài viết công khai (theo content).
+  - Tích hợp gRPC với `user-service` để đồng bộ thông tin tác giả và tự động làm giàu (enrich) thông tin avatar thông qua `file-service`.
+  - Mở route `/v1/search` trên Gateway chuyển tiếp request trực tiếp tới `search-service`.
+
+## 2. Story Service - IMPLEMENTED
+- **Trạng thái**: 🟢 Hoàn thành.
+- **Chi tiết đã triển khai**:
+  - Xây dựng microservice độc lập `story-service` quản lý nội dung story của người dùng và bạn bè.
+  - Sử dụng cơ chế lưu trữ Neo4j cho các Node `Story` liên kết với `User` thông qua quan hệ `POSTED_STORY`, kết quả lọc tự động các story trong vòng 24 giờ.
+  - Phát triển component UI `StoryFeed.jsx` dạng bong bóng trượt ngang ở đầu trang chủ, hỗ trợ:
+    - Click "+" để đăng tải ảnh/video mới (tải qua `file-service` sử dụng presigned URL).
+    - Xem story bằng trình xem toàn màn hình (Instagram-style) chạy tuần tự (progress segments) 5 giây/story, có thể chuyển đổi tiếp/lùi linh hoạt.
+    - Xóa story trực tiếp đối với story của bản thân.

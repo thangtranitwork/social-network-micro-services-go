@@ -17,7 +17,7 @@ type GrpcFileClient struct {
 }
 
 func NewGrpcFileClient(addr string) (*GrpcFileClient, error) {
-	conn, err := grpc.Dial(
+	conn, err := grpc.NewClient(
 		addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(logger.UnaryClientInterceptor()),

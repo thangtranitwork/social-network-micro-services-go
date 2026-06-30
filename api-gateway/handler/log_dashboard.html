@@ -34,7 +34,7 @@
             height: 100vh;
             display: flex;
             flex-direction: column;
-            background-image: 
+            background-image:
                 radial-gradient(at 10% 10%, rgba(99, 102, 241, 0.12) 0px, transparent 40%),
                 radial-gradient(at 90% 85%, rgba(168, 85, 247, 0.1) 0px, transparent 40%);
         }
@@ -128,6 +128,7 @@
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
+            overflow-y: auto;
         }
 
         .panel-title {
@@ -532,12 +533,13 @@
                 <div>
                     <h1>Social Network Log Center</h1>
                     <div class="subtitle">Real-time Microservice Monitor & Aggregator</div>
-                    
+
                     <!-- Navigation Tabs -->
                     <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
                         <a href="/containers" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">🐳 Containers</a>
                         <a href="/logs" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 700; background: var(--active-tab-glow); border: 1px solid rgba(99, 102, 241, 0.2); color: #fff; text-decoration: none; transition: all 0.2s; box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);">📜 Logs</a>
                         <a href="/profiler" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">📊 Profiler</a>
+                        <a href="/monitor" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">🌐 Service Map</a>
                     </div>
                 </div>
             </div>
@@ -554,7 +556,7 @@
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">Total Services</div>
-                    <div class="stat-val">8 Services</div>
+                    <div class="stat-val">11 Services</div>
                 </div>
                 <div class="stat-item">
                     <div class="stat-label">Core Engine</div>
@@ -566,7 +568,7 @@
     <div class="workspace">
         <div class="sidebar">
             <div class="panel-title">Microservices</div>
-            
+
             <div class="service-row active" id="row-api-gateway">
                 <button class="tab-btn" onclick="selectService('api-gateway')">
                     <span>API Gateway</span>
@@ -576,7 +578,7 @@
                     <span>⏸</span>
                 </button>
             </div>
-            
+
             <div class="service-row" id="row-auth-service">
                 <button class="tab-btn" onclick="selectService('auth-service')">
                     <span>Auth Service</span>
@@ -646,6 +648,25 @@
                     <span>⏸</span>
                 </button>
             </div>
+            <div class="service-row" id="row-search-service">
+                <button class="tab-btn" onclick="selectService('search-service')">
+                    <span>Search Service</span>
+                    <span class="service-badge">:10089</span>
+                </button>
+                <button class="action-btn" onclick="toggleServiceStream('search-service', event)" id="btn-search-service" title="Pause/Resume Streaming">
+                    <span>⏸</span>
+                </button>
+            </div>
+
+            <div class="service-row" id="row-story-service">
+                <button class="tab-btn" onclick="selectService('story-service')">
+                    <span>Story Service</span>
+                    <span class="service-badge">:10090</span>
+                </button>
+                <button class="action-btn" onclick="toggleServiceStream('story-service', event)" id="btn-story-service" title="Pause/Resume Streaming">
+                    <span>⏸</span>
+                </button>
+            </div>
 
             <div class="service-row" id="row-ai-service">
                 <button class="tab-btn" onclick="selectService('ai-service')">
@@ -656,6 +677,7 @@
                     <span>⏸</span>
                 </button>
             </div>
+
             <div class="service-row" id="row-all-services" style="margin-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem;">
                 <button class="tab-btn" onclick="selectService('all-services')">
                     <span>🔍 Trace Request ID</span>
@@ -721,6 +743,8 @@
             'ai-service': { isPaused: false },
             'admin-service': { isPaused: false },
             'file-service': { isPaused: false },
+            'search-service': { isPaused: false },
+            'story-service': { isPaused: false },
             'all-services': { isPaused: false }
         };
 
@@ -780,7 +804,7 @@
             document.getElementById('row-' + serviceName).classList.add('active');
 
             currentService = serviceName;
-            
+
             const normalControls = document.getElementById('normal-controls-group');
             const traceSearch = document.getElementById('trace-search-group');
             const statusDot = document.getElementById('stream-status-dot');
@@ -791,7 +815,7 @@
                 traceSearch.style.display = 'flex';
                 statusDot.style.backgroundColor = 'var(--primary)';
                 statusText.innerText = 'Centralized Trace Mode';
-                
+
                 if (eventSource) {
                     eventSource.close();
                     eventSource = null;
@@ -910,11 +934,11 @@
             eventSource.onerror = async function() {
                 statusDot.style.backgroundColor = 'var(--error)';
                 statusText.innerText = 'Disconnected. Retrying...';
-                
+
                 if (eventSource) {
                     eventSource.close();
                 }
-                
+
                 const newToken = await refreshAdminToken();
                 if (newToken) {
                     setTimeout(connectStream, 3000);
@@ -938,89 +962,158 @@
         }
 
         function formatLogLine(rawText) {
-            let text = stripAnsi(rawText);
-            
-            // 1. Extract caller if present
-            let callerStr = "";
-            const callerMatch = text.match(/(?:\|\s*)?caller=([^\s|]+)/);
-            if (callerMatch) {
-                callerStr = callerMatch[1];
-                text = text.replace(callerMatch[0], ""); // remove caller from main text
-            }
+	            let text = stripAnsi(rawText);
 
-            // 2. Extract timestamp
-            let timestamp = "";
-            if (text.length >= 19 && /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/.test(text)) {
-                timestamp = text.substring(11, 19); // only get HH:MM:SS for compact display
-                text = text.substring(20); // rest of the text
-            }
+            // Try to parse as JSON first
+            try {
+                const entry = JSON.parse(text);
+                let timestamp = entry.timestamp ? entry.timestamp.substring(11, 19) : "";
+                let levelBadge = "";
+	                let levelClass = "level-info";
 
-            // 3. Detect and style Level Badge
-            let levelBadge = "";
-            let levelClass = "level-info";
-            if (text.includes("[FATAL]")) {
-                levelBadge = '<span style="color: #f43f5e; background: rgba(244, 63, 94, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">FATAL</span>';
-                text = text.replace("[FATAL]", "").trim();
-                levelClass = "level-fatal";
-            } else if (text.includes("[INFO]")) {
-                levelBadge = '<span style="color: #818cf8; background: rgba(129, 140, 248, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">INFO</span>';
-                text = text.replace("[INFO]", "").trim();
-                levelClass = "level-info";
-            } else if (text.includes("[WARN]")) {
-                levelBadge = '<span style="color: #fbbf24; background: rgba(251, 191, 36, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">WARN</span>';
-                text = text.replace("[WARN]", "").trim();
-                levelClass = "level-warn";
-            } else if (text.includes("[ERROR]")) {
-                levelBadge = '<span style="color: #f87171; background: rgba(248, 113, 113, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">ERROR</span>';
-                text = text.replace("[ERROR]", "").trim();
-                levelClass = "level-error";
-            }
-
-            // 4. Format key=value pairs nicely
-            const parts = text.split(" |");
-            let message = parts[0];
-            let contextHtml = "";
-            let reqBody = "";
-            let respBody = "";
-
-            if (parts.length > 1) {
-                contextHtml = ' <span style="color: var(--text-muted)">|</span>';
-                const fieldsString = parts.slice(1).join(" |");
-                const fieldPairs = fieldsString.match(/([^\s=]+)=(?:"[^"\\]*(?:\\.[^"\\]*)*"|[^\s|]*)/g);
-                if (fieldPairs) {
-                    fieldPairs.forEach(pair => {
-                        const eqIdx = pair.indexOf("=");
-                        if (eqIdx !== -1) {
-                            const key = pair.substring(0, eqIdx);
-                            let val = pair.substring(eqIdx + 1);
-                            if (val.startsWith('"') && val.endsWith('"')) {
-                                val = val.substring(1, val.length - 1).replace(/\\"/g, '"');
-                            }
-                            
-                            if (key === "req_body") {
-                                reqBody = val;
-                            } else if (key === "resp_body") {
-                                respBody = val;
-                            } else {
-                                contextHtml += ' <span style="color: #22d3ee; font-weight: 500;">' + key + '</span>=<span style="color: #f1f5f9;">' + val + '</span>';
-                            }
-                        }
-                    });
+                const lvl = (entry.level || "INFO").toUpperCase();
+                if (lvl === "FATAL") {
+                    levelBadge = '<span style="color: #f43f5e; background: rgba(244, 63, 94, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">FATAL</span>';
+                    levelClass = "level-fatal";
+                } else if (lvl === "WARN") {
+                    levelBadge = '<span style="color: #fbbf24; background: rgba(251, 191, 36, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">WARN</span>';
+                    levelClass = "level-warn";
+                } else if (lvl === "ERROR") {
+                    levelBadge = '<span style="color: #f87171; background: rgba(248, 113, 113, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">ERROR</span>';
+                    levelClass = "level-error";
                 } else {
-                    contextHtml += ' <span style="color: var(--text-muted)">' + fieldsString + '</span>';
+                    levelBadge = '<span style="color: #818cf8; background: rgba(129, 140, 248, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">INFO</span>';
                 }
-            }
 
-            return {
-                timestamp,
-                levelBadge,
-                message,
-                contextHtml,
-                callerStr,
-                levelClass,
-                reqBody,
-                respBody
-            };
+                let contextHtml = "";
+                let jsonFields = [];
+                if (entry.fields) {
+                    contextHtml = ' <span style="color: var(--text-muted)">|</span>';
+                    for (const [key, val] of Object.entries(entry.fields)) {
+	                        let strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+
+                        let isJson = false;
+                        if (strVal.startsWith('{') || strVal.startsWith('[')) {
+                            try { JSON.parse(strVal); isJson = true; } catch(e) {}
+                        }
+
+                        if (key === "req_body") {
+                            jsonFields.push({ key: "Request Payload", val: strVal, theme: "warn", color: "var(--warn)" });
+                        } else if (key === "resp_body") {
+                            jsonFields.push({ key: "Response Body", val: strVal, theme: "cyan", color: "var(--cyan)" });
+                        } else if (isJson) {
+                            jsonFields.push({ key: key, val: strVal, theme: "purple", color: "#a855f7" });
+                        } else {
+                            contextHtml += ' <span style="color: #22d3ee; font-weight: 500;">' + key + '</span>=<span style="color: #f1f5f9;">' + strVal + '</span>';
+                        }
+                    }
+                }
+
+                return {
+                    timestamp,
+                    levelBadge,
+                    message: entry.message || "",
+                    contextHtml,
+                    callerStr: entry.caller || "",
+                    levelClass,
+                    jsonFields
+                };
+            } catch (e) {
+                // Fallback to legacy text parsing
+                // 1. Extract caller if present
+                let callerStr = "";
+                const callerMatch = text.match(/caller=([^\s|]+)/);
+                if (callerMatch) {
+                    callerStr = callerMatch[1];
+	                    text = text.replace(callerMatch[0], "");
+                    text = text.replace(/\s+/g, ' ').replace(/\s*\|\s*$/, '').trim();
+                }
+
+                // 2. Extract timestamp
+                let timestamp = "";
+                const tsMatch = text.match(/^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\s/);
+                if (tsMatch) {
+                    const fullTs = tsMatch[1];
+	                    timestamp = fullTs.substring(11);
+                    text = text.substring(tsMatch[0].length);
+                }
+
+                // 3. Detect and style Level Badge
+                let levelBadge = "";
+                let levelClass = "level-info";
+                if (text.includes("[FATAL]")) {
+                    levelBadge = '<span style="color: #f43f5e; background: rgba(244, 63, 94, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">FATAL</span>';
+                    text = text.replace("[FATAL]", "").trim();
+                    levelClass = "level-fatal";
+                } else if (text.includes("[INFO]")) {
+                    levelBadge = '<span style="color: #818cf8; background: rgba(129, 140, 248, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">INFO</span>';
+                    text = text.replace("[INFO]", "").trim();
+                    levelClass = "level-info";
+                } else if (text.includes("[WARN]")) {
+                    levelBadge = '<span style="color: #fbbf24; background: rgba(251, 191, 36, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">WARN</span>';
+                    text = text.replace("[WARN]", "").trim();
+                    levelClass = "level-warn";
+                } else if (text.includes("[ERROR]")) {
+                    levelBadge = '<span style="color: #f87171; background: rgba(248, 113, 113, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">ERROR</span>';
+                    text = text.replace("[ERROR]", "").trim();
+                    levelClass = "level-error";
+                }
+
+                // 4. Format key=value pairs nicely
+                const parts = text.split(" |");
+                let message = parts[0];
+                let contextHtml = "";
+	                let jsonFields = [];
+
+                if (parts.length > 1) {
+                    contextHtml = ' <span style="color: var(--text-muted)">|</span>';
+                    const fieldsString = parts.slice(1).join(" |");
+                    const fieldPairs = fieldsString.match(/([^\s=]+)=(?:"[^"\\]*(?:\\.[^"\\]*)*"|[^\s|]*)/g);
+                    if (fieldPairs) {
+                        fieldPairs.forEach(pair => {
+                            const eqIdx = pair.indexOf("=");
+                            if (eqIdx !== -1) {
+                                const key = pair.substring(0, eqIdx);
+                                let val = pair.substring(eqIdx + 1);
+                                if (val.startsWith('"') && val.endsWith('"')) {
+                                    val = val.substring(1, val.length - 1).replace(/\\"/g, '"');
+                                }
+
+                                let isJson = false;
+                                const trimmedVal = val.trim();
+                                if ((trimmedVal.startsWith('{') && trimmedVal.endsWith('}')) || (trimmedVal.startsWith('[') && trimmedVal.endsWith(']'))) {
+                                    try {
+                                        JSON.parse(trimmedVal);
+                                        isJson = true;
+                                    } catch(e) {
+                                        isJson = false;
+                                    }
+                                }
+
+                                if (key === "req_body") {
+                                    jsonFields.push({ key: "Request Payload", val: val, theme: "warn", color: "var(--warn)" });
+                                } else if (key === "resp_body") {
+                                    jsonFields.push({ key: "Response Body", val: val, theme: "cyan", color: "var(--cyan)" });
+                                } else if (isJson) {
+                                    jsonFields.push({ key: key, val: val, theme: "purple", color: "#a855f7" });
+                                } else {
+                                    contextHtml += ' <span style="color: #22d3ee; font-weight: 500;">' + key + '</span>=<span style="color: #f1f5f9;">' + val + '</span>';
+                                }
+                            }
+                        });
+                    }
+                }
+
+                return {
+                    timestamp,
+                    levelBadge,
+                    message,
+                    contextHtml,
+                    callerStr,
+                    levelClass,
+                    jsonFields
+                };
+            }
         }
 
         function appendLogLine(rawText, customClass = '') {
@@ -1068,8 +1161,8 @@
 
             lineDiv.appendChild(topDiv);
 
-            // Add expandable request/response bodies under the log line
-            if (formatted.reqBody || formatted.respBody) {
+            // Add expandable JSON bodies under the log line
+            if (formatted.jsonFields && formatted.jsonFields.length > 0) {
                 const expandContainer = document.createElement('div');
                 expandContainer.style.paddingLeft = '3rem';
                 expandContainer.style.marginTop = '0.4rem';
@@ -1078,63 +1171,28 @@
                 expandContainer.style.flexDirection = 'column';
                 expandContainer.style.gap = '0.3rem';
 
-                if (formatted.reqBody) {
+                formatted.jsonFields.forEach(field => {
                     const btn = document.createElement('button');
                     btn.className = 'log-btn';
-                    btn.innerHTML = '▶ View Request Payload';
-                    btn.style.background = 'rgba(251, 191, 36, 0.1)';
-                    btn.style.border = '1px solid rgba(251, 191, 36, 0.2)';
+                    btn.innerHTML = '▶ View ' + field.key;
+                    btn.style.background = 'rgba(168, 85, 247, 0.1)';
+                    btn.style.border = '1px solid rgba(168, 85, 247, 0.2)';
+                    if (field.theme === "warn") {
+                        btn.style.background = 'rgba(251, 191, 36, 0.1)';
+                        btn.style.border = '1px solid rgba(251, 191, 36, 0.2)';
+                    } else if (field.theme === "cyan") {
+                        btn.style.background = 'rgba(34, 211, 238, 0.1)';
+                        btn.style.border = '1px solid rgba(34, 211, 238, 0.2)';
+                    }
                     btn.style.borderRadius = '4px';
-                    btn.style.color = 'var(--warn)';
+                    btn.style.color = field.color;
                     btn.style.cursor = 'pointer';
                     btn.style.padding = '0.2rem 0.5rem';
                     btn.style.width = 'fit-content';
                     btn.style.fontSize = '0.7rem';
                     btn.style.fontWeight = '500';
                     btn.style.transition = 'all 0.2s';
-                    
-                    const content = document.createElement('pre');
-                    content.style.display = 'none';
-                    content.style.background = 'rgba(0,0,0,0.4)';
-                    content.style.padding = '0.6rem';
-                    content.style.borderRadius = '4px';
-                    content.style.color = '#e2e8f0';
-                    content.style.margin = '0.2rem 0 0 0';
-                    content.style.whiteSpace = 'pre-wrap';
-                    content.style.borderLeft = '3px solid var(--warn)';
-                    content.innerText = tryFormatJSON(formatted.reqBody);
-                    
-                    btn.onclick = () => {
-                        if (content.style.display === 'none') {
-                            content.style.display = 'block';
-                            btn.innerHTML = '▼ Hide Request Payload';
-                            btn.style.background = 'rgba(251, 191, 36, 0.2)';
-                        } else {
-                            content.style.display = 'none';
-                            btn.innerHTML = '▶ View Request Payload';
-                            btn.style.background = 'rgba(251, 191, 36, 0.1)';
-                        }
-                    };
-                    
-                    expandContainer.appendChild(btn);
-                    expandContainer.appendChild(content);
-                }
 
-                if (formatted.respBody) {
-                    const btn = document.createElement('button');
-                    btn.className = 'log-btn';
-                    btn.innerHTML = '▶ View Response Body';
-                    btn.style.background = 'rgba(34, 211, 238, 0.1)';
-                    btn.style.border = '1px solid rgba(34, 211, 238, 0.2)';
-                    btn.style.borderRadius = '4px';
-                    btn.style.color = 'var(--cyan)';
-                    btn.style.cursor = 'pointer';
-                    btn.style.padding = '0.2rem 0.5rem';
-                    btn.style.width = 'fit-content';
-                    btn.style.fontSize = '0.7rem';
-                    btn.style.fontWeight = '500';
-                    btn.style.transition = 'all 0.2s';
-                    
                     const content = document.createElement('pre');
                     content.style.display = 'none';
                     content.style.background = 'rgba(0,0,0,0.4)';
@@ -1143,24 +1201,36 @@
                     content.style.color = '#e2e8f0';
                     content.style.margin = '0.2rem 0 0 0';
                     content.style.whiteSpace = 'pre-wrap';
-                    content.style.borderLeft = '3px solid var(--cyan)';
-                    content.innerText = tryFormatJSON(formatted.respBody);
-                    
+                    content.style.borderLeft = '3px solid ' + field.color;
+                    content.innerText = tryFormatJSON(field.val);
+
                     btn.onclick = () => {
                         if (content.style.display === 'none') {
                             content.style.display = 'block';
-                            btn.innerHTML = '▼ Hide Response Body';
-                            btn.style.background = 'rgba(34, 211, 238, 0.2)';
+                            btn.innerHTML = '▼ Hide ' + field.key;
+                            if (field.theme === "warn") {
+                                btn.style.background = 'rgba(251, 191, 36, 0.2)';
+                            } else if (field.theme === "cyan") {
+                                btn.style.background = 'rgba(34, 211, 238, 0.2)';
+                            } else {
+                                btn.style.background = 'rgba(168, 85, 247, 0.2)';
+                            }
                         } else {
                             content.style.display = 'none';
-                            btn.innerHTML = '▶ View Response Body';
-                            btn.style.background = 'rgba(34, 211, 238, 0.1)';
+                            btn.innerHTML = '▶ View ' + field.key;
+                            if (field.theme === "warn") {
+                                btn.style.background = 'rgba(251, 191, 36, 0.1)';
+                            } else if (field.theme === "cyan") {
+                                btn.style.background = 'rgba(34, 211, 238, 0.1)';
+                            } else {
+                                btn.style.background = 'rgba(168, 85, 247, 0.1)';
+                            }
                         }
                     };
-                    
+
                     expandContainer.appendChild(btn);
                     expandContainer.appendChild(content);
-                }
+                });
 
                 lineDiv.appendChild(expandContainer);
             }
@@ -1204,7 +1274,7 @@
 
             lines.forEach(line => {
                 const text = line.innerText;
-                
+
                 let lineLevel = "ALL";
                 if (text.includes('FATAL')) lineLevel = "FATAL";
                 else if (text.includes('INFO')) lineLevel = "INFO";
@@ -1304,7 +1374,7 @@
             const token = getAuthToken();
             const loginCard = document.getElementById('loginCard');
             const dashboardContent = document.getElementById('dashboardContent');
-            
+
             updateAuthIndicator();
 
             if (token) {
@@ -1312,7 +1382,7 @@
                 if (dashboardContent) {
                     dashboardContent.style.display = 'flex';
                 }
-                
+
                 // Parse service param from URL
                 const urlParams = new URLSearchParams(window.location.search);
                 const serviceParam = urlParams.get('service');
@@ -1326,7 +1396,7 @@
                         targetRow.classList.add('active');
                     }
                 }
-                
+
                 connectStream();
             } else {
                 if (loginCard) loginCard.style.display = 'flex';

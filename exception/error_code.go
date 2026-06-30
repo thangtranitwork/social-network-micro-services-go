@@ -956,6 +956,15 @@ func NewAppException(errCode ErrorCode) AppException {
 	return AppException{ErrCode: errCode}
 }
 
+func NewAppError(code int, msg string, err string) ErrorCode {
+	return ErrorCode{
+		Code:    code,
+		Message: msg,
+		Error:   err,
+		Status:  http.StatusBadRequest,
+	}
+}
+
 var errorStringMap = map[string]ErrorCode{
 	// Account errors
 	"ACCOUNT_NOT_FOUND":                              AccountNotFound,

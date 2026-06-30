@@ -13,7 +13,10 @@ import (
 	"social-network-go/post-service/service"
 
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
 	"social-network-go/logger"
+	"social-network-go/pb"
+	postGrpc "social-network-go/post-service/grpc"
 	"social-network-go/profiler"
 )
 
@@ -44,6 +47,21 @@ func main() {
 	}
 
 	postHandler := handler.NewPostHandler(postSvc)
+
+	// Start Ad gRPC Server
+	go func() {
+		lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
+		if err != nil {
+			logger.Error("failed to listen gRPC: %v", err)
+			return
+		}
+		s := grpc.NewServer(grpc.UnaryInterceptor(logger.UnaryServerInterceptor()))
+		pb.RegisterAdServiceServer(s, postGrpc.NewAdGrpcServer(postSvc))
+		logger.Info("Post Ad gRPC Server starting on port %s", cfg.GRPCPort)
+		if err := s.Serve(lis); err != nil {
+			logger.Error("failed to serve gRPC: %v", err)
+		}
+	}()
 
 	// 3. Setup HTTP/REST Server (Gin)
 	r := gin.New()

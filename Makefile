@@ -37,6 +37,8 @@ build:
 	go build -o bin/ai-service ai-service/main.go
 	go build -o bin/file-service file-service/main.go
 	go build -o bin/admin-service admin-service/main.go
+	go build -o bin/search-service search-service/main.go
+	go build -o bin/story-service story-service/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
 
 dev:
@@ -50,6 +52,8 @@ dev:
 	go build -o bin/ai-service ai-service/main.go
 	go build -o bin/file-service file-service/main.go
 	go build -o bin/admin-service admin-service/main.go
+	go build -o bin/search-service search-service/main.go
+	go build -o bin/story-service story-service/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
 	@echo "====== Stopping Go Microservices ======"
 	-@pkill -f "bin/api-gateway" || true
@@ -61,6 +65,8 @@ dev:
 	-@pkill -f "bin/ai-service" || true
 	-@pkill -f "bin/file-service" || true
 	-@pkill -f "bin/admin-service" || true
+	-@pkill -f "bin/search-service" || true
+	-@pkill -f "bin/story-service" || true
 	@echo "====== All Services Stopped! ======"
 	@echo "====== Starting Go Microservices ======"
 	@mkdir -p logs
@@ -73,6 +79,8 @@ dev:
 	@nohup ./bin/ai-service > /dev/null 2> logs/ai-service.log &
 	@nohup ./bin/file-service > /dev/null 2> logs/file-service.log &
 	@nohup ./bin/admin-service > /dev/null 2> logs/admin-service.log &
+	@nohup ./bin/search-service > /dev/null 2> logs/search-service.log &
+	@nohup ./bin/story-service > /dev/null 2> logs/story-service.log &
 	@echo "====== All Services Started in Background (check logs/ for output)! ======"
 
 # Infrastructure services

@@ -46,7 +46,10 @@ func main() {
 	userHandler := handler.NewUserHandler(userSvc)
 
 	// 5. Start gRPC Server
-	usergrpc.StartGrpcServer(cfg.GRPCPort, userSvc)
+	grpcSrv := usergrpc.StartGrpcServer(cfg.GRPCPort, userSvc)
+	if grpcSrv != nil {
+		defer grpcSrv.GracefulStop()
+	}
 
 	// 6. Setup and Start HTTP/REST Server (Gin)
 	r := gin.New()
@@ -116,6 +119,7 @@ func main() {
 	r.PATCH("/v1/users/update-name", userHandler.UpdateName)
 	r.PATCH("/v1/users/update-username", userHandler.UpdateUsername)
 	r.PATCH("/v1/users/update-profile-picture", userHandler.UpdateProfilePicture)
+	r.PATCH("/v1/users/update-notification-preferences", userHandler.UpdateNotificationPreferences)
 
 	// Friend Graph REST APIs
 	r.GET("/v1/friends/suggested", userHandler.GetSuggestedFriends)

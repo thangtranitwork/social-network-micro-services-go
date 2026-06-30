@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"social-network-go/logger"
 	"social-network-go/post-service/model"
 
 	"github.com/google/uuid"
@@ -169,6 +172,75 @@ func (s *PostService) GetAllPosts(ctx context.Context, pageable Pageable) ([]*mo
 	return posts, nil
 }
 
+func (s *PostService) fetchActiveAds(ctx context.Context) ([]model.Post, error) {
+	if s.Redis == nil {
+		return nil, nil
+	}
+
+	results, err := s.Redis.HGetAll(ctx, "active_ads").Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var adPosts []model.Post
+	for _, valStr := range results {
+		var ad struct {
+			ID           string `json:"id"`
+			Title        string `json:"title"`
+			Description  string `json:"description"`
+			MediaURL     string `json:"mediaUrl"`
+			TargetURL    string `json:"targetUrl"`
+			Status       string `json:"status"`
+			AdvertiserID string `json:"advertiserId"`
+		}
+
+		if err := json.Unmarshal([]byte(valStr), &ad); err != nil {
+			logger.Error("Failed to unmarshal cached ad: %v", err)
+			continue
+		}
+
+		filesList := []string{}
+		if ad.MediaURL != "" {
+			filesList = []string{ad.MediaURL}
+		}
+
+		// Use Description if present, otherwise Title
+		contentVal := ad.Title
+		if ad.Description != "" {
+			contentVal = ad.Description
+		}
+
+		authorID := ad.AdvertiserID
+		if authorID == "" {
+			authorID = "sponsored"
+		}
+
+		adPosts = append(adPosts, model.Post{
+			ID:          ad.ID,
+			Content:     contentVal,
+			AuthorID:    authorID,
+			Privacy:     "PUBLIC",
+			CreatedAt:   time.Now(),
+			SharedPost:  false,
+			Files:       filesList,
+			Images:      filesList,
+			IsAd:        true,
+			AdID:        ad.ID,
+			AdTargetURL: ad.TargetURL,
+			AdMediaURL:  ad.MediaURL,
+			Author: model.AuthorInfo{
+				ID:                authorID,
+				Username:          "sponsored",
+				GivenName:         "PocPoc",
+				FamilyName:        "Sponsored Partner",
+				ProfilePictureUrl: "",
+			},
+		})
+	}
+
+	return adPosts, nil
+}
+
 func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID string, pageable Pageable) ([]*model.Post, error) {
 	pageType := pageable.Type
 	if pageType == "" {
@@ -187,8 +259,6 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		}
 	}
 
-	s.ResolveAuthors(ctx, validPosts)
-
 	if pageType == PageTypeRelevant && s.KeywordInteractor != nil {
 		ids := make([]string, 0, len(validPosts))
 		for _, p := range validPosts {
@@ -196,6 +266,37 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		}
 		_ = s.KeywordInteractor.PostsLoaded(ctx, ids, currentUserID)
 	}
+
+	// Interleave ads if there are active ads and organic posts
+	if len(validPosts) > 0 {
+		ads, err := s.fetchActiveAds(ctx)
+		logger.WithContext(ctx).JsonField("ads", ads).Info("Fetched ads")
+		if err == nil && len(ads) > 0 {
+			interleaved := make([]*model.Post, 0, len(validPosts)+len(ads))
+			adIdx := 0
+			for i, post := range validPosts {
+				interleaved = append(interleaved, post)
+				// Interleave ad at index 2 (after 2 posts) and then every 5 posts
+				if i == 1 || (i > 1 && (i-1)%5 == 0) {
+					if adIdx < len(ads) {
+						adCopy := ads[adIdx]
+						interleaved = append(interleaved, &adCopy)
+						adIdx++
+					}
+				}
+			}
+			// If we still have ads left and the feed has less than 2 posts, append the first remaining ad
+			if adIdx < len(ads) && len(validPosts) < 2 {
+				adCopy := ads[adIdx]
+				interleaved = append(interleaved, &adCopy)
+				adIdx++
+			}
+			validPosts = interleaved
+		}
+	}
+
+	// Resolve authors (including both organic posts and interleaved ads!)
+	s.ResolveAuthors(ctx, validPosts)
 
 	s.enrichPostsWithPresignedURLs(ctx, validPosts)
 	return validPosts, nil
@@ -309,5 +410,15 @@ func (s *PostService) GetFilesInPostsOfUser(ctx context.Context, username, curre
 		return nil, err
 	}
 
-	return s.Repo.GetFilesInPostsOfUser(ctx, username, pageable.Skip, normalizeLimit(pageable.Limit))
+	files, err := s.Repo.GetFilesInPostsOfUser(ctx, username, pageable.Skip, normalizeLimit(pageable.Limit))
+	if err != nil {
+		return nil, err
+	}
+
+	for i, fileID := range files {
+		if fileID != "" && !strings.HasPrefix(fileID, "http://") && !strings.HasPrefix(fileID, "https://") {
+			files[i] = fmt.Sprintf("%s/%s", s.Cfg.FileServiceURL, fileID)
+		}
+	}
+	return files, nil
 }

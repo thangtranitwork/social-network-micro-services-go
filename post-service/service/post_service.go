@@ -70,7 +70,7 @@ type PostService struct {
 
 func NewPostService(cfg *config.Config, repo repository.PostRepository) *PostService {
 	var userClient pb.UserServiceClient
-	conn, err := grpc.Dial(
+	conn, err := grpc.NewClient(
 		cfg.UserGrpcAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(logger.UnaryClientInterceptor()),

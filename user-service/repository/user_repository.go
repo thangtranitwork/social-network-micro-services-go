@@ -51,6 +51,7 @@ type UserRepository interface {
 	UpdateUsername(ctx context.Context, currentUserID string, username string, nextDate string) error
 	UpdateProfilePicture(ctx context.Context, currentUserID string, fileID string) error
 	RecordProfileView(ctx context.Context, viewerID, targetID string) error
+	UpdateNotificationPreferences(ctx context.Context, currentUserID string, email bool, push bool, digest string) error
 }
 
 type Neo4jUserRepository struct {
@@ -445,6 +446,11 @@ func (r *Neo4jUserRepository) GetSuggestedFriends(ctx context.Context, currentUs
 					UNION
 					WITH u
 					MATCH (u)-[:POSTED]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf:User)
+					RETURN foaf
+					UNION
+					WITH u
+					MATCH (foaf:User)
+					WHERE foaf <> u
 					RETURN foaf
 				}
 				WITH u, foaf
@@ -1210,6 +1216,32 @@ func (r *Neo4jUserRepository) RecordProfileView(ctx context.Context, viewerID, t
 				RETURN u1.id
 			`
 			return tx.Run(ctx, query, map[string]interface{}{"viewerID": viewerID, "targetID": targetID})
+		})
+		return err
+	}
+	return nil
+}
+
+func (r *Neo4jUserRepository) UpdateNotificationPreferences(ctx context.Context, currentUserID string, email bool, push bool, digest string) error {
+	if db.Neo4jDriver != nil {
+		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(ctx)
+
+		_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $id})
+				SET u.emailNotifications = $email,
+				    u.pushNotifications = $push,
+				    u.digestFrequency = $digest
+				RETURN u
+			`
+			params := map[string]interface{}{
+				"id":     currentUserID,
+				"email":  email,
+				"push":   push,
+				"digest": digest,
+			}
+			return tx.Run(ctx, query, params)
 		})
 		return err
 	}

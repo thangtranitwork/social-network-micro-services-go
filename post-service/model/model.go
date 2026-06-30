@@ -29,6 +29,12 @@ type Post struct {
 	OriginalAuthorID    string     `json:"originalAuthorId,omitempty"`
 	OriginalPostCanView bool       `json:"originalPostCanView"`
 	OriginalPost        *Post      `json:"originalPost,omitempty"`
+
+	// Advertisement Fields
+	IsAd        bool   `json:"isAd,omitempty"`
+	AdID        string `json:"adId,omitempty"`
+	AdTargetURL string `json:"adTargetUrl,omitempty"`
+	AdMediaURL  string `json:"adMediaUrl,omitempty"`
 }
 
 type Comment struct {

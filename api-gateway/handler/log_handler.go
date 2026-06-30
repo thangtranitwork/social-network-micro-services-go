@@ -2,10 +2,12 @@ package handler
 
 import (
 	"bufio"
+	"bytes"
 	_ "embed"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -35,6 +37,8 @@ func StreamLogs(c *gin.Context) {
 		"file-service":         true,
 		"ai-service":           true,
 		"admin-service":        true,
+		"search-service":       true,
+		"story-service":        true,
 	}
 	if !validServices[service] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid service name"})
@@ -146,6 +150,8 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 			"notification-service": cfg.NotificationHttpAddr,
 			"file-service":         cfg.FileHttpAddr,
 			"admin-service":        cfg.AdminHttpAddr,
+			"search-service":       cfg.SearchHttpAddr,
+			"story-service":        cfg.StoryHttpAddr,
 		}
 
 		type ServiceData struct {
@@ -222,14 +228,15 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 
 // LogSearchResult represents a matched log line
 type LogSearchResult struct {
-	Service   string `json:"service"`
-	Timestamp string `json:"timestamp"`
-	Level     string `json:"level"`
-	Message   string `json:"message"`
-	RawLine   string `json:"rawLine"`
+	Service   string                 `json:"service"`
+	Timestamp string                 `json:"timestamp"`
+	Level     string                 `json:"level"`
+	Message   string                 `json:"message"`
+	RawLine   string                 `json:"rawLine"`
+	Fields    map[string]interface{} `json:"fields,omitempty"`
 }
 
-// SearchLogs searches all microservice log files for a specific request_id
+// SearchLogs searches all microservice log files for a specific request_id, limited to last 100k lines
 func SearchLogs(c *gin.Context) {
 	reqID := c.Query("request_id")
 	if reqID == "" {
@@ -247,6 +254,8 @@ func SearchLogs(c *gin.Context) {
 		"file-service",
 		"ai-service",
 		"admin-service",
+		"search-service",
+		"story-service",
 	}
 
 	results := []LogSearchResult{}
@@ -259,44 +268,69 @@ func SearchLogs(c *gin.Context) {
 			defer wg.Done()
 			logFile := "logs/" + srvName + ".log"
 
-			file, err := os.Open(logFile)
-			if err != nil {
-				return // Ignore if file doesn't exist yet
+			if _, err := os.Stat(logFile); os.IsNotExist(err) {
+				return
 			}
-			defer file.Close()
 
-			scanner := bufio.NewScanner(file)
-			const maxCapacity = 1024 * 1024 // 1MB buffer limit
-			buf := make([]byte, maxCapacity)
-			scanner.Buffer(buf, maxCapacity)
+			// Use 'tail' to get the last 100,000 lines efficiently
+			cmd := exec.Command("tail", "-n", "100000", logFile)
+			output, err := cmd.Output()
+			if err != nil {
+				return
+			}
 
+			scanner := bufio.NewScanner(bytes.NewReader(output))
 			for scanner.Scan() {
 				line := scanner.Text()
 				if strings.Contains(line, reqID) {
-					timestamp := ""
-					level := ""
-					msg := line
-
-					// Extract timestamp and level: YYYY/MM/DD HH:MM:SS [LEVEL] message...
-					parts := strings.SplitN(line, " [", 2)
-					if len(parts) == 2 {
-						timestamp = parts[0]
-						subparts := strings.SplitN(parts[1], "] ", 2)
-						if len(subparts) == 2 {
-							level = subparts[0]
-							msg = subparts[1]
-						}
+					// Try to parse as JSON first
+					var entry struct {
+						Timestamp string                 `json:"timestamp"`
+						Level     string                 `json:"level"`
+						Message   string                 `json:"message"`
+						Caller    string                 `json:"caller"`
+						Fields    map[string]interface{} `json:"fields"`
 					}
 
-					mu.Lock()
-					results = append(results, LogSearchResult{
-						Service:   srvName,
-						Timestamp: timestamp,
-						Level:     level,
-						Message:   msg,
-						RawLine:   line,
-					})
-					mu.Unlock()
+					if err := json.Unmarshal([]byte(line), &entry); err == nil {
+						// JSON Format
+						mu.Lock()
+						results = append(results, LogSearchResult{
+							Service:   srvName,
+							Timestamp: entry.Timestamp,
+							Level:     entry.Level,
+							Message:   entry.Message,
+							RawLine:   line,
+							Fields:    entry.Fields,
+						})
+						mu.Unlock()
+					} else {
+						// Legacy Text Format Fallback
+						timestamp := ""
+						level := ""
+						msg := line
+
+						// Extract timestamp and level: YYYY/MM/DD HH:MM:SS [LEVEL] message...
+						parts := strings.SplitN(line, " [", 2)
+						if len(parts) == 2 {
+							timestamp = parts[0]
+							subparts := strings.SplitN(parts[1], "] ", 2)
+							if len(subparts) == 2 {
+								level = subparts[0]
+								msg = subparts[1]
+							}
+						}
+
+						mu.Lock()
+						results = append(results, LogSearchResult{
+							Service:   srvName,
+							Timestamp: timestamp,
+							Level:     level,
+							Message:   msg,
+							RawLine:   line,
+						})
+						mu.Unlock()
+					}
 				}
 			}
 		}(service)
@@ -304,11 +338,8 @@ func SearchLogs(c *gin.Context) {
 
 	wg.Wait()
 
-	// Sort results chronologically by timestamp
+	// Sort results chronologically
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].Timestamp == results[j].Timestamp {
-			return results[i].Service < results[j].Service
-		}
 		return results[i].Timestamp < results[j].Timestamp
 	})
 

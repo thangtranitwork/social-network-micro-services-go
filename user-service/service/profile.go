@@ -114,3 +114,7 @@ func (s *UserService) UpdateProfilePicture(ctx context.Context, currentUserID st
 
 	return fileID, nil
 }
+
+func (s *UserService) UpdateNotificationPreferences(ctx context.Context, currentUserID string, req model.UpdateNotificationPreferencesRequest) error {
+	return s.UserRepo.UpdateNotificationPreferences(ctx, currentUserID, req.EmailNotifications, req.PushNotifications, req.DigestFrequency)
+}

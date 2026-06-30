@@ -17,5 +17,7 @@ kill_process "chat-service" "bin/chat-service"
 kill_process "notification-service" "bin/notification-service"
 kill_process "ai-service" "bin/ai-service"
 kill_process "admin-service" "bin/admin-service"
+kill_process "search-service" "bin/search-service"
+kill_process "story-service" "bin/story-service"
 
 echo "====== All Services Stopped! ======"

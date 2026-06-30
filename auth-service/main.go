@@ -35,7 +35,7 @@ func main() {
 	redis.InitRedis(cfg)
 
 	// 4. Dial User Service via gRPC
-	userConn, err := grpc.Dial(
+	userConn, err := grpc.NewClient(
 		cfg.UserGRPCAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(logger.UnaryClientInterceptor()),
@@ -53,7 +53,10 @@ func main() {
 	authHandler := handler.NewAuthHandler(authSvc)
 
 	// 5. Start gRPC Server
-	authgrpc.StartGrpcServer(cfg.GRPCPort, authSvc)
+	grpcSrv := authgrpc.StartGrpcServer(cfg.GRPCPort, authSvc)
+	if grpcSrv != nil {
+		defer grpcSrv.GracefulStop()
+	}
 
 	// 6. Setup and Start HTTP/REST Server (Gin)
 	r := gin.New()
@@ -146,6 +149,12 @@ func main() {
 		authRoutes.POST("/forgot-password", authHandler.ForgotPassword)
 		authRoutes.POST("/reset-password", authHandler.ResetPassword)
 		authRoutes.POST("/change-password", authHandler.ChangePassword)
+		authRoutes.POST("/2fa/generate", authHandler.Generate2FA)
+		authRoutes.POST("/2fa/verify", authHandler.Verify2FA)
+		authRoutes.POST("/2fa/disable", authHandler.Disable2FA)
+		authRoutes.GET("/2fa/status", authHandler.Get2FAStatus)
+		authRoutes.GET("/google/login", authHandler.GoogleLogin)
+		authRoutes.GET("/google/callback", authHandler.GoogleCallback)
 	}
 
 	// Legacy/Frontend compat endpoints

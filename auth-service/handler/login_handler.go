@@ -14,7 +14,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, err := h.AuthSvc.Login(req.Email, req.Password, false)
+	accessToken, refreshToken, err := h.AuthSvc.Login(req.Email, req.Password, req.TwoFactorCode, false)
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("Login failed")
 		if mapped, found := exception.MapAppError(err); found {
@@ -38,7 +38,7 @@ func (h *AuthHandler) LoginAdmin(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, err := h.AuthSvc.Login(req.Email, req.Password, true)
+	accessToken, refreshToken, err := h.AuthSvc.Login(req.Email, req.Password, req.TwoFactorCode, true)
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("LoginAdmin failed")
 		if mapped, found := exception.MapAppError(err); found {

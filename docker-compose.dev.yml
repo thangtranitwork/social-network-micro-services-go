@@ -1,0 +1,269 @@
+version: '3.8'
+name: social-network-go-dev
+
+services:
+  # ========================================================
+  # PART 1: DATABASES & INFRASTRUCTURE (Exposing Ports to Host)
+  # ========================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: dev-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=auth_db
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - sn_network
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: dev-neo4j
+    ports:
+      - "7474:7474" # Browser interface
+      - "7687:7687" # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j_dev_data:/data
+    networks:
+      - sn_network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: dev-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - sn_network
+
+  mongodb:
+    image: mongo:6-jammy
+    container_name: dev-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_dev_data:/data/db
+    networks:
+      - sn_network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: dev-zookeeper
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+    networks:
+      - sn_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: dev-kafka
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+    networks:
+      - sn_network
+
+  # ========================================================
+  # PART 2: GO MICROSERVICES
+  # ========================================================
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: auth-service
+    container_name: dev-auth-service
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - POSTGRES_DSN=host=postgres user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable
+      - REDIS_ADDR=redis:6379
+    networks:
+      - sn_network
+
+
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: user-service
+    container_name: dev-user-service
+    depends_on:
+      - neo4j
+      - redis
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+    networks:
+      - sn_network
+
+  post-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: post-service
+    container_name: dev-post-service
+    depends_on:
+      - neo4j
+      - redis
+      - user-service
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+      - USER_GRPC_ADDR=user-service:10052
+    networks:
+      - sn_network
+
+  # Scaled to 2 instances - container_name removed
+  chat-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: chat-service
+    deploy:
+      replicas: 2
+    depends_on:
+      - mongodb
+      - redis
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/chat_db
+      - REDIS_ADDR=redis:6379
+      - NEO4J_URI=neo4j://neo4j:7687
+      - USER_GRPC_ADDR=user-service:10052
+    networks:
+      - sn_network
+
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: notification-service
+    container_name: dev-notification-service
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_ADDR=kafka:9092
+    networks:
+      - sn_network
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: ai-service
+    container_name: dev-ai-service
+    depends_on:
+      - kafka
+    environment:
+      - KAFKA_ADDR=kafka:9092
+      - GEMINI_KEY=${GEMINI_KEY}
+    networks:
+      - sn_network
+
+  # Scaled to 2 instances - container_name and ports mapping removed (handled by Nginx Load Balancer)
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: api-gateway
+    deploy:
+      replicas: 2
+    depends_on:
+      - auth-service
+      - user-service
+      - post-service
+      - chat-service
+      - search-service
+      - story-service
+    environment:
+      - GATEWAY_PORT=11111
+      - AUTH_GRPC_ADDR=auth-service:10051
+      - AUTH_HTTP_ADDR=http://auth-service:10081
+      - USER_HTTP_ADDR=http://user-service:10082
+      - POST_HTTP_ADDR=http://post-service:10083
+      - CHAT_HTTP_ADDR=http://chat-service:10084
+      - SEARCH_HTTP_ADDR=http://search-service:10089
+      - STORY_HTTP_ADDR=http://story-service:10090
+      - REDIS_ADDR=redis:6379
+    networks:
+      - sn_network
+
+  search-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: search-service
+    container_name: dev-search-service
+    depends_on:
+      - neo4j
+      - redis
+      - user-service
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+      - USER_GRPC_ADDR=user-service:10052
+    networks:
+      - sn_network
+
+  story-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: story-service
+    container_name: dev-story-service
+    depends_on:
+      - neo4j
+      - redis
+      - user-service
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+      - USER_GRPC_ADDR=user-service:10052
+    networks:
+      - sn_network
+
+  # ========================================================
+  # PART 3: GATEWAY LOAD BALANCER (Nginx)
+  # ========================================================
+  gateway-lb:
+    image: nginx:alpine
+    container_name: dev-gateway-lb
+    ports:
+      - "11111:11111"
+    volumes:
+      - ./scripts/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api-gateway
+    networks:
+      - sn_network
+
+networks:
+  sn_network:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:
+  neo4j_dev_data:
+  mongodb_dev_data:

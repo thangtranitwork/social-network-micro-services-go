@@ -497,7 +497,8 @@ type profilerPersistentData struct {
 func getStatsFilePath() string {
 	exeName := filepath.Base(os.Args[0])
 	exeName = strings.TrimSuffix(exeName, ".exe")
-	return fmt.Sprintf("profiler_stats_%s.json", exeName)
+	_ = os.MkdirAll("logs", 0755)
+	return filepath.Join("logs", fmt.Sprintf("profiler_stats_%s.json", exeName))
 }
 
 func saveStats() {

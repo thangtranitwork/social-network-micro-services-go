@@ -171,3 +171,20 @@ func (h *UserHandler) UpdateProfilePicture(c *gin.Context) {
 
 	sendSuccess(c, path)
 }
+
+func (h *UserHandler) UpdateNotificationPreferences(c *gin.Context) {
+	currentUserID := c.GetString("user_id")
+	var req model.UpdateNotificationPreferencesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": "INVALID_REQUEST", "message": "Invalid request format or missing required fields"})
+		return
+	}
+
+	err := h.UserSvc.UpdateNotificationPreferences(c.Request.Context(), currentUserID, req)
+	if err != nil {
+		c.JSON(500, gin.H{"code": "INTERNAL_SERVER_ERROR", "message": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Notification preferences updated successfully"})
+}

@@ -180,6 +180,8 @@ services:
       - user-service
       - post-service
       - chat-service
+      - search-service
+      - story-service
     environment:
       - GATEWAY_PORT=11111
       - AUTH_GRPC_ADDR=auth-service:10051
@@ -187,6 +189,44 @@ services:
       - USER_HTTP_ADDR=http://user-service:10082
       - POST_HTTP_ADDR=http://post-service:10083
       - CHAT_HTTP_ADDR=http://chat-service:10084
+      - SEARCH_HTTP_ADDR=http://search-service:10089
+      - STORY_HTTP_ADDR=http://story-service:10090
+    networks:
+      - sn_network
+
+  search-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: search-service
+    container_name: prod-search-service
+    depends_on:
+      - neo4j
+      - redis
+      - user-service
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+      - USER_GRPC_ADDR=user-service:10052
+    networks:
+      - sn_network
+
+  story-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: story-service
+    container_name: prod-story-service
+    depends_on:
+      - neo4j
+      - redis
+      - user-service
+    environment:
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+      - USER_GRPC_ADDR=user-service:10052
     networks:
       - sn_network
 

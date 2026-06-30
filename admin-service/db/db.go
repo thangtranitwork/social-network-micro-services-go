@@ -2,6 +2,7 @@ package db
 
 import (
 	"social-network-go/admin-service/config"
+	"social-network-go/admin-service/model"
 	"social-network-go/logger"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -42,5 +43,13 @@ func InitDB(cfg *config.Config) {
 	} else {
 		PostgresDB = pgDB
 		logger.Info("Admin-Service connected to PostgreSQL successfully")
+
+		// Auto Migrate Advertisement tables
+		err = pgDB.AutoMigrate(&model.AdCampaign{}, &model.AdInteraction{})
+		if err != nil {
+			logger.Error("Failed to auto-migrate advertisement tables: %v", err)
+		} else {
+			logger.Info("Successfully auto-migrated advertisement tables")
+		}
 	}
 }
