@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -218,6 +219,8 @@ var (
 	logLevels   map[string]bool // levels allowed to print to console
 	serviceName string
 	logHttpBody bool
+	once        sync.Once
+	mu          sync.Mutex // protects logFile, rotation, and file writes
 )
 
 func RedactJSON(jsonStr string) string {
@@ -564,7 +567,7 @@ func rotateLogFile() {
 
 // Internal logging helper
 func logMessage(level Level, color string, message string, ctx map[string]interface{}, jsonCtx map[string]interface{}) {
-	initLogger()
+	once.Do(initLogger)
 
 	caller := getCaller()
 
@@ -592,10 +595,12 @@ func logMessage(level Level, color string, message string, ctx map[string]interf
 	jsonBytes, _ := json.Marshal(entry)
 	fileLine := string(jsonBytes) + "\n"
 
-	// Write to file with rotation check
-	if logFile != nil {
+	// Write to file with rotation check and log level filter under mutex
+	if logFile != nil && logLevels[string(level)] {
+		mu.Lock()
 		rotateLogFile()
 		_, _ = logFile.WriteString(fileLine)
+		mu.Unlock()
 	}
 
 	// 2. Format log for console (stdout), filtered by LOG_LEVELS
