@@ -232,16 +232,16 @@ Khuyến nghị:
 
 ## Checklist đề xuất
 
-- [ ] Thêm redaction và feature flag cho HTTP body logging.
-- [ ] Redact dữ liệu nhạy cảm trong log dashboard/search.
-- [ ] Cấu hình allowlist origin cho chat, notification và admin WebSocket.
-- [ ] Bỏ hoặc ký xác thực các query `userId` realtime khi gọi service trực tiếp.
-- [ ] Đóng profiler endpoint ở service nội bộ bằng env/internal auth.
-- [ ] Thêm guard destructive cho `scripts/gen_test_data.go`.
-- [ ] Thay log search bằng streaming reader có timeout, limit và rate limit.
-- [ ] Làm rõ lock contract trong `profiler.recordExecution`.
-- [ ] Chuyển search sang full-text index hoặc tối thiểu chặn query quá ngắn.
-- [ ] Thêm timeout cho Gemini HTTP request trong AI service.
+- [x] Thêm redaction và feature flag cho HTTP body logging.
+- [x] Redact dữ liệu nhạy cảm trong log dashboard/search.
+- [x] Cấu hình allowlist origin cho chat, notification và admin WebSocket.
+- [x] Bỏ hoặc ký xác thực các query `userId` realtime khi gọi service trực tiếp.
+- [x] Đóng profiler endpoint ở service nội bộ bằng env/internal auth.
+- [x] Thêm guard destructive cho `scripts/gen_test_data.go`.
+- [x] Thay log search bằng streaming reader có timeout, limit và rate limit.
+- [x] Làm rõ lock contract trong `profiler.recordExecution`.
+- [x] Chuyển search sang full-text index hoặc tối thiểu chặn query quá ngắn.
+- [x] Thêm timeout cho Gemini HTTP request trong AI service.
 
 ## Ghi chú kiểm chứng
 
