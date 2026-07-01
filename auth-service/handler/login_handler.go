@@ -26,7 +26,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// Set HTTP-Only Cookie with Refresh Token
-	c.SetCookie("token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()), "/", "", false, true)
+	setRefreshCookie(c, "token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()))
 
 	sendSuccess(c, TokenResp{Token: accessToken})
 }
@@ -50,7 +50,7 @@ func (h *AuthHandler) LoginAdmin(c *gin.Context) {
 	}
 
 	// Set HTTP-Only Cookie with Admin Refresh Token
-	c.SetCookie("admin_token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()), "/", "", false, true)
+	setRefreshCookie(c, "admin_token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()))
 
 	sendSuccess(c, TokenResp{Token: accessToken})
 }
@@ -89,8 +89,8 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 
 	// Delete cookies
-	c.SetCookie("admin_token", "", -1, "/", "", false, true)
-	c.SetCookie("token", "", -1, "/", "", false, true)
+	setRefreshCookie(c, "admin_token", "", -1)
+	setRefreshCookie(c, "token", "", -1)
 
 	sendSuccess(c, gin.H{"message": "LOGGED_OUT_SUCCESSFULLY"})
 }

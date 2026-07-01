@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -42,6 +43,16 @@ func LoadConfig() *Config {
 		}
 		return fallback
 	}
+	getRequiredSecret := func(key, fallback string) string {
+		val := getEnv(key, fallback)
+		if getEnv("APP_ENV", "") == "production" && strings.TrimSpace(val) == "" {
+			panic(key + " is required in production")
+		}
+		if getEnv("APP_ENV", "") == "production" && val == fallback {
+			panic(key + " must be explicitly configured in production")
+		}
+		return val
+	}
 
 	emailLimitCountStr := getEnv("EMAIL_RATE_LIMIT_COUNT", "10")
 	emailLimitCount := 10
@@ -62,8 +73,8 @@ func LoadConfig() *Config {
 		UserGRPCAddr:          getEnv("USER_GRPC_ADDR", "localhost:10052"),
 		RedisAddr:             getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPass:             getEnv("REDIS_PASSWORD", ""),
-		JWTSecret:             getEnv("JWT_ACCESS_TOKEN_KEY", "your-access-secret-key-very-long-and-secure"),
-		JWTRefreshSecret:      getEnv("JWT_REFRESH_TOKEN_KEY", "your-refresh-secret-key-very-long-and-secure"),
+		JWTSecret:             getRequiredSecret("JWT_ACCESS_TOKEN_KEY", "your-access-secret-key-very-long-and-secure"),
+		JWTRefreshSecret:      getRequiredSecret("JWT_REFRESH_TOKEN_KEY", "your-refresh-secret-key-very-long-and-secure"),
 		AccessTokenDuration:   15 * time.Minute,
 		RefreshTokenDuration:  7 * 24 * time.Hour,
 		VerifyEmailDuration:   24 * time.Hour,

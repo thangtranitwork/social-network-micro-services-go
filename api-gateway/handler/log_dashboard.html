@@ -3,18 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🌌 Core Microservices Log Center</title>
-    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <title>📜 Core Microservices Log Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0c16;
-            --panel-bg: rgba(17, 19, 39, 0.65);
-            --border-color: rgba(255, 255, 255, 0.06);
-            --primary: #6366f1;
-            --primary-glow: rgba(99, 102, 241, 0.35);
-            --active-tab-glow: rgba(99, 102, 241, 0.15);
-            --text-color: #f1f5f9;
-            --text-muted: #64748b;
+            --bg-color: #faf9f6;
+            --card-outer: #f3f2ec;
+            --card-inner: #ffffff;
+            --border-outer: rgba(28, 25, 23, 0.05);
+            --border-inner: rgba(28, 25, 23, 0.08);
+            --text-main: #1c1917;
+            --text-muted: #78716c;
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --primary-glow: rgba(79, 70, 229, 0.15);
             --success: #10b981;
             --warn: #f59e0b;
             --error: #ef4444;
@@ -27,706 +30,401 @@
         }
 
         body {
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Plus Jakarta Sans', sans-serif;
             background-color: var(--bg-color);
-            color: var(--text-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.03) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.03) 0px, transparent 50%);
+            color: var(--text-main);
             overflow: hidden;
             height: 100vh;
             display: flex;
             flex-direction: column;
-            background-image:
-                radial-gradient(at 10% 10%, rgba(99, 102, 241, 0.12) 0px, transparent 40%),
-                radial-gradient(at 90% 85%, rgba(168, 85, 247, 0.1) 0px, transparent 40%);
+            position: relative;
         }
 
-        /* Top Header Grid */
-        header {
-            padding: 1.25rem 2rem;
-            background: rgba(13, 14, 28, 0.7);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            z-index: 10;
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            opacity: 0.015;
+            pointer-events: none;
+            z-index: 9999;
         }
 
-        .logo-group {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
+        /* Double-Bezel nested architecture */
+        .double-bezel-outer {
+            background: var(--card-outer);
+            border: 1px solid var(--border-outer);
+            padding: 0.5rem;
+            border-radius: 1.5rem;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        .logo-indicator {
-            width: 10px;
-            height: 10px;
-            background-color: var(--success);
-            border-radius: 50%;
-            box-shadow: 0 0 12px var(--success);
-            animation: pulse 2s infinite;
+        .double-bezel-inner {
+            background: var(--card-inner);
+            border: 1px solid var(--border-inner);
+            border-radius: calc(1.5rem - 0.5rem);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        @keyframes pulse {
-            0% { transform: scale(0.9); opacity: 0.6; }
-            50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 16px var(--success); }
-            100% { transform: scale(0.9); opacity: 0.6; }
+        /* Float Navbar Style */
+        .glass-nav {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(28, 25, 23, 0.03);
         }
 
-        h1 {
-            font-size: 1.35rem;
-            font-weight: 800;
-            letter-spacing: -0.025em;
-            background: linear-gradient(to right, #fff, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .subtitle {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-        }
-
-        .system-stats {
-            display: flex;
-            gap: 1.5rem;
-        }
-
-        .stat-item {
-            text-align: right;
-        }
-
-        .stat-label {
-            font-size: 0.65rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .stat-val {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text-color);
-        }
-
-        /* Main Workspace */
-        .workspace {
-            flex: 1;
-            display: flex;
-            overflow: hidden;
-            padding: 1.5rem;
-            gap: 1.5rem;
-        }
-
-        /* Sidebar Tabs */
-        .sidebar {
-            width: 280px;
-            background: var(--panel-bg);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 1rem;
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-            overflow-y: auto;
-        }
-
-        .panel-title {
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            padding: 0.25rem 0.5rem 0.5rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-            margin-bottom: 0.5rem;
-        }
-
+        /* Sidebar active service row styling */
         .service-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.5rem;
-            background: transparent;
-            border-radius: 12px;
-            padding: 0.15rem 0.5rem;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
             border: 1px solid transparent;
         }
 
         .service-row:hover {
-            background: rgba(255, 255, 255, 0.02);
-            border-color: rgba(255, 255, 255, 0.01);
+            background: rgba(28, 25, 23, 0.03);
+            border-color: rgba(28, 25, 23, 0.02);
         }
 
         .service-row.active {
-            background: var(--active-tab-glow);
-            border-color: rgba(99, 102, 241, 0.15);
-            box-shadow: inset 0 0 12px rgba(99, 102, 241, 0.08);
+            background: var(--primary-light);
+            border-color: rgba(79, 70, 229, 0.15);
+            box-shadow: inset 0 0 10px rgba(79, 70, 229, 0.04);
         }
 
-        .tab-btn {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0.75rem 0.5rem;
-            background: transparent;
-            border: none;
-            color: #94a3b8;
-            font-family: inherit;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-align: left;
-            outline: none;
+        /* Terminal styling */
+        .terminal-container {
+            background: #0f0e0c; /* High-end dark charcoal inner core */
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: calc(1.5rem - 0.5rem);
         }
 
-        .tab-btn:hover {
-            color: #fff;
-        }
-
-        .service-row.active .tab-btn {
-            color: #fff;
-        }
-
-        .action-btn {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border-color);
-            color: #94a3b8;
-            width: 28px;
-            height: 28px;
-            border-radius: 6px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.75rem;
-            transition: all 0.15s;
-            flex-shrink: 0;
-            outline: none;
-        }
-
-        .action-btn:hover {
-            background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-        }
-
-        .action-btn.paused {
-            background: rgba(245, 158, 11, 0.15);
-            border-color: rgba(245, 158, 11, 0.3);
-            color: var(--warn);
-        }
-
-        .service-badge {
-            font-size: 0.65rem;
-            padding: 0.15rem 0.4rem;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 6px;
-            color: var(--text-muted);
-            border: 1px solid rgba(255, 255, 255, 0.03);
-        }
-
-        .service-row.active .service-badge {
-            background: rgba(99, 102, 241, 0.2);
-            color: #a5b4fc;
-            border-color: rgba(99, 102, 241, 0.1);
-        }
-
-        /* Terminal Console */
-        .console-area {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background: var(--panel-bg);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
-        }
-
-        /* Console Controls */
-        .console-header {
-            padding: 0.85rem 1.25rem;
-            background: rgba(13, 14, 28, 0.4);
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .console-meta {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            background-color: var(--success);
-            border-radius: 50%;
-            display: inline-block;
-        }
-
-        .status-text {
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--text-muted);
-        }
-
-        .controls-group {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
-        .level-select {
-            background: rgba(0, 0, 0, 0.25);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 0.4rem 0.75rem;
-            color: var(--text-color);
-            font-family: inherit;
-            font-size: 0.75rem;
-            outline: none;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .level-select:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
-        }
-
-        .level-select option {
-            background: #0b0c16;
-            color: var(--text-color);
-        }
-
-        .search-bar {
-            background: rgba(0, 0, 0, 0.25);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 0.4rem 0.75rem;
-            color: var(--text-color);
-            font-family: inherit;
-            font-size: 0.75rem;
-            outline: none;
-            width: 180px;
-            transition: all 0.2s;
-        }
-
-        .search-bar:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
-        }
-
-        .ctrl-btn {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border-color);
-            color: #94a3b8;
-            padding: 0.4rem 0.75rem;
-            font-family: inherit;
-            font-size: 0.75rem;
-            font-weight: 600;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.15s;
-            display: flex;
-            align-items: center;
-            gap: 0.35rem;
-        }
-
-        .ctrl-btn:hover {
-            background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-        }
-
-        .ctrl-btn.active-action {
-            background: rgba(239, 68, 68, 0.15);
-            border-color: rgba(239, 68, 68, 0.2);
-            color: #fca5a5;
-        }
-
-        /* Log Output Container */
-        .terminal {
-            flex: 1;
-            padding: 1.25rem;
-            font-family: 'Fira Code', monospace;
-            font-size: 0.75rem;
+        .terminal-out {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
             line-height: 1.6;
             overflow-y: auto;
-            background: rgba(5, 6, 12, 0.55);
-            color: #cbd5e1;
+            color: #d6d3d1;
         }
 
-        .log-line {
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            white-space: pre-wrap;
-            word-break: break-all;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
+        /* Status pulses */
+        .running-pulse {
+            animation: pulse-green 2s infinite;
         }
 
-        .log-line:hover {
-            background: rgba(255, 255, 255, 0.02);
+        @keyframes pulse-green {
+            0% { transform: scale(0.9); opacity: 0.6; box-shadow: 0 0 8px var(--success); }
+            50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 14px var(--success); }
+            100% { transform: scale(0.9); opacity: 0.6; box-shadow: 0 0 8px var(--success); }
         }
 
-        .time-tag {
-            color: var(--text-muted);
-            user-select: none;
-            flex-shrink: 0;
-            width: 75px;
-        }
-
-        .log-content {
-            flex: 1;
-        }
-
-        /* Color Coding based on keywords */
-        .level-info { color: #f1f5f9; }
-        .level-warn { color: var(--warn); }
-        .level-error { color: var(--error); }
-        .level-fatal { color: #f43f5e; font-weight: 700; background: rgba(244, 63, 94, 0.12); border-radius: 4px; padding: 0.1rem 0.35rem; }
-        .level-system { color: var(--text-muted); }
-
-        .caller-tag {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 4px;
-            padding: 0.1rem 0.35rem;
-            font-family: inherit;
-        }
-
-        /* Custom Scrollbars */
+        /* Scrollbar customization */
         ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
         }
         ::-webkit-scrollbar-track {
-            background: rgba(0, 0, 0, 0.05);
+            background: rgba(0, 0, 0, 0.02);
         }
         ::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(0, 0, 0, 0.08);
             border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.15);
+            background: rgba(0, 0, 0, 0.16);
         }
-
-        /* Login Card */
-        #loginCard {
-            position: fixed;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #080914;
-            z-index: 100;
+        
+        .terminal-out::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.01);
         }
-        .login-panel {
-            background: rgba(15, 17, 36, 0.7);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-            border-radius: 16px;
-            padding: 2.5rem;
-            width: 100%;
-            max-width: 400px;
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-            text-align: center;
+        .terminal-out::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.12);
         }
-        .login-input-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-            text-align: left;
-        }
-        .login-input-group label {
-            font-size: 0.7rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        .login-input {
-            width: 100%;
-            padding: 0.75rem 1rem;
-            background: rgba(0, 0, 0, 0.25);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-color);
-            outline: none;
-            font-size: 0.85rem;
-            transition: all 0.2s;
-        }
-        .login-input:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
-        }
-        .login-btn-submit {
-            padding: 0.75rem;
-            background: linear-gradient(to right, var(--primary), #a855f7);
-            border: none;
-            color: #fff;
-            border-radius: 8px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.2s;
-            font-family: inherit;
-        }
-        .login-btn-submit:hover {
-            opacity: 0.9;
-        }
-        .login-alert {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.2);
-            color: var(--error);
-            padding: 0.75rem;
-            border-radius: 8px;
-            font-size: 0.75rem;
-            font-weight: 600;
+        .terminal-out::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.24);
         }
     </style>
 </head>
-<body>
-
+<body class="p-6">
     <!-- Login Portal -->
-    <div id="loginCard" style="display: none;">
-        <div class="login-panel">
-            <div style="font-size: 2.5rem;">📜</div>
-            <h2 style="font-size: 1.5rem; font-weight: 800; background: linear-gradient(to right, var(--primary), #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0;">
-                Logs Admin Portal
-            </h2>
-            <p style="color: var(--text-muted); font-size: 0.75rem; font-weight: 600; margin: 0;">Sign in with admin credentials to access core system logs</p>
+    <div id="loginCard" class="fixed inset-0 flex items-center justify-center p-4 z-50 bg-[#fbfbfa]">
+        <div class="double-bezel-outer max-w-md w-full rounded-[2rem] p-3 shadow-xl">
+            <div class="double-bezel-inner rounded-[calc(2rem-0.75rem)] p-8 space-y-6 text-center">
+                <div class="space-y-3">
+                    <div class="mx-auto w-16 h-16 bg-stone-100 border border-stone-200/80 rounded-full flex items-center justify-center text-3xl shadow-sm">
+                        📜
+                    </div>
+                    <h2 class="text-2xl font-extrabold text-stone-900 tracking-tight">
+                        Logs Portal Login
+                    </h2>
+                    <p class="text-stone-500 text-xs font-medium">Sign in with admin credentials to access system telemetry streams</p>
+                </div>
 
-            <div id="loginAlert" style="display: none;" class="login-alert">
-                Invalid email or password.
-            </div>
+                <!-- Alert Notification -->
+                <div id="loginAlert" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-3 text-xs font-semibold text-left">
+                    Invalid email or password.
+                </div>
 
-            <div class="login-input-group">
-                <label>Email Address</label>
-                <input id="loginEmail" type="email" value="admin@admin.com" class="login-input">
+                <!-- Form -->
+                <div class="space-y-4 text-left">
+                    <div class="space-y-1.5">
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase tracking-wider">Email Address</label>
+                        <input id="loginEmail" type="email" placeholder="admin@example.com" class="w-full px-4 py-3 bg-stone-50/50 border border-stone-200 rounded-xl outline-none text-sm text-stone-900 focus:border-indigo-500 focus:bg-white transition-all">
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase tracking-wider">Password</label>
+                        <input id="loginPassword" type="password" placeholder="••••••••" class="w-full px-4 py-3 bg-stone-50/50 border border-stone-200 rounded-xl outline-none text-sm text-stone-900 focus:border-indigo-500 focus:bg-white transition-all">
+                    </div>
+                    <button onclick="performLogin()" id="btnLoginSubmit" class="w-full py-3 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-sm font-bold transition-all active:scale-[0.98] duration-150 flex items-center justify-center gap-2 shadow-md shadow-stone-900/10">
+                        Sign In
+                    </button>
+                </div>
             </div>
-            <div class="login-input-group">
-                <label>Password</label>
-                <input id="loginPassword" type="password" value="123456Aa@" class="login-input">
-            </div>
-            <button onclick="performLogin()" id="btnLoginSubmit" class="login-btn-submit">
-                Sign In
-            </button>
         </div>
     </div>
 
-    <div id="dashboardContent" style="display: none; height: 100vh; flex-direction: column;">
-        <header>
-            <div class="logo-group">
-                <div class="logo-indicator"></div>
+    <!-- Main Content Dashboard -->
+    <div id="dashboardContent" class="flex-1 flex flex-col space-y-5 h-full overflow-hidden" style="display: none;">
+        <!-- Top Sticky Header -->
+        <header class="glass-nav rounded-3xl p-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 sticky top-4 z-30 transition-all duration-300">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shadow-inner">
+                    <span class="text-xl">📜</span>
+                </div>
                 <div>
-                    <h1>Social Network Log Center</h1>
-                    <div class="subtitle">Real-time Microservice Monitor & Aggregator</div>
-
-                    <!-- Navigation Tabs -->
-                    <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
-                        <a href="/containers" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">🐳 Containers</a>
-                        <a href="/logs" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 700; background: var(--active-tab-glow); border: 1px solid rgba(99, 102, 241, 0.2); color: #fff; text-decoration: none; transition: all 0.2s; box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);">📜 Logs</a>
-                        <a href="/profiler" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">📊 Profiler</a>
-                        <a href="/monitor" style="padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.7rem; font-weight: 500; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); color: var(--text-muted); text-decoration: none; transition: all 0.2s;">🌐 Service Map</a>
-                    </div>
+                    <h1 class="text-lg font-bold text-stone-900 tracking-tight flex items-center gap-2">
+                        Social Network Log Center
+                    </h1>
+                    <p class="text-stone-500 text-xs font-medium">Real-time Microservice Monitor & Aggregator</p>
                 </div>
             </div>
 
-            <div class="system-stats">
-                <div class="stat-item" style="display: flex; align-items: center; justify-content: center; background: transparent; border: none; padding: 0;">
-                    <button id="authBtn" onclick="handleAuthClick()" style="padding: 0.4rem 0.75rem; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-muted); font-size: 0.7rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.35rem; transition: all 0.2s; font-family: inherit;">
-                        <span id="authStatusText">Auth Token</span>
-                    </button>
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Navigation Tabs -->
+                <div class="flex items-center gap-1 bg-stone-100/80 p-1 rounded-xl border border-stone-200/50">
+                    <a href="/containers" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 transition-all">🐳 Containers</a>
+                    <a href="/logs" class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white text-indigo-600 shadow-sm border border-stone-200/30">📜 Logs</a>
+                    <a href="/profiler" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 transition-all">📊 Profiler</a>
+                    <a href="/monitor" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 transition-all">🌐 Service Map</a>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-label">Deploy Mode</div>
-                    <div class="stat-val" style="color: var(--primary);">DEV LOCAL</div>
+
+                <!-- Stats Panel -->
+                <div class="flex items-center gap-4 text-xs font-semibold text-stone-600 bg-stone-50 px-4 py-2 border border-stone-200/50 rounded-xl">
+                    <div class="flex items-center gap-1.5 border-r border-stone-200 pr-3">
+                        <span class="text-[10px] text-stone-400 font-bold uppercase">Deploy</span>
+                        <span class="text-indigo-600">DEV LOCAL</span>
+                    </div>
+                    <div class="flex items-center gap-1.5 pr-1">
+                        <span class="text-[10px] text-stone-400 font-bold uppercase">Services</span>
+                        <span class="text-stone-900">11 Active</span>
+                    </div>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-label">Total Services</div>
-                    <div class="stat-val">11 Services</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-label">Core Engine</div>
-                    <div class="stat-val" style="color: var(--success);">GO NATIVE</div>
-                </div>
+
+                <!-- Admin Auth Indicator Button -->
+                <button id="authBtn" onclick="handleAuthClick()" class="flex items-center gap-2 bg-stone-100 border border-stone-200/60 hover:bg-stone-200/50 text-stone-700 hover:text-stone-950 font-bold text-xs px-3.5 py-2 rounded-xl transition-all cursor-pointer">
+                    🔑 <span id="authStatusText">Auth Token</span>
+                </button>
             </div>
         </header>
 
-    <div class="workspace">
-        <div class="sidebar">
-            <div class="panel-title">Microservices</div>
+        <!-- Main Workspace -->
+        <div class="flex-1 flex gap-5 overflow-hidden min-h-0">
+            <!-- Sidebar Panel: Microservices Selection -->
+            <aside class="double-bezel-outer w-80 flex flex-col shrink-0">
+                <div class="double-bezel-inner flex-1 flex flex-col overflow-hidden p-3 space-y-2">
+                    <div class="px-2 py-1 text-[10px] font-bold text-stone-500 uppercase tracking-widest border-b border-stone-100">
+                        Active microservices
+                    </div>
+                    <div class="flex-1 overflow-y-auto space-y-1 pr-1">
+                        <!-- API Gateway -->
+                        <div class="service-row active rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-api-gateway">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('api-gateway')">
+                                <span>API Gateway</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:11111</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('api-gateway', event)" id="btn-api-gateway" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row active" id="row-api-gateway">
-                <button class="tab-btn" onclick="selectService('api-gateway')">
-                    <span>API Gateway</span>
-                    <span class="service-badge">:11111</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('api-gateway', event)" id="btn-api-gateway" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- Auth Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-auth-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('auth-service')">
+                                <span>Auth Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10081</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('auth-service', event)" id="btn-auth-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-auth-service">
-                <button class="tab-btn" onclick="selectService('auth-service')">
-                    <span>Auth Service</span>
-                    <span class="service-badge">:10081</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('auth-service', event)" id="btn-auth-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- User Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-user-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('user-service')">
+                                <span>User Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10082</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('user-service', event)" id="btn-user-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-user-service">
-                <button class="tab-btn" onclick="selectService('user-service')">
-                    <span>User Service</span>
-                    <span class="service-badge">:10082</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('user-service', event)" id="btn-user-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- Post Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-post-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('post-service')">
+                                <span>Post Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10083</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('post-service', event)" id="btn-post-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-post-service">
-                <button class="tab-btn" onclick="selectService('post-service')">
-                    <span>Post Service</span>
-                    <span class="service-badge">:10083</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('post-service', event)" id="btn-post-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- Chat Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-chat-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('chat-service')">
+                                <span>Chat Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10084</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('chat-service', event)" id="btn-chat-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-chat-service">
-                <button class="tab-btn" onclick="selectService('chat-service')">
-                    <span>Chat Service</span>
-                    <span class="service-badge">:10084</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('chat-service', event)" id="btn-chat-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- Notification Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-notification-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('notification-service')">
+                                <span>Notification</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10085</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('notification-service', event)" id="btn-notification-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-notification-service">
-                <button class="tab-btn" onclick="selectService('notification-service')">
-                    <span>Notification</span>
-                    <span class="service-badge">:10085</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('notification-service', event)" id="btn-notification-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- File Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-file-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('file-service')">
+                                <span>File Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10087</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('file-service', event)" id="btn-file-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-admin-service">
-                <button class="tab-btn" onclick="selectService('admin-service')">
-                    <span>Admin Service</span>
-                    <span class="service-badge">:10088</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('admin-service', event)" id="btn-admin-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- Admin Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-admin-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('admin-service')">
+                                <span>Admin Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10088</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('admin-service', event)" id="btn-admin-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-file-service">
-                <button class="tab-btn" onclick="selectService('file-service')">
-                    <span>File Service</span>
-                    <span class="service-badge">:10087</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('file-service', event)" id="btn-file-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
-            <div class="service-row" id="row-search-service">
-                <button class="tab-btn" onclick="selectService('search-service')">
-                    <span>Search Service</span>
-                    <span class="service-badge">:10089</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('search-service', event)" id="btn-search-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- Search Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-search-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('search-service')">
+                                <span>Search Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10089</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('search-service', event)" id="btn-search-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-story-service">
-                <button class="tab-btn" onclick="selectService('story-service')">
-                    <span>Story Service</span>
-                    <span class="service-badge">:10090</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('story-service', event)" id="btn-story-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- Story Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-story-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('story-service')">
+                                <span>Story Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10090</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('story-service', event)" id="btn-story-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
 
-            <div class="service-row" id="row-ai-service">
-                <button class="tab-btn" onclick="selectService('ai-service')">
-                    <span>AI Service</span>
-                    <span class="service-badge">Kafka</span>
-                </button>
-                <button class="action-btn" onclick="toggleServiceStream('ai-service', event)" id="btn-ai-service" title="Pause/Resume Streaming">
-                    <span>⏸</span>
-                </button>
-            </div>
+                        <!-- AI Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-ai-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('ai-service')">
+                                <span>AI Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">Kafka</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('ai-service', event)" id="btn-ai-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
+                    </div>
 
-            <div class="service-row" id="row-all-services" style="margin-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem;">
-                <button class="tab-btn" onclick="selectService('all-services')">
-                    <span>🔍 Trace Request ID</span>
-                    <span class="service-badge">All</span>
-                </button>
-            </div>
-        </div>
-
-        <div class="console-area">
-            <div class="console-header">
-                <div class="console-meta">
-                    <span class="status-dot" id="stream-status-dot"></span>
-                    <span class="status-text" id="stream-status-text">Connected</span>
+                    <!-- Unified Tracer Tab -->
+                    <div class="pt-2 border-t border-stone-100" id="row-all-services">
+                        <button class="w-full flex items-center justify-between p-2 rounded-xl text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50 border border-transparent hover:border-indigo-150 transition-all" onclick="selectService('all-services')">
+                            <span>🔍 Trace Request ID</span>
+                            <span class="text-[9px] bg-indigo-100/60 px-1.5 py-0.5 rounded text-indigo-700 font-extrabold uppercase">Trace Mode</span>
+                        </button>
+                    </div>
                 </div>
+            </aside>
 
-                <div class="controls-group" id="normal-controls-group">
-                    <select class="level-select" id="level-filter" onchange="applyFilter()">
-                        <option value="ALL">All Levels</option>
-                        <option value="INFO">INFO</option>
-                        <option value="WARN">WARN</option>
-                        <option value="ERROR">ERROR</option>
-                        <option value="FATAL">FATAL</option>
-                    </select>
-                    <input type="text" class="search-bar" placeholder="Search / Filter..." id="search-input" oninput="applyFilter()">
-                    <button class="ctrl-btn" onclick="togglePlayPause()" id="play-pause-btn">
-                        <span>Pause</span>
-                    </button>
-                    <button class="ctrl-btn" onclick="clearTerminal()">
-                        <span>Clear</span>
-                    </button>
+            <!-- Console Log Panel -->
+            <main class="double-bezel-outer flex-1 flex flex-col h-full min-w-0">
+                <div class="double-bezel-inner flex-1 flex flex-col overflow-hidden">
+                    <!-- Console Header Toolbar -->
+                    <div class="p-4 bg-stone-50/80 border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-3">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 running-pulse" id="stream-status-dot"></span>
+                            <span class="text-xs font-bold text-stone-600" id="stream-status-text">Connected</span>
+                        </div>
+
+                        <!-- Normal Logging Controls -->
+                        <div class="flex items-center gap-2" id="normal-controls-group">
+                            <select class="px-3 py-1.5 bg-white border border-stone-200 text-stone-700 rounded-xl text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" id="level-filter" onchange="applyFilter()">
+                                <option value="ALL">All Levels</option>
+                                <option value="INFO">INFO</option>
+                                <option value="WARN">WARN</option>
+                                <option value="ERROR">ERROR</option>
+                                <option value="FATAL">FATAL</option>
+                            </select>
+                            <input type="text" class="px-3 py-1.5 bg-white border border-stone-200 text-stone-700 placeholder-stone-400 rounded-xl text-xs outline-none focus:border-indigo-500 w-44 transition-all" placeholder="Search / Filter..." id="search-input" oninput="applyFilter()">
+                            <button class="px-3 py-1.5 bg-white border border-stone-200 hover:bg-stone-50 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl transition-all shadow-sm flex items-center gap-1 active:scale-95" onclick="togglePlayPause()" id="play-pause-btn">
+                                <span>Pause</span>
+                            </button>
+                            <button class="px-3 py-1.5 bg-stone-100 hover:bg-stone-200/60 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl transition-all active:scale-95" onclick="clearTerminal()">
+                                <span>Clear</span>
+                            </button>
+                        </div>
+
+                        <!-- Centralized Request Tracer Controls -->
+                        <div class="flex items-center gap-2" id="trace-search-group" style="display: none;">
+                            <input type="text" class="px-3 py-1.5 bg-white border border-stone-200 text-stone-900 placeholder-stone-400 rounded-xl text-xs outline-none focus:border-indigo-500 w-80 transition-all mono" placeholder="Enter Request ID to trace..." id="trace-request-input" onkeydown="if(event.key==='Enter') performTraceSearch()">
+                            <button class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md shadow-indigo-600/10 transition-all active:scale-95" onclick="performTraceSearch()">
+                                <span>Trace Request</span>
+                            </button>
+                            <button class="px-3 py-1.5 bg-stone-100 hover:bg-stone-200/60 text-xs font-bold text-stone-600 hover:text-stone-950 rounded-xl transition-all active:scale-95" onclick="clearTerminal()">
+                                <span>Clear</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Inner Console Core Terminal output -->
+                    <div class="flex-1 p-4 bg-[#0d0c0a] overflow-hidden flex flex-col">
+                        <div class="terminal-out flex-1" id="terminal-out">
+                            <!-- Live updates append here -->
+                        </div>
+                    </div>
                 </div>
-
-                <div class="controls-group" id="trace-search-group" style="display: none;">
-                    <input type="text" class="search-bar" placeholder="Enter Request ID to trace..." id="trace-request-input" style="width: 320px;" onkeydown="if(event.key==='Enter') performTraceSearch()">
-                    <button class="ctrl-btn" onclick="performTraceSearch()" style="background: var(--primary); color: white;">
-                        <span>Trace Request</span>
-                    </button>
-                    <button class="ctrl-btn" onclick="clearTerminal()">
-                        <span>Clear</span>
-                    </button>
-                </div>
-            </div>
-
-            <div class="terminal" id="terminal-out">
-                <!-- Log Streams will append here -->
-            </div>
+            </main>
         </div>
     </div>
 
+    <!-- Script Implementation -->
     <script>
         let currentService = 'api-gateway';
         let eventSource = null;
@@ -762,10 +460,12 @@
                 if (state.isPaused) {
                     icon.innerText = '▶';
                     btn.classList.add('paused');
+                    btn.className = 'w-7 h-7 flex items-center justify-center bg-amber-50 border border-amber-250 text-xs rounded-lg text-amber-600 transition-all shadow-sm';
                     btn.title = 'Resume Streaming';
                 } else {
                     icon.innerText = '⏸';
                     btn.classList.remove('paused');
+                    btn.className = 'w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm';
                     btn.title = 'Pause Streaming';
                 }
             }
@@ -782,15 +482,15 @@
             const statusDot = document.getElementById('stream-status-dot');
 
             if (isPaused) {
-                globalBtn.innerText = 'Resume';
-                globalBtn.classList.add('active-action');
+                globalBtn.querySelector('span').innerText = 'Resume';
+                globalBtn.className = 'px-3 py-1.5 bg-amber-50 border border-amber-200 hover:bg-amber-100 text-xs font-bold text-amber-700 rounded-xl transition-all shadow-sm flex items-center gap-1 active:scale-95';
                 statusText.innerText = 'Paused';
-                statusDot.style.backgroundColor = 'var(--warn)';
+                statusDot.className = 'w-2.5 h-2.5 rounded-full bg-amber-500 running-pulse';
             } else {
-                globalBtn.innerText = 'Pause';
-                globalBtn.classList.remove('active-action');
+                globalBtn.querySelector('span').innerText = 'Pause';
+                globalBtn.className = 'px-3 py-1.5 bg-white border border-stone-200 hover:bg-stone-50 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl transition-all shadow-sm flex items-center gap-1 active:scale-95';
                 statusText.innerText = 'Streaming Logs';
-                statusDot.style.backgroundColor = 'var(--success)';
+                statusDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 running-pulse';
             }
         }
 
@@ -801,7 +501,10 @@
         function selectService(serviceName) {
             // Update Active Tab UI
             document.querySelectorAll('.service-row').forEach(row => row.classList.remove('active'));
-            document.getElementById('row-' + serviceName).classList.add('active');
+            const targetRow = document.getElementById('row-' + serviceName);
+            if (targetRow) {
+                targetRow.classList.add('active');
+            }
 
             currentService = serviceName;
 
@@ -813,7 +516,7 @@
             if (serviceName === 'all-services') {
                 normalControls.style.display = 'none';
                 traceSearch.style.display = 'flex';
-                statusDot.style.backgroundColor = 'var(--primary)';
+                statusDot.className = 'w-2.5 h-2.5 rounded-full bg-indigo-500 running-pulse';
                 statusText.innerText = 'Centralized Trace Mode';
 
                 if (eventSource) {
@@ -903,7 +606,7 @@
             const statusDot = document.getElementById('stream-status-dot');
             const statusText = document.getElementById('stream-status-text');
 
-            statusDot.style.backgroundColor = 'var(--warn)';
+            statusDot.className = 'w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse';
             statusText.innerText = 'Connecting...';
 
             eventSource = new EventSource('/logs/stream?service=' + currentService + '&token=' + getAuthToken());
@@ -923,16 +626,16 @@
 
             eventSource.onopen = function() {
                 if (isPaused) {
-                    statusDot.style.backgroundColor = 'var(--warn)';
+                    statusDot.className = 'w-2.5 h-2.5 rounded-full bg-amber-500 running-pulse';
                     statusText.innerText = 'Paused';
                 } else {
-                    statusDot.style.backgroundColor = 'var(--success)';
+                    statusDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 running-pulse';
                     statusText.innerText = 'Streaming Logs';
                 }
             };
 
             eventSource.onerror = async function() {
-                statusDot.style.backgroundColor = 'var(--error)';
+                statusDot.className = 'w-2.5 h-2.5 rounded-full bg-red-500 running-pulse';
                 statusText.innerText = 'Disconnected. Retrying...';
 
                 if (eventSource) {
@@ -962,14 +665,14 @@
         }
 
         function formatLogLine(rawText) {
-	            let text = stripAnsi(rawText);
+            let text = stripAnsi(rawText);
 
             // Try to parse as JSON first
             try {
                 const entry = JSON.parse(text);
                 let timestamp = entry.timestamp ? entry.timestamp.substring(11, 19) : "";
                 let levelBadge = "";
-	                let levelClass = "level-info";
+                let levelClass = "level-info";
 
                 const lvl = (entry.level || "INFO").toUpperCase();
                 if (lvl === "FATAL") {
@@ -988,9 +691,9 @@
                 let contextHtml = "";
                 let jsonFields = [];
                 if (entry.fields) {
-                    contextHtml = ' <span style="color: var(--text-muted)">|</span>';
+                    contextHtml = ' <span class="text-stone-600">|</span>';
                     for (const [key, val] of Object.entries(entry.fields)) {
-	                        let strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+                        let strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
 
                         let isJson = false;
                         if (strVal.startsWith('{') || strVal.startsWith('[')) {
@@ -1000,7 +703,7 @@
                         if (key === "req_body") {
                             jsonFields.push({ key: "Request Payload", val: strVal, theme: "warn", color: "var(--warn)" });
                         } else if (key === "resp_body") {
-                            jsonFields.push({ key: "Response Body", val: strVal, theme: "cyan", color: "var(--cyan)" });
+                            jsonFields.push({ key: "Response Body", val: strVal, theme: "cyan", color: "#06b6d4" });
                         } else if (isJson) {
                             jsonFields.push({ key: key, val: strVal, theme: "purple", color: "#a855f7" });
                         } else {
@@ -1020,25 +723,22 @@
                 };
             } catch (e) {
                 // Fallback to legacy text parsing
-                // 1. Extract caller if present
                 let callerStr = "";
                 const callerMatch = text.match(/caller=([^\s|]+)/);
                 if (callerMatch) {
                     callerStr = callerMatch[1];
-	                    text = text.replace(callerMatch[0], "");
+                    text = text.replace(callerMatch[0], "");
                     text = text.replace(/\s+/g, ' ').replace(/\s*\|\s*$/, '').trim();
                 }
 
-                // 2. Extract timestamp
                 let timestamp = "";
                 const tsMatch = text.match(/^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\s/);
                 if (tsMatch) {
                     const fullTs = tsMatch[1];
-	                    timestamp = fullTs.substring(11);
+                    timestamp = fullTs.substring(11);
                     text = text.substring(tsMatch[0].length);
                 }
 
-                // 3. Detect and style Level Badge
                 let levelBadge = "";
                 let levelClass = "level-info";
                 if (text.includes("[FATAL]")) {
@@ -1059,14 +759,13 @@
                     levelClass = "level-error";
                 }
 
-                // 4. Format key=value pairs nicely
                 const parts = text.split(" |");
                 let message = parts[0];
                 let contextHtml = "";
-	                let jsonFields = [];
+                let jsonFields = [];
 
                 if (parts.length > 1) {
-                    contextHtml = ' <span style="color: var(--text-muted)">|</span>';
+                    contextHtml = ' <span class="text-stone-600">|</span>';
                     const fieldsString = parts.slice(1).join(" |");
                     const fieldPairs = fieldsString.match(/([^\s=]+)=(?:"[^"\\]*(?:\\.[^"\\]*)*"|[^\s|]*)/g);
                     if (fieldPairs) {
@@ -1093,7 +792,7 @@
                                 if (key === "req_body") {
                                     jsonFields.push({ key: "Request Payload", val: val, theme: "warn", color: "var(--warn)" });
                                 } else if (key === "resp_body") {
-                                    jsonFields.push({ key: "Response Body", val: val, theme: "cyan", color: "var(--cyan)" });
+                                    jsonFields.push({ key: "Response Body", val: val, theme: "cyan", color: "#06b6d4" });
                                 } else if (isJson) {
                                     jsonFields.push({ key: key, val: val, theme: "purple", color: "#a855f7" });
                                 } else {
@@ -1121,25 +820,21 @@
             const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
 
             const lineDiv = document.createElement('div');
-            lineDiv.className = 'log-line';
-            lineDiv.style.flexDirection = 'column';
-            lineDiv.style.alignItems = 'stretch';
-            lineDiv.style.padding = '0.5rem 0.75rem';
+            lineDiv.className = 'log-line border-b border-white/[0.03] py-2 flex flex-col items-stretch';
 
             const formatted = formatLogLine(rawText);
 
-            // Create top container for the log meta & main text
             const topDiv = document.createElement('div');
             topDiv.style.display = 'flex';
             topDiv.style.alignItems = 'center';
             topDiv.style.width = '100%';
 
             const timeTag = document.createElement('span');
-            timeTag.className = 'time-tag';
+            timeTag.className = 'text-stone-500 w-20 shrink-0 select-none';
             timeTag.innerText = formatted.timestamp || new Date().toTimeString().split(' ')[0];
 
             const contentSpan = document.createElement('span');
-            contentSpan.className = 'log-content';
+            contentSpan.className = 'flex-1 overflow-hidden truncate';
             if (formatted.levelClass) {
                 contentSpan.classList.add(formatted.levelClass);
             }
@@ -1150,11 +845,7 @@
 
             if (formatted.callerStr) {
                 const callerTag = document.createElement('span');
-                callerTag.className = 'caller-tag';
-                callerTag.style.color = 'var(--text-muted)';
-                callerTag.style.fontSize = '0.7rem';
-                callerTag.style.flexShrink = '0';
-                callerTag.style.marginLeft = 'auto';
+                callerTag.className = 'text-[10px] text-stone-500 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded ml-auto shrink-0 mono';
                 callerTag.innerText = formatted.callerStr;
                 topDiv.appendChild(callerTag);
             }
@@ -1164,67 +855,41 @@
             // Add expandable JSON bodies under the log line
             if (formatted.jsonFields && formatted.jsonFields.length > 0) {
                 const expandContainer = document.createElement('div');
-                expandContainer.style.paddingLeft = '3rem';
-                expandContainer.style.marginTop = '0.4rem';
-                expandContainer.style.fontSize = '0.8rem';
-                expandContainer.style.display = 'flex';
-                expandContainer.style.flexDirection = 'column';
-                expandContainer.style.gap = '0.3rem';
+                expandContainer.className = 'pl-20 mt-1.5 flex flex-col gap-1';
 
                 formatted.jsonFields.forEach(field => {
                     const btn = document.createElement('button');
-                    btn.className = 'log-btn';
+                    btn.className = 'px-2.5 py-1 text-[10px] font-bold rounded-lg w-max tracking-wide cursor-pointer transition-all';
                     btn.innerHTML = '▶ View ' + field.key;
-                    btn.style.background = 'rgba(168, 85, 247, 0.1)';
-                    btn.style.border = '1px solid rgba(168, 85, 247, 0.2)';
+                    
                     if (field.theme === "warn") {
-                        btn.style.background = 'rgba(251, 191, 36, 0.1)';
-                        btn.style.border = '1px solid rgba(251, 191, 36, 0.2)';
+                        btn.style.background = 'rgba(245, 158, 11, 0.12)';
+                        btn.style.border = '1px solid rgba(245, 158, 11, 0.2)';
+                        btn.style.color = '#fbbf24';
                     } else if (field.theme === "cyan") {
-                        btn.style.background = 'rgba(34, 211, 238, 0.1)';
-                        btn.style.border = '1px solid rgba(34, 211, 238, 0.2)';
+                        btn.style.background = 'rgba(6, 182, 212, 0.12)';
+                        btn.style.border = '1px solid rgba(6, 182, 212, 0.2)';
+                        btn.style.color = '#22d3ee';
+                    } else {
+                        btn.style.background = 'rgba(168, 85, 247, 0.12)';
+                        btn.style.border = '1px solid rgba(168, 85, 247, 0.2)';
+                        btn.style.color = '#c084fc';
                     }
-                    btn.style.borderRadius = '4px';
-                    btn.style.color = field.color;
-                    btn.style.cursor = 'pointer';
-                    btn.style.padding = '0.2rem 0.5rem';
-                    btn.style.width = 'fit-content';
-                    btn.style.fontSize = '0.7rem';
-                    btn.style.fontWeight = '500';
-                    btn.style.transition = 'all 0.2s';
 
                     const content = document.createElement('pre');
-                    content.style.display = 'none';
-                    content.style.background = 'rgba(0,0,0,0.4)';
-                    content.style.padding = '0.6rem';
-                    content.style.borderRadius = '4px';
-                    content.style.color = '#e2e8f0';
-                    content.style.margin = '0.2rem 0 0 0';
-                    content.style.whiteSpace = 'pre-wrap';
+                    content.className = 'hidden bg-stone-900 border border-white/5 p-3 rounded-lg text-[10px] text-stone-300 mt-1 overflow-x-auto whitespace-pre-wrap select-text';
                     content.style.borderLeft = '3px solid ' + field.color;
                     content.innerText = tryFormatJSON(field.val);
 
                     btn.onclick = () => {
-                        if (content.style.display === 'none') {
+                        if (content.style.display === 'none' || content.classList.contains('hidden')) {
+                            content.classList.remove('hidden');
                             content.style.display = 'block';
                             btn.innerHTML = '▼ Hide ' + field.key;
-                            if (field.theme === "warn") {
-                                btn.style.background = 'rgba(251, 191, 36, 0.2)';
-                            } else if (field.theme === "cyan") {
-                                btn.style.background = 'rgba(34, 211, 238, 0.2)';
-                            } else {
-                                btn.style.background = 'rgba(168, 85, 247, 0.2)';
-                            }
                         } else {
+                            content.classList.add('hidden');
                             content.style.display = 'none';
                             btn.innerHTML = '▶ View ' + field.key;
-                            if (field.theme === "warn") {
-                                btn.style.background = 'rgba(251, 191, 36, 0.1)';
-                            } else if (field.theme === "cyan") {
-                                btn.style.background = 'rgba(34, 211, 238, 0.1)';
-                            } else {
-                                btn.style.background = 'rgba(168, 85, 247, 0.1)';
-                            }
                         }
                     };
 
@@ -1295,11 +960,8 @@
         window.onload = function() {
             checkAuth();
         };
-    </script>
-    </div> <!-- Close #dashboardContent -->
 
-    <script>
-        // Authentication methods
+        // Authentication logic
         let isRefreshing = false;
         let refreshPromise = null;
 
@@ -1344,13 +1006,9 @@
             if (token) {
                 text.innerText = 'Logout (ADMIN)';
                 badge.style.color = '#10b981';
-                badge.style.borderColor = 'rgba(16, 185, 129, 0.3)';
-                badge.style.background = 'rgba(16, 185, 129, 0.05)';
             } else {
                 text.innerText = 'Sign In';
                 badge.style.color = '#ef4444';
-                badge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                badge.style.background = 'rgba(239, 68, 68, 0.05)';
             }
         }
 
@@ -1386,7 +1044,7 @@
                 // Parse service param from URL
                 const urlParams = new URLSearchParams(window.location.search);
                 const serviceParam = urlParams.get('service');
-                const validServices = ['api-gateway', 'auth-service', 'user-service', 'post-service', 'chat-service', 'notification-service', 'file-service', 'admin-service', 'ai-service'];
+                const validServices = ['api-gateway', 'auth-service', 'user-service', 'post-service', 'chat-service', 'notification-service', 'file-service', 'admin-service', 'search-service', 'story-service', 'ai-service'];
                 if (serviceParam && validServices.includes(serviceParam)) {
                     currentService = serviceParam;
                     // Update Active Tab UI
@@ -1412,14 +1070,14 @@
 
             if (!email || !password) {
                 alertBox.textContent = 'Please fill in both email and password.';
-                alertBox.style.display = 'block';
+                alertBox.classList.remove('hidden');
                 return;
             }
 
             btn.disabled = true;
             const originalText = btn.innerHTML;
             btn.innerHTML = 'Signing In...';
-            alertBox.style.display = 'none';
+            alertBox.classList.add('hidden');
 
             try {
                 const response = await fetch('/v1/auth/login-admin', {
@@ -1436,12 +1094,12 @@
                     checkAuth();
                 } else {
                     alertBox.textContent = data.message || 'Login failed. Please verify credentials.';
-                    alertBox.style.display = 'block';
+                    alertBox.classList.remove('hidden');
                 }
             } catch (err) {
                 console.error('Login error:', err);
                 alertBox.textContent = 'Failed to connect to authentication service.';
-                alertBox.style.display = 'block';
+                alertBox.classList.remove('hidden');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalText;

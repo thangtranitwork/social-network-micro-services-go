@@ -15,8 +15,8 @@ type FileServiceInterface interface {
 	GetPresignedUploadURL(ctx context.Context, filename string, contentType string) (string, string, error)
 	Load(ctx context.Context, id string) (io.ReadCloser, string, string, int64, error)
 	GetPresignedURL(ctx context.Context, id string) (string, error)
-	DeleteFile(ctx context.Context, id string) error
-	DeleteFiles(ctx context.Context, ids []string) error
+	DeleteFileForUser(ctx context.Context, id, userID string, isAdmin bool) error
+	DeleteFilesForUser(ctx context.Context, ids []string, userID string, isAdmin bool) error
 }
 
 type FileHandler struct {
@@ -141,8 +141,18 @@ func (h *FileHandler) GetPresignedURL(c *gin.Context) {
 
 func (h *FileHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	err := h.fileSvc.DeleteFile(c.Request.Context(), id)
+	userID := c.GetHeader("X-User-ID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	err := h.fileSvc.DeleteFileForUser(c.Request.Context(), id, userID, c.GetHeader("X-User-Role") == "ADMIN")
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "forbidden") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -159,8 +169,18 @@ func (h *FileHandler) DeleteMultiple(c *gin.Context) {
 		return
 	}
 
-	err := h.fileSvc.DeleteFiles(c.Request.Context(), req.IDs)
+	userID := c.GetHeader("X-User-ID")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	err := h.fileSvc.DeleteFilesForUser(c.Request.Context(), req.IDs, userID, c.GetHeader("X-User-Role") == "ADMIN")
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "forbidden") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

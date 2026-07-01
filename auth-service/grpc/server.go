@@ -23,7 +23,7 @@ func NewAuthGrpcServer(authSvc *service.AuthService) *AuthGrpcServer {
 
 func (s *AuthGrpcServer) ValidateToken(ctx context.Context, req *pb.TokenRequest) (*pb.TokenResponse, error) {
 	claims, err := s.AuthSvc.ValidateToken(req.Token)
-	logger.WithContext(ctx).Field("token", req.Token).Info("Validating token")
+	logger.WithContext(ctx).Info("Validating token")
 	if err != nil {
 		return &pb.TokenResponse{
 			IsValid:      false,

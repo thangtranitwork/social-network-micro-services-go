@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"social-network-go/file-service/config"
@@ -21,6 +23,8 @@ type FileService struct {
 	cfg         *config.Config
 	minioClient *minio.Client
 }
+
+var ErrForbiddenFileDelete = errors.New("forbidden file delete")
 
 func NewFileService(cfg *config.Config) *FileService {
 	client, err := minio.New(cfg.MinioEndpoint, &minio.Options{
@@ -150,6 +154,19 @@ func (s *FileService) DeleteFile(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *FileService) DeleteFileForUser(ctx context.Context, id, userID string, isAdmin bool) error {
+	if !isAdmin {
+		ownerID, err := s.uploaderID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if ownerID == "" || ownerID != userID {
+			return ErrForbiddenFileDelete
+		}
+	}
+	return s.DeleteFile(ctx, id)
+}
+
 func (s *FileService) DeleteFiles(ctx context.Context, ids []string) error {
 	objectsCh := make(chan minio.ObjectInfo)
 
@@ -170,6 +187,36 @@ func (s *FileService) DeleteFiles(ctx context.Context, ids []string) error {
 	}
 
 	return nil
+}
+
+func (s *FileService) DeleteFilesForUser(ctx context.Context, ids []string, userID string, isAdmin bool) error {
+	if !isAdmin {
+		for _, id := range ids {
+			ownerID, err := s.uploaderID(ctx, id)
+			if err != nil {
+				return err
+			}
+			if ownerID == "" || ownerID != userID {
+				return ErrForbiddenFileDelete
+			}
+		}
+	}
+	return s.DeleteFiles(ctx, ids)
+}
+
+func (s *FileService) uploaderID(ctx context.Context, id string) (string, error) {
+	info, err := s.minioClient.StatObject(ctx, s.cfg.MinioBucket, id, minio.StatObjectOptions{})
+	if err != nil {
+		logger.Err(err).Error("Failed to stat object %s for ownership check", id)
+		return "", fmt.Errorf("failed to stat object: %w", err)
+	}
+	for key, val := range info.UserMetadata {
+		normalized := strings.ToLower(strings.ReplaceAll(key, "-", ""))
+		if normalized == "uploaderid" {
+			return val, nil
+		}
+	}
+	return "", nil
 }
 
 func (s *FileService) Ping(ctx context.Context) error {

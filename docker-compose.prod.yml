@@ -41,6 +41,18 @@ services:
     networks:
       - sn_network
 
+  minio:
+    image: minio/minio
+    container_name: prod-minio
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_prod_data:/data
+    networks:
+      - sn_network
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: prod-zookeeper
@@ -70,7 +82,7 @@ services:
   auth-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: auth-service
     container_name: prod-auth-service
@@ -78,18 +90,21 @@ services:
       - postgres
       - redis
     environment:
-      - DB_HOST=postgres
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=auth_db
+      - APP_ENV=production
+      - SERVICE_NAME=auth-service
+      - POSTGRES_DSN=host=postgres user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable
       - REDIS_ADDR=redis:6379
+      - JWT_ACCESS_TOKEN_KEY=${JWT_ACCESS_TOKEN_KEY:?JWT_ACCESS_TOKEN_KEY is required}
+      - JWT_REFRESH_TOKEN_KEY=${JWT_REFRESH_TOKEN_KEY:?JWT_REFRESH_TOKEN_KEY is required}
+    volumes:
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
   user-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: user-service
     container_name: prod-user-service
@@ -97,15 +112,18 @@ services:
       - neo4j
       - redis
     environment:
+      - SERVICE_NAME=user-service
       - NEO4J_URI=neo4j://neo4j:7687
       - REDIS_ADDR=redis:6379
+    volumes:
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
   post-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: post-service
     container_name: prod-post-service
@@ -114,16 +132,19 @@ services:
       - redis
       - user-service
     environment:
+      - SERVICE_NAME=post-service
       - NEO4J_URI=neo4j://neo4j:7687
       - REDIS_ADDR=redis:6379
       - USER_GRPC_ADDR=user-service:10052
+    volumes:
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
   chat-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: chat-service
     container_name: prod-chat-service
@@ -131,37 +152,92 @@ services:
       - mongodb
       - redis
     environment:
+      - SERVICE_NAME=chat-service
       - MONGO_URI=mongodb://mongodb:27017/chat_db
       - REDIS_ADDR=redis:6379
+    volumes:
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
   notification-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: notification-service
     container_name: prod-notification-service
     depends_on:
       - kafka
     environment:
+      - SERVICE_NAME=notification-service
       - KAFKA_ADDR=kafka:9092
+    volumes:
+      - logs_prod_data:/app/logs
+    networks:
+      - sn_network
+
+  file-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+      args:
+        SERVICE: file-service
+    container_name: prod-file-service
+    depends_on:
+      - minio
+    environment:
+      - SERVICE_NAME=file-service
+      - FILE_HTTP_PORT=10087
+      - FILE_GRPC_PORT=10057
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      - MINIO_BUCKET=social-network
+      - AUTH_GRPC_ADDR=auth-service:10051
+    volumes:
+      - logs_prod_data:/app/logs
+    networks:
+      - sn_network
+
+  admin-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+      args:
+        SERVICE: admin-service
+    container_name: prod-admin-service
+    depends_on:
+      - postgres
+      - neo4j
+      - redis
+    environment:
+      - SERVICE_NAME=admin-service
+      - ADMIN_HTTP_PORT=10088
+      - POSTGRES_DSN=host=postgres user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable
+      - NEO4J_URI=neo4j://neo4j:7687
+      - REDIS_ADDR=redis:6379
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
   ai-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: ai-service
     container_name: prod-ai-service
     depends_on:
       - kafka
     environment:
+      - SERVICE_NAME=ai-service
       - KAFKA_ADDR=kafka:9092
       - GEMINI_KEY=${GEMINI_KEY}
+    volumes:
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
@@ -169,7 +245,7 @@ services:
   api-gateway:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: api-gateway
     container_name: prod-api-gateway
@@ -180,24 +256,34 @@ services:
       - user-service
       - post-service
       - chat-service
+      - notification-service
+      - file-service
+      - admin-service
       - search-service
       - story-service
     environment:
+      - SERVICE_NAME=api-gateway
       - GATEWAY_PORT=11111
       - AUTH_GRPC_ADDR=auth-service:10051
       - AUTH_HTTP_ADDR=http://auth-service:10081
       - USER_HTTP_ADDR=http://user-service:10082
       - POST_HTTP_ADDR=http://post-service:10083
       - CHAT_HTTP_ADDR=http://chat-service:10084
+      - NOTIFICATION_HTTP_ADDR=http://notification-service:10085
+      - FILE_HTTP_ADDR=http://file-service:10087
+      - ADMIN_HTTP_ADDR=http://admin-service:10088
       - SEARCH_HTTP_ADDR=http://search-service:10089
       - STORY_HTTP_ADDR=http://story-service:10090
+      - REDIS_ADDR=redis:6379
+    volumes:
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
   search-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: search-service
     container_name: prod-search-service
@@ -206,16 +292,19 @@ services:
       - redis
       - user-service
     environment:
+      - SERVICE_NAME=search-service
       - NEO4J_URI=neo4j://neo4j:7687
       - REDIS_ADDR=redis:6379
       - USER_GRPC_ADDR=user-service:10052
+    volumes:
+      - logs_prod_data:/app/logs
     networks:
       - sn_network
 
   story-service:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.local
       args:
         SERVICE: story-service
     container_name: prod-story-service
@@ -224,9 +313,28 @@ services:
       - redis
       - user-service
     environment:
+      - SERVICE_NAME=story-service
       - NEO4J_URI=neo4j://neo4j:7687
       - REDIS_ADDR=redis:6379
       - USER_GRPC_ADDR=user-service:10052
+    volumes:
+      - logs_prod_data:/app/logs
+    networks:
+      - sn_network
+
+  db-seeder:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+      args:
+        SERVICE: gen-test-data
+    container_name: prod-db-seeder
+    depends_on:
+      - postgres
+      - neo4j
+    environment:
+      - POSTGRES_DSN=host=postgres user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable
+      - NEO4J_URI=bolt://neo4j:7687
     networks:
       - sn_network
 
@@ -238,3 +346,5 @@ volumes:
   postgres_prod_data:
   neo4j_prod_data:
   mongodb_prod_data:
+  minio_prod_data:
+  logs_prod_data:

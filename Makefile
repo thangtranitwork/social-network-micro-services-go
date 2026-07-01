@@ -1,6 +1,7 @@
 .PHONY: all tidy build test run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean dev-restart
 
 # Environment defaults
+export CGO_ENABLED ?= 0
 export PORT ?= 11111
 export AUTH_GRPC_PORT ?= 10051
 export AUTH_HTTP_PORT ?= 10081
@@ -39,6 +40,7 @@ build:
 	go build -o bin/admin-service admin-service/main.go
 	go build -o bin/search-service search-service/main.go
 	go build -o bin/story-service story-service/main.go
+	go build -o bin/gen-test-data scripts/gen_test_data.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
 
 dev:

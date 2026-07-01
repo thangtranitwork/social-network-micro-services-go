@@ -24,8 +24,8 @@ func AuthRequired(authClient pb.AuthServiceClient) gin.HandlerFunc {
 			}
 		}
 
-		// Fallback for WebSockets which cannot send custom headers
-		if token == "" {
+		// Fallback only for transports that cannot send custom headers.
+		if token == "" && allowsQueryToken(c) {
 			token = c.Query("token")
 		}
 
@@ -78,4 +78,11 @@ func AuthRequired(authClient pb.AuthServiceClient) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func allowsQueryToken(c *gin.Context) bool {
+	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+		return true
+	}
+	return c.Request.URL.Path == "/logs/stream"
 }

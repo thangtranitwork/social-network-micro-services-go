@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -60,6 +61,14 @@ func (m *MockFileService) DeleteFile(ctx context.Context, id string) error {
 }
 
 func (m *MockFileService) DeleteFiles(ctx context.Context, ids []string) error {
+	return m.Err
+}
+
+func (m *MockFileService) DeleteFileForUser(ctx context.Context, id, userID string, isAdmin bool) error {
+	return m.Err
+}
+
+func (m *MockFileService) DeleteFilesForUser(ctx context.Context, ids []string, userID string, isAdmin bool) error {
 	return m.Err
 }
 
@@ -200,10 +209,38 @@ func TestDelete(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	req, _ := http.NewRequest("DELETE", "/v1/files/file-123.jpg", nil)
+	req.Header.Set("X-User-ID", "user-1")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Errorf("Expected 204, got %d", w.Code)
+	}
+}
+
+func TestDeleteRequiresAuthenticatedUser(t *testing.T) {
+	mockSvc := &MockFileService{}
+	r := setupTestRouter(mockSvc)
+	w := httptest.NewRecorder()
+
+	req, _ := http.NewRequest("DELETE", "/v1/files/file-123.jpg", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401, got %d", w.Code)
+	}
+}
+
+func TestDeleteForbidden(t *testing.T) {
+	mockSvc := &MockFileService{Err: errors.New("forbidden file delete")}
+	r := setupTestRouter(mockSvc)
+	w := httptest.NewRecorder()
+
+	req, _ := http.NewRequest("DELETE", "/v1/files/file-123.jpg", nil)
+	req.Header.Set("X-User-ID", "user-1")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403, got %d", w.Code)
 	}
 }
 
@@ -220,6 +257,7 @@ func TestDeleteMultiple(t *testing.T) {
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", "/v1/files/delete-multiple", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", "user-1")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {

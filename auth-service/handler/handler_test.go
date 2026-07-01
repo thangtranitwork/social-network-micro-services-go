@@ -67,11 +67,11 @@ func (m *MockAuthService) GetGoogleAuthURL() string {
 }
 
 func (m *MockAuthService) GetFrontendURL() string {
-	return ""
+	return "http://localhost:10000"
 }
 
 func (m *MockAuthService) GoogleCallback(ctx context.Context, code string) (string, string, string, string, error) {
-	return "", "", "", "", nil
+	return m.MockAccessToken, m.MockRefreshToken, "user-1", "testuser", m.Err
 }
 
 func (m *MockAuthService) Generate2FA(userID uuid.UUID, email string) (string, string, error) {
@@ -104,6 +104,7 @@ func setupTestRouter(svc *MockAuthService) *gin.Engine {
 		authRoutes.POST("/forgot-password", h.ForgotPassword)
 		authRoutes.POST("/reset-password", h.ResetPassword)
 		authRoutes.POST("/change-password", h.ChangePassword)
+		authRoutes.GET("/google/callback", h.GoogleCallback)
 	}
 
 	registerRoutes := r.Group("/v1/register")
@@ -155,6 +156,41 @@ func TestLoginAdmin(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
+	}
+}
+
+func TestGoogleCallbackDoesNotRedirectAccessToken(t *testing.T) {
+	mockSvc := &MockAuthService{
+		MockAccessToken:  "access-token-123",
+		MockRefreshToken: "refresh-token-123",
+	}
+	r := setupTestRouter(mockSvc)
+	w := httptest.NewRecorder()
+
+	req, _ := http.NewRequest("GET", "/v1/auth/google/callback?code=oauth-code", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("Expected 307, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	location := w.Header().Get("Location")
+	if location != "http://localhost:10000/register?oauth=success" {
+		t.Fatalf("Unexpected redirect location: %s", location)
+	}
+	if bytes.Contains([]byte(location), []byte("access-token-123")) || bytes.Contains([]byte(location), []byte("token=")) {
+		t.Fatalf("Redirect location leaked token: %s", location)
+	}
+
+	foundRefreshCookie := false
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == "token" && cookie.Value == "refresh-token-123" && cookie.HttpOnly {
+			foundRefreshCookie = true
+			break
+		}
+	}
+	if !foundRefreshCookie {
+		t.Fatal("Expected HttpOnly refresh cookie to be set")
 	}
 }
 

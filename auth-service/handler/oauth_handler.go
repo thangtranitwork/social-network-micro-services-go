@@ -14,15 +14,15 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	code := c.Query("code")
-	accessToken, refreshToken, userId, username, err := h.AuthSvc.GoogleCallback(c.Request.Context(), code)
+	_, refreshToken, _, _, err := h.AuthSvc.GoogleCallback(c.Request.Context(), code)
 	if err != nil {
 		exception.SendError(c, exception.UnknownError)
 		return
 	}
 
-	c.SetCookie("token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()), "/", "", false, true)
+	setRefreshCookie(c, "token", refreshToken, int(h.AuthSvc.GetRefreshTokenDuration().Seconds()))
 
 	frontendURL := h.AuthSvc.GetFrontendURL()
-	redirectURL := fmt.Sprintf("%s/register?token=%s&userId=%s&userName=%s", frontendURL, accessToken, userId, username)
+	redirectURL := fmt.Sprintf("%s/register?oauth=success", frontendURL)
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }

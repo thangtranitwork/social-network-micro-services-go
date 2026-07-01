@@ -5,201 +5,275 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🐳 Docker Container Observability & Control Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-color: #faf9f6;
+            --card-outer: #f3f2ec;
+            --card-inner: #ffffff;
+            --border-outer: rgba(28, 25, 23, 0.06);
+            --border-inner: rgba(28, 25, 23, 0.08);
+            --text-main: #1c1917;
+            --text-muted: #78716c;
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --primary-light: rgba(79, 70, 229, 0.06);
+            --success: #10b981;
+            --success-light: rgba(16, 185, 129, 0.08);
+            --error: #ef4444;
+            --error-light: rgba(239, 68, 68, 0.08);
+            --warning: #f59e0b;
+            --warning-light: rgba(245, 158, 11, 0.08);
+        }
+
         body {
-            font-family: 'Outfit', sans-serif;
-            background-color: #080914;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-color);
             background-image: 
-                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.12) 0px, transparent 50%);
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.03) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(236, 72, 153, 0.03) 0px, transparent 50%);
             min-height: 100vh;
+            color: var(--text-main);
+            position: relative;
         }
-        .glass-panel {
-            background: rgba(15, 17, 36, 0.7);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            opacity: 0.018;
+            pointer-events: none;
+            z-index: 9999;
         }
-        .glow-indigo {
-            box-shadow: 0 0 25px rgba(99, 102, 241, 0.2);
+
+        /* Double-Bezel nested architecture */
+        .double-bezel-outer {
+            background: var(--card-outer);
+            border: 1px solid var(--border-outer);
+            padding: 0.625rem; /* p-2.5 */
+            border-radius: 1.5rem; /* rounded-3xl */
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .glow-pink {
-            box-shadow: 0 0 25px rgba(236, 72, 153, 0.15);
+
+        .double-bezel-inner {
+            background: var(--card-inner);
+            border: 1px solid var(--border-inner);
+            border-radius: calc(1.5rem - 0.625rem);
+            padding: 1.25rem; /* p-5 */
+            box-shadow: 0 4px 20px -2px rgba(28, 25, 23, 0.02);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
         }
+
+        .double-bezel-outer:hover {
+            border-color: rgba(99, 102, 241, 0.15);
+            box-shadow: 0 12px 30px -10px rgba(99, 102, 241, 0.05);
+        }
+
+        .double-bezel-outer:hover .double-bezel-inner {
+            border-color: rgba(99, 102, 241, 0.2);
+        }
+
         .mono {
             font-family: 'JetBrains Mono', monospace;
         }
+
         .running-pulse {
             box-shadow: 0 0 12px #10b981;
             animation: pulse-green 2s infinite;
         }
+
         .stopped-pulse {
             box-shadow: 0 0 12px #ef4444;
             animation: pulse-red 2s infinite;
         }
+
         @keyframes pulse-green {
             0% { transform: scale(0.95); opacity: 0.6; box-shadow: 0 0 10px #10b981; }
             50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 18px #10b981; }
             100% { transform: scale(0.95); opacity: 0.6; box-shadow: 0 0 10px #10b981; }
         }
+
         @keyframes pulse-red {
             0% { transform: scale(0.95); opacity: 0.6; box-shadow: 0 0 10px #ef4444; }
             50% { transform: scale(1.1); opacity: 1; box-shadow: 0 0 18px #ef4444; }
             100% { transform: scale(0.95); opacity: 0.6; box-shadow: 0 0 10px #ef4444; }
         }
+
         /* Custom Scrollbars */
         ::-webkit-scrollbar {
             width: 6px;
             height: 6px;
         }
         ::-webkit-scrollbar-track {
-            background: rgba(0, 0, 0, 0.1);
+            background: rgba(0, 0, 0, 0.02);
         }
         ::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.12);
+            background: rgba(0, 0, 0, 0.08);
             border-radius: 4px;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.25);
+            background: rgba(0, 0, 0, 0.16);
+        }
+
+        .spring-transition {
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Float Navbar Style */
+        .glass-nav {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(28, 25, 23, 0.03);
         }
     </style>
 </head>
-<body class="text-gray-100 antialiased p-6">
+<body class="antialiased p-6">
     <!-- Login Portal -->
-    <div id="loginCard" class="fixed inset-0 flex items-center justify-center p-4 z-40 bg-[#080914] hidden">
-        <div class="glass-panel max-w-md w-full rounded-2xl p-8 space-y-6 glow-indigo relative">
-            <div class="text-center space-y-2">
-                <div class="mx-auto w-16 h-16 bg-indigo-950/40 border border-indigo-500/30 rounded-full flex items-center justify-center text-3xl">
-                    🐳
+    <div id="loginCard" class="fixed inset-0 flex items-center justify-center p-4 z-40 bg-[#fbfbfa] hidden">
+        <div class="double-bezel-outer max-w-md w-full rounded-[2rem] p-3 shadow-xl">
+            <div class="double-bezel-inner rounded-[calc(2rem-0.75rem)] p-8 space-y-6 text-center">
+                <div class="space-y-3">
+                    <div class="mx-auto w-16 h-16 bg-stone-100 border border-stone-200/80 rounded-full flex items-center justify-center text-3xl shadow-sm">
+                        🐳
+                    </div>
+                    <h2 class="text-2xl font-extrabold text-stone-900 tracking-tight">
+                        Docker Admin Portal
+                    </h2>
+                    <p class="text-stone-500 text-xs font-medium">Sign in with admin credentials to access container telemetry</p>
                 </div>
-                <h2 class="text-2xl font-extrabold bg-gradient-to-r from-indigo-400 to-pink-500 bg-clip-text text-transparent">
-                    Docker Admin Portal
-                </h2>
-                <p class="text-gray-400 text-xs font-semibold">Sign in with admin credentials to access observability and control panels</p>
-            </div>
 
-            <!-- Alert Notification -->
-            <div id="loginAlert" class="hidden bg-red-950/40 border border-red-500/30 text-red-400 rounded-lg p-3 text-xs font-semibold">
-                Invalid email or password.
-            </div>
+                <!-- Alert Notification -->
+                <div id="loginAlert" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-3 text-xs font-semibold text-left">
+                    Invalid email or password.
+                </div>
 
-            <!-- Form -->
-            <div class="space-y-4">
-                <div class="space-y-1.5">
-                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Email Address</label>
-                    <input id="loginEmail" type="email" value="admin@admin.com" placeholder="admin@admin.com" class="w-full px-4 py-3 bg-gray-900 border border-gray-800 rounded-xl outline-none text-sm text-gray-200 focus:border-indigo-500/50 transition-colors mono">
+                <!-- Form -->
+                <div class="space-y-4 text-left">
+                    <div class="space-y-1.5">
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase tracking-wider">Email Address</label>
+                        <input id="loginEmail" type="email" placeholder="admin@example.com" class="w-full px-4 py-3 bg-stone-50/50 border border-stone-200 rounded-xl outline-none text-sm text-stone-900 focus:border-indigo-500 focus:bg-white transition-all mono">
+                    </div>
+                    <div class="space-y-1.5">
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase tracking-wider">Password</label>
+                        <input id="loginPassword" type="password" placeholder="••••••••" class="w-full px-4 py-3 bg-stone-50/50 border border-stone-200 rounded-xl outline-none text-sm text-stone-900 focus:border-indigo-500 focus:bg-white transition-all mono">
+                    </div>
+                    <button onclick="performLogin()" id="btnLoginSubmit" class="w-full py-3 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-sm font-bold transition-all active:scale-[0.98] duration-150 flex items-center justify-center gap-2 shadow-md shadow-stone-900/10">
+                        Sign In
+                    </button>
                 </div>
-                <div class="space-y-1.5">
-                    <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Password</label>
-                    <input id="loginPassword" type="password" value="123456Aa@" placeholder="••••••••" class="w-full px-4 py-3 bg-gray-900 border border-gray-800 rounded-xl outline-none text-sm text-gray-200 focus:border-indigo-500/50 transition-colors mono">
-                </div>
-                <button onclick="performLogin()" id="btnLoginSubmit" class="w-full py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98] duration-150 flex items-center justify-center gap-2">
-                    Sign In
-                </button>
             </div>
         </div>
     </div>
 
     <div id="dashboardContent" class="max-w-7xl mx-auto space-y-6 hidden">
-        <!-- Header -->
-        <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-5 border-b border-gray-800">
-            <div>
-                <h1 class="text-3xl font-extrabold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-500 bg-clip-text text-transparent flex items-center gap-3">
-                    <svg class="w-9 h-9 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path>
-                    </svg>
-                    Docker Container Engine
-                </h1>
-                <p class="text-gray-400 mt-1 font-medium">Real-time resource metrics stream, container actions, and multiplexed logging console</p>
-                
-                <!-- Navigation Tabs -->
-                <div class="flex items-center gap-2 mt-4">
-                    <a href="/containers" class="px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shadow-[0_0_15px_rgba(99,102,241,0.15)]">🐳 Containers</a>
-                    <a href="/logs" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">📜 Logs</a>
-                    <a href="/profiler" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">📊 Profiler</a>
-                    <a href="/monitor" class="px-4 py-1.5 rounded-lg text-xs font-medium bg-gray-900/50 text-gray-400 border border-gray-800 hover:text-gray-200 hover:border-gray-700 transition-all">🌐 Service Map</a>
+        <!-- Floating Glass Navigation Panel -->
+        <header class="glass-nav rounded-3xl p-4 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 sticky top-4 z-30 transition-all duration-300">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center shadow-inner">
+                    <span class="text-xl">🐳</span>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold text-stone-900 tracking-tight flex items-center gap-2">
+                        Docker Engine Telemetry
+                    </h1>
+                    <p class="text-stone-500 text-xs font-medium">Real-time resource streams & active orchestration controls</p>
                 </div>
             </div>
             
             <div class="flex flex-wrap items-center gap-3">
+                <!-- Navigation Tabs -->
+                <div class="flex items-center gap-1 bg-stone-100/80 p-1 rounded-xl border border-stone-200/50">
+                    <a href="/containers" class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white text-indigo-600 shadow-sm border border-stone-200/30">🐳 Containers</a>
+                    <a href="/logs" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 transition-all">📜 Logs</a>
+                    <a href="/profiler" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 transition-all">📊 Profiler</a>
+                    <a href="/monitor" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-stone-600 hover:text-stone-900 transition-all">🌐 Service Map</a>
+                </div>
+
                 <!-- System Connection Status -->
-                <div class="flex items-center gap-2 bg-gray-900/80 border border-gray-800 rounded-lg px-3 py-1.5 text-xs font-semibold">
-                    <span class="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse" id="connection-status-dot"></span>
-                    <span id="connection-status-text" class="text-gray-400 text-xs">Connecting WebSocket...</span>
+                <div class="flex items-center gap-2 bg-stone-50 border border-stone-200/60 rounded-xl px-3 py-1.5 text-[11px] font-semibold">
+                    <span class="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" id="connection-status-dot"></span>
+                    <span id="connection-status-text" class="text-stone-600">Connecting WS...</span>
                 </div>
 
                 <!-- Admin Auth Indicator Button -->
-                <button id="authBtn" onclick="handleAuthClick()" class="flex items-center gap-2 bg-gray-900 border border-gray-800 text-gray-400 hover:text-white font-semibold text-xs px-4 py-2 rounded-lg transition-all">
-                    <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                    </svg>
-                    <span id="authStatusText">Auth Token</span>
+                <button id="authBtn" onclick="handleAuthClick()" class="flex items-center gap-2 bg-stone-100 border border-stone-200/60 hover:bg-stone-200/50 text-stone-700 hover:text-stone-950 font-bold text-xs px-3.5 py-2 rounded-xl transition-all cursor-pointer">
+                    🔑 <span id="authStatusText">Auth Token</span>
                 </button>
 
                 <!-- Refresh Button -->
-                <button id="btnRefreshList" onclick="fetchContainers()" class="bg-indigo-950/40 hover:bg-indigo-900/50 border border-indigo-500/30 text-indigo-300 font-semibold px-4 py-2 rounded-lg transition-all text-xs flex items-center gap-1.5 active:scale-95 duration-200">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <button id="btnRefreshList" onclick="fetchContainers()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3.5 py-2 rounded-xl transition-all text-xs flex items-center gap-1.5 active:scale-95 shadow-md shadow-indigo-600/10 cursor-pointer">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12"></path>
                     </svg>
-                    Refresh List
+                    Sync State
                 </button>
             </div>
         </header>
 
-
         <!-- KPI Metrics Grid -->
         <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <!-- Total Containers -->
-            <div class="glass-panel rounded-xl p-5 flex items-center justify-between glow-indigo transition-all duration-300 hover:scale-[1.02]">
-                <div class="space-y-1">
-                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold">Total Containers</span>
-                    <h3 id="statTotalContainers" class="text-3xl font-bold text-indigo-400 mono">0</h3>
-                </div>
-                <div class="p-3 bg-indigo-950/40 border border-indigo-800/30 rounded-lg">
-                    <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
-                    </svg>
+            <div class="double-bezel-outer">
+                <div class="double-bezel-inner flex items-center justify-between">
+                    <div class="space-y-1">
+                        <span class="text-[10px] uppercase tracking-wider text-stone-500 font-bold">Total Containers</span>
+                        <h3 id="statTotalContainers" class="text-3xl font-extrabold text-stone-900 mono">0</h3>
+                    </div>
+                    <div class="p-3 bg-stone-50 border border-stone-200/80 rounded-xl">
+                        <svg class="w-6 h-6 text-stone-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                        </svg>
+                    </div>
                 </div>
             </div>
 
             <!-- Running Containers -->
-            <div class="glass-panel rounded-xl p-5 flex items-center justify-between glow-pink transition-all duration-300 hover:scale-[1.02]">
-                <div class="space-y-1">
-                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold">Running</span>
-                    <h3 id="statRunningContainers" class="text-3xl font-bold text-emerald-400 mono">0</h3>
-                </div>
-                <div class="p-3 bg-emerald-950/40 border border-emerald-800/30 rounded-lg">
-                    <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
+            <div class="double-bezel-outer">
+                <div class="double-bezel-inner flex items-center justify-between">
+                    <div class="space-y-1">
+                        <span class="text-[10px] uppercase tracking-wider text-stone-500 font-bold">Running</span>
+                        <h3 id="statRunningContainers" class="text-3xl font-extrabold text-emerald-600 mono">0</h3>
+                    </div>
+                    <div class="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
+                        <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
                 </div>
             </div>
 
             <!-- Stopped Containers -->
-            <div class="glass-panel rounded-xl p-5 flex items-center justify-between transition-all duration-300 hover:scale-[1.02]">
-                <div class="space-y-1">
-                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold">Stopped</span>
-                    <h3 id="statStoppedContainers" class="text-3xl font-bold text-red-400 mono">0</h3>
-                </div>
-                <div class="p-3 bg-red-950/40 border border-red-800/30 rounded-lg">
-                    <svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
+            <div class="double-bezel-outer">
+                <div class="double-bezel-inner flex items-center justify-between">
+                    <div class="space-y-1">
+                        <span class="text-[10px] uppercase tracking-wider text-stone-500 font-bold">Stopped</span>
+                        <h3 id="statStoppedContainers" class="text-3xl font-extrabold text-rose-600 mono">0</h3>
+                    </div>
+                    <div class="p-3 bg-rose-50 border border-rose-100 rounded-xl">
+                        <svg class="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
                 </div>
             </div>
 
-            <!-- Max CPU Usage (Overall) -->
-            <div class="glass-panel rounded-xl p-5 flex items-center justify-between transition-all duration-300 hover:scale-[1.02]">
-                <div class="space-y-1">
-                    <span class="text-xs uppercase tracking-wider text-gray-400 font-semibold">Max CPU Usage</span>
-                    <h3 id="statMaxCpu" class="text-3xl font-bold text-amber-400 mono">0.0%</h3>
-                </div>
-                <div class="p-3 bg-amber-950/40 border border-amber-800/30 rounded-lg">
-                    <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                    </svg>
+            <!-- Max CPU Usage -->
+            <div class="double-bezel-outer">
+                <div class="double-bezel-inner flex items-center justify-between">
+                    <div class="space-y-1">
+                        <span class="text-[10px] uppercase tracking-wider text-stone-500 font-bold">Max CPU Load</span>
+                        <h3 id="statMaxCpu" class="text-3xl font-extrabold text-amber-600 mono">0.0%</h3>
+                    </div>
+                    <div class="p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                        <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                    </div>
                 </div>
             </div>
         </section>
@@ -208,63 +282,62 @@
         <main class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="containerGrid">
             <!-- Loading Indicator -->
             <div class="col-span-full py-16 flex flex-col items-center justify-center space-y-4">
-                <svg class="animate-spin h-10 w-10 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <span class="text-gray-400 font-semibold">Loading container configurations...</span>
+                <span class="text-stone-500 font-semibold text-sm">Discovering container architectures...</span>
             </div>
         </main>
     </div>
 
     <!-- Logs Modal View Drawer -->
-    <div id="logsDrawer" class="fixed inset-y-0 right-0 w-full max-w-2xl bg-[#090b16] border-l border-gray-800 shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col">
-        <div class="p-4 bg-gray-950 border-b border-gray-800 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-                <span class="w-3 h-3 rounded-full bg-indigo-500 running-pulse"></span>
+    <div id="logsDrawer" class="fixed inset-y-0 right-0 w-full max-w-2xl bg-white border-l border-stone-200 shadow-2xl transform translate-x-full transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] z-50 flex flex-col">
+        <div class="p-5 bg-stone-50/80 border-b border-stone-200/80 flex items-center justify-between backdrop-blur-md">
+            <div class="flex items-center gap-2.5">
+                <span class="w-2.5 h-2.5 rounded-full bg-indigo-500 running-pulse"></span>
                 <div>
-                    <h2 id="logTitle" class="text-sm font-bold text-gray-100 uppercase tracking-wider">Container Logs</h2>
-                    <p id="logSubtitle" class="text-xs text-gray-400 mono">Connecting stream...</p>
+                    <h2 id="logTitle" class="text-sm font-bold text-stone-900 uppercase tracking-wider">Container Logs</h2>
+                    <p id="logSubtitle" class="text-[10px] text-stone-500 font-bold tracking-wide mono">Connecting stream...</p>
                 </div>
             </div>
             <div class="flex items-center gap-2">
-                <button onclick="clearTerminal()" class="px-2.5 py-1 text-xs border border-gray-800 hover:border-gray-600 bg-gray-900 rounded font-semibold text-gray-400 hover:text-white transition-all">
-                    Clear Screen
+                <button onclick="clearTerminal()" class="px-3 py-1.5 text-xs border border-stone-200 bg-white hover:bg-stone-50 rounded-xl font-bold text-stone-600 hover:text-stone-900 transition-all shadow-sm">
+                    Clear Terminal
                 </button>
-                <button onclick="closeLogsDrawer()" class="p-2 text-gray-500 hover:text-white transition-all">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <button onclick="closeLogsDrawer()" class="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-xl transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
                 </button>
             </div>
         </div>
-        <div class="flex-1 overflow-y-auto p-4 bg-[#05060b] text-gray-300 font-mono text-[11px] leading-relaxed select-text" id="logTerminal">
+        <div class="flex-1 overflow-y-auto p-5 bg-stone-950 text-stone-200 font-mono text-[11px] leading-relaxed select-text" id="logTerminal">
             <!-- Log text -->
         </div>
     </div>
 
     <!-- Backdrop for Drawer -->
-    <div id="drawerBackdrop" onclick="closeLogsDrawer()" class="fixed inset-0 bg-black/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 z-40"></div>
+    <div id="drawerBackdrop" onclick="closeLogsDrawer()" class="fixed inset-0 bg-stone-900/10 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-500 z-40"></div>
 
     <!-- Auth Token Modal Dialog -->
     <div id="authModal" class="fixed inset-0 flex items-center justify-center z-50 scale-0 opacity-0 transition-all duration-300">
-        <div class="fixed inset-0 bg-black/75 backdrop-blur-md" onclick="closeAuthModal()"></div>
-        <div class="glass-panel max-w-md w-full mx-4 rounded-2xl p-6 relative z-10 space-y-4">
-            <h3 class="text-lg font-bold text-gray-100 flex items-center gap-2">
-                <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-                </svg>
-                Admin Authentication Token
-            </h3>
-            <p class="text-xs text-gray-400">Please provide your Admin JWT authorization token to fetch and control Docker container instances securely.</p>
-            <textarea id="tokenInput" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." class="w-full h-24 p-3 bg-gray-900 border border-gray-800 rounded-lg outline-none text-xs text-gray-200 placeholder-gray-600 focus:border-indigo-500/50 transition-colors mono"></textarea>
-            <div class="flex gap-2 justify-end">
-                <button onclick="closeAuthModal()" class="px-4 py-2 border border-gray-850 hover:bg-gray-850 text-gray-400 hover:text-white rounded-lg text-xs font-semibold transition-all">
-                    Cancel
-                </button>
-                <button onclick="saveAuthToken()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all">
-                    Save Token
-                </button>
+        <div class="fixed inset-0 bg-stone-900/10 backdrop-blur-sm" onclick="closeAuthModal()"></div>
+        <div class="double-bezel-outer max-w-md w-full mx-4 rounded-[2rem] p-3 relative z-10 shadow-2xl">
+            <div class="double-bezel-inner rounded-[calc(2rem-0.75rem)] p-6 space-y-4">
+                <h3 class="text-base font-bold text-stone-900 flex items-center gap-2">
+                    🔑 Admin Authentication Token
+                </h3>
+                <p class="text-xs text-stone-500">Provide your Admin JWT authorization token to securely monitor and manage system Docker configurations.</p>
+                <textarea id="tokenInput" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." class="w-full h-28 p-3 bg-stone-50 border border-stone-200 rounded-xl outline-none text-xs text-stone-900 placeholder-stone-400 focus:border-indigo-500 focus:bg-white transition-all mono"></textarea>
+                <div class="flex gap-2 justify-end">
+                    <button onclick="closeAuthModal()" class="px-4 py-2 border border-stone-250 hover:bg-stone-50 text-stone-600 rounded-xl text-xs font-bold transition-all shadow-sm">
+                        Cancel
+                    </button>
+                    <button onclick="saveAuthToken()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/15 transition-all">
+                        Save Token
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -318,10 +391,10 @@
             const text = document.getElementById('authStatusText');
             if (token) {
                 text.innerText = 'Logout (ADMIN)';
-                badge.className = 'flex items-center gap-2 bg-emerald-950/40 hover:bg-red-900/50 border border-emerald-500/30 hover:border-red-500/30 text-emerald-400 hover:text-red-400 font-semibold text-xs px-4 py-2 rounded-lg transition-all cursor-pointer';
+                badge.className = 'flex items-center gap-2 bg-emerald-50 hover:bg-red-50 border border-emerald-250 hover:border-red-200 text-emerald-700 hover:text-red-700 font-bold text-xs px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-sm';
             } else {
                 text.innerText = 'Sign In';
-                badge.className = 'flex items-center gap-2 bg-red-950/40 hover:bg-red-900/50 border border-red-500/30 text-red-400 font-semibold text-xs px-4 py-2 rounded-lg transition-all animate-pulse';
+                badge.className = 'flex items-center gap-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 font-bold text-xs px-3.5 py-2 rounded-xl transition-all animate-pulse';
             }
         }
 
@@ -373,7 +446,7 @@
             btn.disabled = true;
             const originalText = btn.innerHTML;
             btn.innerHTML = `
-                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
@@ -419,9 +492,9 @@
 
         // Format units
         function formatBytes(bytes) {
-            if (bytes === 0) return '0 Bytes';
+            if (bytes === 0) return '0 B';
             const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const sizes = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
         }
@@ -478,10 +551,12 @@
                 console.error('Failed to fetch containers:', err);
                 const grid = document.getElementById('containerGrid');
                 grid.innerHTML = `
-                    <div class="col-span-full glass-panel rounded-xl p-8 border border-red-500/20 text-center space-y-3">
-                        <span class="text-red-400 font-bold block">Failed to fetch containers from server</span>
-                        <p class="text-xs text-gray-500">Ensure the Admin Microservice and API Gateway are running, and your auth token is correct.</p>
-                        <button onclick="fetchContainers()" class="px-4 py-1.5 text-xs bg-gray-900 border border-gray-800 rounded font-semibold hover:text-white transition-all mt-2">Retry Connection</button>
+                    <div class="col-span-full double-bezel-outer p-2 shadow-md">
+                        <div class="double-bezel-inner border-red-100 bg-red-50/50 text-center p-6 space-y-2">
+                            <span class="text-red-700 font-bold block">Failed to fetch containers from server</span>
+                            <p class="text-xs text-stone-500">Ensure the Admin Microservice and API Gateway are running, and your auth token is correct.</p>
+                            <button onclick="fetchContainers()" class="px-4 py-1.5 text-xs bg-white border border-stone-200 rounded-xl font-bold text-stone-700 hover:bg-stone-50 transition-all mt-2 shadow-sm">Retry Connection</button>
+                        </div>
                     </div>
                 `;
             }
@@ -493,7 +568,7 @@
 
             if (containers.length === 0) {
                 grid.innerHTML = `
-                    <div class="col-span-full py-16 text-center text-gray-500 font-semibold">
+                    <div class="col-span-full py-16 text-center text-stone-400 font-semibold">
                         No containers discovered on the system.
                     </div>
                 `;
@@ -510,95 +585,97 @@
                 const isRunning = c.state === 'running';
                 const card = document.createElement('div');
                 card.id = `container-card-${c.id}`;
-                card.className = `glass-panel rounded-2xl p-5 border transition-all duration-300 flex flex-col justify-between ${isRunning ? 'border-indigo-500/10 hover:border-indigo-500/30' : 'border-gray-800 opacity-80 hover:opacity-100'}`;
+                card.className = `double-bezel-outer spring-transition ${isRunning ? '' : 'opacity-75 hover:opacity-100'}`;
 
                 card.innerHTML = `
-                    <div>
-                        <!-- Header Card -->
-                        <div class="flex items-start justify-between gap-2 mb-3">
-                            <div class="min-w-0">
-                                <h4 class="font-bold text-gray-100 text-base truncate flex items-center gap-1.5" title="${c.name}">
-                                    ${c.name}
-                                </h4>
-                                <span class="text-[10px] text-gray-500 truncate block mono" title="${c.image}">${c.image}</span>
+                    <div class="double-bezel-inner flex flex-col justify-between h-full space-y-4">
+                        <div>
+                            <!-- Header Card -->
+                            <div class="flex items-start justify-between gap-2 mb-3">
+                                <div class="min-w-0">
+                                    <h4 class="font-bold text-stone-900 text-base truncate flex items-center gap-1.5" title="${c.name}">
+                                        ${c.name}
+                                    </h4>
+                                    <span class="text-[10px] text-stone-500 truncate block mono" title="${c.image}">${c.image}</span>
+                                </div>
+                                <span class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${isRunning ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : 'bg-rose-50 text-rose-700 border border-rose-200/60'}">
+                                    <span class="w-1.5 h-1.5 rounded-full ${isRunning ? 'bg-emerald-500 running-pulse' : 'bg-red-500 stopped-pulse'}"></span>
+                                    ${c.state}
+                                </span>
                             </div>
-                            <span class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${isRunning ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/20' : 'bg-red-950/40 text-red-400 border border-red-500/20'}">
-                                <span class="w-1.5 h-1.5 rounded-full ${isRunning ? 'bg-emerald-500 running-pulse' : 'bg-red-500 stopped-pulse'}"></span>
-                                ${c.state}
-                            </span>
+
+                            <!-- Stats Overview -->
+                            <div class="space-y-3 py-3 border-t border-b border-stone-150 my-3">
+                                <!-- CPU -->
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-xs font-semibold">
+                                        <span class="text-stone-500">CPU Usage</span>
+                                        <span class="mono text-stone-900 font-bold" id="cpu-val-${c.id}">${isRunning ? '0.0%' : '-'}</span>
+                                    </div>
+                                    <div class="w-full bg-stone-100 rounded-full h-1.5 overflow-hidden border border-stone-200/10">
+                                        <div id="cpu-bar-${c.id}" class="bg-indigo-600 h-full transition-all duration-500" style="width: 0%"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Memory -->
+                                <div class="space-y-1">
+                                    <div class="flex justify-between text-xs font-semibold">
+                                        <span class="text-stone-500">Memory Usage</span>
+                                        <span class="mono text-stone-900 font-bold" id="mem-val-${c.id}">${isRunning ? '0 B / 0 B' : '-'}</span>
+                                    </div>
+                                    <div class="w-full bg-stone-100 rounded-full h-1.5 overflow-hidden border border-stone-200/10">
+                                        <div id="mem-bar-${c.id}" class="bg-pink-600 h-full transition-all duration-500" style="width: 0%"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Network Rx/Tx -->
+                                <div class="grid grid-cols-2 gap-2 text-xs pt-1.5">
+                                    <div>
+                                        <span class="text-stone-400 block text-[9px] uppercase font-bold tracking-wider">Network Rx</span>
+                                        <span class="mono text-stone-700 font-semibold" id="net-rx-${c.id}">${isRunning ? '0 B' : '-'}</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-stone-400 block text-[9px] uppercase font-bold tracking-wider">Network Tx</span>
+                                        <span class="mono text-stone-700 font-semibold" id="net-tx-${c.id}">${isRunning ? '0 B' : '-'}</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
-                        <!-- Stats Overview (ProgressBar style) -->
-                        <div class="space-y-3 py-3 border-t border-b border-gray-800/40 my-3">
-                            <!-- CPU -->
-                            <div class="space-y-1">
-                                <div class="flex justify-between text-xs font-semibold">
-                                    <span class="text-gray-400">CPU Usage</span>
-                                    <span class="mono text-gray-200" id="cpu-val-${c.id}">${isRunning ? '0.0%' : '-'}</span>
-                                </div>
-                                <div class="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden">
-                                    <div id="cpu-bar-${c.id}" class="bg-indigo-500 h-full transition-all duration-500" style="width: 0%"></div>
-                                </div>
-                            </div>
-
-                            <!-- Memory -->
-                            <div class="space-y-1">
-                                <div class="flex justify-between text-xs font-semibold">
-                                    <span class="text-gray-400">Memory Usage</span>
-                                    <span class="mono text-gray-200" id="mem-val-${c.id}">${isRunning ? '0 MB / 0 MB' : '-'}</span>
-                                </div>
-                                <div class="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden">
-                                    <div id="mem-bar-${c.id}" class="bg-pink-500 h-full transition-all duration-500" style="width: 0%"></div>
-                                </div>
-                            </div>
-
-                            <!-- Network Rx/Tx -->
-                            <div class="grid grid-cols-2 gap-2 text-xs">
-                                <div>
-                                    <span class="text-gray-500 block text-[10px] uppercase font-bold tracking-wider">Network Rx</span>
-                                    <span class="mono text-gray-300" id="net-rx-${c.id}">${isRunning ? '0 B' : '-'}</span>
-                                </div>
-                                <div>
-                                    <span class="text-gray-500 block text-[10px] uppercase font-bold tracking-wider">Network Tx</span>
-                                    <span class="mono text-gray-300" id="net-tx-${c.id}">${isRunning ? '0 B' : '-'}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Actions Panel -->
-                    <div class="flex items-center justify-between mt-3 pt-2">
-                        <span class="text-[10px] text-gray-500 font-medium">Created: ${formatTimeAgo(c.created)}</span>
-                        
-                        <div class="flex items-center gap-1.5">
-                            <!-- Start / Stop Button -->
-                            ${isRunning ? `
-                                <button onclick="performAction('${c.id}', 'stop')" class="p-2 border border-red-500/20 hover:border-red-500/50 bg-red-950/20 hover:bg-red-950/40 text-red-400 rounded-lg transition-all duration-200" title="Stop Container">
-                                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-                                    </svg>
-                                </button>
-                            ` : `
-                                <button onclick="performAction('${c.id}', 'start')" class="p-2 border border-emerald-500/20 hover:border-emerald-500/50 bg-emerald-950/20 hover:bg-emerald-950/40 text-emerald-400 rounded-lg transition-all duration-200" title="Start Container">
-                                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
-                                    </svg>
-                                </button>
-                            `}
+                        <!-- Actions Panel -->
+                        <div class="flex items-center justify-between pt-1">
+                            <span class="text-[9px] text-stone-400 font-bold uppercase tracking-wider">Created: ${formatTimeAgo(c.created)}</span>
                             
-                            <!-- Restart Button -->
-                            <button onclick="performAction('${c.id}', 'restart')" class="p-2 border border-amber-500/20 hover:border-amber-500/50 bg-amber-950/20 hover:bg-amber-950/40 text-amber-400 rounded-lg transition-all duration-200" title="Restart Container">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12"></path>
-                                </svg>
-                            </button>
+                            <div class="flex items-center gap-1.5">
+                                <!-- Start / Stop Button -->
+                                ${isRunning ? `
+                                    <button onclick="performAction('${c.id}', 'stop')" class="p-2 border border-rose-200 hover:border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-all duration-200 active:scale-95 shadow-sm" title="Stop Container">
+                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                                        </svg>
+                                    </button>
+                                ` : `
+                                    <button onclick="performAction('${c.id}', 'start')" class="p-2 border border-emerald-250 hover:border-emerald-350 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 rounded-xl transition-all duration-200 active:scale-95 shadow-sm" title="Start Container">
+                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>
+                                        </svg>
+                                    </button>
+                                `}
+                                
+                                <!-- Restart Button -->
+                                <button onclick="performAction('${c.id}', 'restart')" class="p-2 border border-amber-200 hover:border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded-xl transition-all duration-200 active:scale-95 shadow-sm" title="Restart Container">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12"></path>
+                                    </svg>
+                                </button>
 
-                            <!-- Logs Drawer Button -->
-                            <button onclick="openLogsDrawer('${c.id}', '${c.name}')" class="p-2 border border-indigo-500/20 hover:border-indigo-500/50 bg-indigo-950/20 hover:bg-indigo-950/40 text-indigo-400 rounded-lg transition-all duration-200" title="View Logs Stream">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-                                </svg>
-                            </button>
+                                <!-- Logs Drawer Button -->
+                                <button onclick="openLogsDrawer('${c.id}', '${c.name}')" class="p-2 border border-indigo-200 hover:border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-all duration-200 active:scale-95 shadow-sm" title="View Logs Stream">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -623,13 +700,13 @@
             const dot = document.getElementById('connection-status-dot');
             const txt = document.getElementById('connection-status-text');
 
-            dot.className = 'w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse';
+            dot.className = 'w-2 h-2 rounded-full bg-yellow-500 animate-pulse';
             txt.textContent = 'Connecting metrics stream...';
 
             statsWs = new WebSocket(wsUrl);
 
             statsWs.onopen = () => {
-                dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]';
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]';
                 txt.textContent = 'Metrics Stream: Live';
             };
 
@@ -645,7 +722,7 @@
             };
 
             statsWs.onclose = async () => {
-                dot.className = 'w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]';
+                dot.className = 'w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]';
                 txt.textContent = 'Metrics Stream: Disconnected';
                 
                 await refreshAdminToken();
@@ -698,7 +775,7 @@
 
             const card = document.getElementById(`container-card-${id}`);
             if (card) {
-                card.style.opacity = '0.5';
+                card.style.opacity = '0.4';
                 card.style.pointerEvents = 'none';
             }
 
@@ -803,7 +880,7 @@
 
             logsWs.onclose = () => {
                 subtitle.textContent = 'Logs stream closed.';
-                appendLogLine('\n--- STREAM DISCONNECTED ---', 'text-gray-500 font-bold');
+                appendLogLine('\n--- STREAM DISCONNECTED ---', 'text-stone-500 font-bold');
             };
 
             logsWs.onerror = (err) => {
@@ -817,19 +894,18 @@
             const isAtBottom = term.scrollHeight - term.clientHeight <= term.scrollTop + 50;
 
             const span = document.createElement('div');
-            span.className = className || 'text-gray-300';
+            span.className = className || 'text-stone-300';
             
             // Format timestamps or levels if present in logs
-            // e.g. "2026-05-25T12:00:00Z [INFO] ..."
             let formattedText = text;
             if (formattedText.includes('[FATAL]')) {
-                span.className = 'text-red-500 font-extrabold bg-red-950/30 px-1.5 py-0.5 rounded';
+                span.className = 'text-red-400 font-extrabold bg-red-950/40 px-1.5 py-0.5 rounded';
             } else if (formattedText.includes('[ERROR]')) {
                 span.className = 'text-red-400';
             } else if (formattedText.includes('[WARN]')) {
                 span.className = 'text-yellow-400';
             } else if (formattedText.includes('[INFO]')) {
-                span.className = 'text-sky-300';
+                span.className = 'text-sky-400';
             }
 
             span.textContent = formattedText;
@@ -838,6 +914,48 @@
             // Auto-scroll
             if (isAtBottom) {
                 term.scrollTop = term.scrollHeight;
+            }
+        }
+
+        // Init token modal close/open helper
+        function closeAuthModal() {
+            const modal = document.getElementById('authModal');
+            modal.classList.add('scale-0', 'opacity-0');
+            modal.classList.remove('scale-100', 'opacity-100');
+        }
+
+        function openAuthModal() {
+            const modal = document.getElementById('authModal');
+            document.getElementById('tokenInput').value = getAuthToken();
+            modal.classList.remove('scale-0', 'opacity-0');
+            modal.classList.add('scale-100', 'opacity-100');
+        }
+
+        function saveAuthToken() {
+            const tok = document.getElementById('tokenInput').value.trim();
+            if (tok) {
+                localStorage.setItem('admin_token', tok);
+            } else {
+                localStorage.removeItem('admin_token');
+            }
+            closeAuthModal();
+            checkAuth();
+        }
+
+        // Authentication trigger function modification
+        function handleAuthClick() {
+            const token = getAuthToken();
+            if (token) {
+                if (confirm('Are you sure you want to log out from the Admin Portal?')) {
+                    localStorage.removeItem('admin_token');
+                    if (statsWs) {
+                        statsWs.close();
+                        statsWs = null;
+                    }
+                    checkAuth();
+                }
+            } else {
+                openAuthModal();
             }
         }
 

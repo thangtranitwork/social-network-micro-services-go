@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"net/http"
+	"os"
 	"time"
 	"unicode"
 
@@ -91,6 +92,15 @@ type ChangePasswordReq struct {
 
 type TokenResp struct {
 	Token string `json:"token"`
+}
+
+func secureCookiesEnabled() bool {
+	return os.Getenv("APP_ENV") == "production" || os.Getenv("GIN_MODE") == gin.ReleaseMode
+}
+
+func setRefreshCookie(c *gin.Context, name, value string, maxAge int) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(name, value, maxAge, "/", "", secureCookiesEnabled(), true)
 }
 
 func isValidPassword(s string) bool {
