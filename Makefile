@@ -41,6 +41,7 @@ build:
 	go build -o bin/search-service search-service/main.go
 	go build -o bin/story-service story-service/main.go
 	go build -o bin/gen-test-data scripts/gen_test_data.go
+	go build -o bin/spam-api scripts/spammer/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
 
 dev:
@@ -142,3 +143,7 @@ dev-restart:
 	@mkdir -p logs
 	@nohup ./bin/$(svc) > /dev/null 2> logs/$(svc).log &
 	@echo "====== $(svc) rebuilt and started in background! ======"
+
+spam-api:
+	@echo "====== Running API Spammer ======"
+	go run scripts/spammer/main.go -url http://localhost:11111/health -c 10 -n 2500 -delay 5

@@ -25,29 +25,38 @@ func RateLimiter(rdb *redis.Client, limit int, window time.Duration) gin.Handler
 			identifier = c.ClientIP()
 		}
 
-		// Sliding window rate limiting key
+		// Sliding window rate limiting keys
 		key := "rate_limit:" + c.FullPath() + ":" + identifier
+		banKey := "rate_limit_ban:" + identifier
 		now := time.Now()
 		clearBefore := now.Add(-window).UnixMilli()
 		member := strconv.FormatInt(now.UnixNano(), 10)
 
 		ctx := context.Background()
 
-		// Run Redis commands in a pipeline
+		// Run Redis commands in a pipeline (checks ban state and processes window in 1 RTT)
 		pipe := rdb.TxPipeline()
-		// Remove elements older than the window
+		banCheckCmd := pipe.Exists(ctx, banKey)
 		pipe.ZRemRangeByScore(ctx, key, "-inf", strconv.FormatInt(clearBefore, 10))
-		// Add the current timestamp as score
 		pipe.ZAdd(ctx, key, redis.Z{Score: float64(now.UnixMilli()), Member: member})
-		// Get total requests in the window
 		countCmd := pipe.ZCard(ctx, key)
-		// Set TTL for the rate limiting key so it doesn't linger forever
 		pipe.Expire(ctx, key, window)
 
 		_, err := pipe.Exec(ctx)
 		if err != nil {
 			logger.Err(err).Error("[RATE_LIMIT] Redis execution error")
 			c.Next() // fail open on redis errors
+			return
+		}
+
+		// If client is already banned, block the request immediately
+		if banCheckCmd.Val() > 0 {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":      403,
+				"message":   "IP_TEMPORARILY_BANNED_DUE_TO_SPAM",
+				"timestamp": now.Format(time.RFC3339),
+			})
+			c.Abort()
 			return
 		}
 
@@ -62,6 +71,12 @@ func RateLimiter(rdb *redis.Client, limit int, window time.Duration) gin.Handler
 		c.Writer.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
 
 		if count > int64(limit) {
+			// If request count exceeds the limit by 150% (e.g. limit is 100, count > 150), trigger temporary ban
+			if count > int64(float64(limit)*1.5) {
+				rdb.Set(ctx, banKey, "1", 5*time.Minute)
+				logger.Warn("[RATE_LIMIT] Client %s temporarily banned for 5 minutes due to heavy API spamming (requests: %d, limit: %d)", identifier, count, limit)
+			}
+
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"code":      429,
 				"message":   "TOO_MANY_REQUESTS",
