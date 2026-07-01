@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -40,7 +42,30 @@ var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow CORS for local dev
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
+		if allowedOriginsEnv == "" {
+			// Fallback to allow localhost and 127.0.0.1 by default
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			hostname := u.Hostname()
+			return hostname == "localhost" || hostname == "127.0.0.1"
+		}
+		if allowedOriginsEnv == "*" {
+			return true
+		}
+		origins := strings.Split(allowedOriginsEnv, ",")
+		for _, o := range origins {
+			if strings.TrimSpace(o) == origin {
+				return true
+			}
+		}
+		return false
 	},
 }
 

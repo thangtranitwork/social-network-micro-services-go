@@ -37,11 +37,15 @@ func main() {
 	r.Use(logger.GinMiddleware())
 
 	// Profiler
-	r.GET("/debug/profiler", profiler.Handler)
-	r.POST("/debug/profiler/reset", func(c *gin.Context) {
-		profiler.Reset()
-		c.JSON(http.StatusOK, gin.H{"status": "success"})
-	})
+	debugGroup := r.Group("/debug/profiler")
+	debugGroup.Use(profiler.EndpointGuard())
+	{
+		debugGroup.GET("", profiler.Handler)
+		debugGroup.POST("/reset", func(c *gin.Context) {
+			profiler.Reset()
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+	}
 
 	// Register Routes
 	adminHandler.RegisterRoutes(r)

@@ -136,6 +136,9 @@ func recordExecution(command string, duration time.Duration) {
 		return // Skip empty commands
 	}
 
+	globalProfiler.mu.Lock()
+	defer globalProfiler.mu.Unlock()
+
 	stats, exists := globalProfiler.stats[command]
 	if !exists {
 		stats = &CommandStats{
@@ -334,9 +337,7 @@ func TrackExecution(command string, fn func()) {
 
 	duration := time.Since(start)
 
-	globalProfiler.mu.Lock()
 	recordExecution(command, duration)
-	globalProfiler.mu.Unlock()
 }
 
 // TrackExecutionWithReturn tracks a command execution with return value and updates pending count
@@ -359,9 +360,7 @@ func TrackExecutionWithReturn(command string, fn func() (any, error)) (any, erro
 	result, err := fn()
 	duration := time.Since(start)
 
-	globalProfiler.mu.Lock()
 	recordExecution(command, duration)
-	globalProfiler.mu.Unlock()
 
 	return result, err
 }
@@ -471,22 +470,50 @@ func Middleware(serviceName string) gin.HandlerFunc {
 
 		defer func() {
 			duration := time.Since(start)
-			globalProfiler.mu.Lock()
 			recordExecution(command, duration)
-			globalProfiler.mu.Unlock()
 		}()
 
 		c.Next()
 	}
 }
 
+// IsEnabled returns true if the profiler endpoints should be enabled
+func IsEnabled() bool {
+	enabledEnv := os.Getenv("ENABLE_PROFILER_ENDPOINT")
+	if enabledEnv == "true" {
+		return true
+	}
+	if enabledEnv == "false" {
+		return false
+	}
+	// Default to true on non-production/non-staging, false on production/staging
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	return appEnv != "production" && appEnv != "prod" && appEnv != "staging"
+}
+
 // Handler returns the current profiling stats and memory info as JSON
 func Handler(c *gin.Context) {
+	if !IsEnabled() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Profiler endpoint is disabled"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"startTime": GetStartTime(),
 		"pprof":     GetPProfInfo(),
 		"commands":  GetStatsLightweight(),
 	})
+}
+
+// EndpointGuard is a Gin middleware that returns 404 if the profiler is disabled
+func EndpointGuard() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !IsEnabled() {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Profiler endpoint is disabled"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 type profilerPersistentData struct {

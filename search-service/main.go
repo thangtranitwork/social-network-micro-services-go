@@ -69,7 +69,15 @@ func main() {
 	})
 
 	// Profiler
-	r.GET("/debug/profiler", profiler.Handler)
+	debugGroup := r.Group("/debug/profiler")
+	debugGroup.Use(profiler.EndpointGuard())
+	{
+		debugGroup.GET("", profiler.Handler)
+		debugGroup.POST("/reset", func(c *gin.Context) {
+			profiler.Reset()
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+	}
 
 	// REST APIs (mapped under Gateway)
 	r.GET("/v1/search", searchHandler.Search)

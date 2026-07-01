@@ -3,6 +3,7 @@ package handler
 import (
 	"bufio"
 	"bytes"
+	"context"
 	_ "embed"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"social-network-go/api-gateway/config"
+	"social-network-go/logger"
 	"social-network-go/profiler"
 	"sort"
 	"sync"
@@ -95,7 +97,8 @@ func StreamLogs(c *gin.Context) {
 		if err != nil {
 			break
 		}
-		c.SSEvent("log", strings.TrimSuffix(line, "\n"))
+		redactedLine := logger.RedactJSON(strings.TrimSuffix(line, "\n"))
+		c.SSEvent("log", redactedLine)
 	}
 	c.Writer.Flush()
 
@@ -116,7 +119,8 @@ func StreamLogs(c *gin.Context) {
 					}
 					return
 				}
-				c.SSEvent("log", strings.TrimSuffix(line, "\n"))
+				redactedLine := logger.RedactJSON(strings.TrimSuffix(line, "\n"))
+				c.SSEvent("log", redactedLine)
 				c.Writer.Flush()
 			}
 		}
@@ -244,6 +248,8 @@ func SearchLogs(c *gin.Context) {
 		return
 	}
 
+	serviceFilter := c.Query("service")
+
 	validServices := []string{
 		"api-gateway",
 		"auth-service",
@@ -258,11 +264,32 @@ func SearchLogs(c *gin.Context) {
 		"story-service",
 	}
 
+	searchServices := []string{}
+	if serviceFilter != "" {
+		isValid := false
+		for _, s := range validServices {
+			if s == serviceFilter {
+				isValid = true
+				break
+			}
+		}
+		if !isValid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid service name"})
+			return
+		}
+		searchServices = append(searchServices, serviceFilter)
+	} else {
+		searchServices = validServices
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
 	results := []LogSearchResult{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	for _, service := range validServices {
+	for _, service := range searchServices {
 		wg.Add(1)
 		go func(srvName string) {
 			defer wg.Done()
@@ -272,8 +299,8 @@ func SearchLogs(c *gin.Context) {
 				return
 			}
 
-			// Use 'tail' to get the last 100,000 lines efficiently
-			cmd := exec.Command("tail", "-n", "100000", logFile)
+			// Run command with timeout context
+			cmd := exec.CommandContext(ctx, "tail", "-n", "100000", logFile)
 			output, err := cmd.Output()
 			if err != nil {
 				return
@@ -281,8 +308,15 @@ func SearchLogs(c *gin.Context) {
 
 			scanner := bufio.NewScanner(bytes.NewReader(output))
 			for scanner.Scan() {
+				if ctx.Err() != nil {
+					return // Timeout or canceled
+				}
+
 				line := scanner.Text()
 				if strings.Contains(line, reqID) {
+					// Redact line immediately
+					line = logger.RedactJSON(line)
+
 					// Try to parse as JSON first
 					var entry struct {
 						Timestamp string                 `json:"timestamp"`
@@ -292,9 +326,14 @@ func SearchLogs(c *gin.Context) {
 						Fields    map[string]interface{} `json:"fields"`
 					}
 
+					mu.Lock()
+					if len(results) >= 1000 {
+						mu.Unlock()
+						return // Cap at 1000 results
+					}
+
 					if err := json.Unmarshal([]byte(line), &entry); err == nil {
 						// JSON Format
-						mu.Lock()
 						results = append(results, LogSearchResult{
 							Service:   srvName,
 							Timestamp: entry.Timestamp,
@@ -303,7 +342,6 @@ func SearchLogs(c *gin.Context) {
 							RawLine:   line,
 							Fields:    entry.Fields,
 						})
-						mu.Unlock()
 					} else {
 						// Legacy Text Format Fallback
 						timestamp := ""
@@ -321,7 +359,6 @@ func SearchLogs(c *gin.Context) {
 							}
 						}
 
-						mu.Lock()
 						results = append(results, LogSearchResult{
 							Service:   srvName,
 							Timestamp: timestamp,
@@ -329,8 +366,8 @@ func SearchLogs(c *gin.Context) {
 							Message:   msg,
 							RawLine:   line,
 						})
-						mu.Unlock()
 					}
+					mu.Unlock()
 				}
 			}
 		}(service)

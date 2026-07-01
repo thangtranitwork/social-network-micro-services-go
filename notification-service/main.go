@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,7 +77,32 @@ func NewNotificationService(cfg *Config, driver neo4j.DriverWithContext) *Notifi
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin:     func(r *http.Request) bool { return true },
+			CheckOrigin: func(r *http.Request) bool {
+				origin := r.Header.Get("Origin")
+				if origin == "" {
+					return true
+				}
+				allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
+				if allowedOriginsEnv == "" {
+					// Fallback to allow localhost and 127.0.0.1 by default
+					u, err := url.Parse(origin)
+					if err != nil {
+						return false
+					}
+					hostname := u.Hostname()
+					return hostname == "localhost" || hostname == "127.0.0.1"
+				}
+				if allowedOriginsEnv == "*" {
+					return true
+				}
+				origins := strings.Split(allowedOriginsEnv, ",")
+				for _, o := range origins {
+					if strings.TrimSpace(o) == origin {
+						return true
+					}
+				}
+				return false
+			},
 		},
 		cfg:    cfg,
 		driver: driver,
@@ -458,17 +485,28 @@ func main() {
 	r.Use(profiler.Middleware("notification-service"))
 	r.Use(logger.GinMiddleware())
 
-	r.GET("/debug/profiler", profiler.Handler)
-	r.POST("/debug/profiler/reset", func(c *gin.Context) {
-		profiler.Reset()
-		c.JSON(http.StatusOK, gin.H{"status": "success"})
-	})
+	// Profiler
+	debugGroup := r.Group("/debug/profiler")
+	debugGroup.Use(profiler.EndpointGuard())
+	{
+		debugGroup.GET("", profiler.Handler)
+		debugGroup.POST("/reset", func(c *gin.Context) {
+			profiler.Reset()
+			c.JSON(http.StatusOK, gin.H{"status": "success"})
+		})
+	}
 
 	// Upgrade notification WS
 	r.GET("/v1/notifications/ws", func(c *gin.Context) {
-		userID := c.Query("userId")
+		userID := c.GetHeader("X-User-ID")
 		if userID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "userId required"})
+			appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+			if appEnv != "production" && appEnv != "prod" && appEnv != "staging" {
+				userID = c.Query("userId")
+			}
+		}
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized or missing userId"})
 			return
 		}
 

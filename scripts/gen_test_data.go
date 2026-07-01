@@ -61,6 +61,51 @@ func main() {
 		neo4jPass = "password"
 	}
 
+	// Guard against accidental execution in production / unauthorized environments
+	allowDestructive := os.Getenv("ALLOW_DESTRUCTIVE_SEED") == "true"
+	hasConfirmFlag := false
+	for _, arg := range os.Args {
+		if arg == "--confirm-reset-test-data" {
+			hasConfirmFlag = true
+			break
+		}
+	}
+
+	if !allowDestructive && !hasConfirmFlag {
+		// Check if interactive terminal
+		fileInfo, err := os.Stdin.Stat()
+		isTerminal := err == nil && (fileInfo.Mode()&os.ModeCharDevice) != 0
+
+		if !isTerminal {
+			log.Fatalf("FATAL: Non-interactive terminal detected. To execute this destructive seed script, you must either:\n"+
+				"  1. Pass the CLI flag '--confirm-reset-test-data'\n"+
+				"  2. Set the environment variable ALLOW_DESTRUCTIVE_SEED=true")
+		}
+
+		dbName := getDbName(pgDSN)
+		fmt.Printf("\n"+
+			"==============================================================\n"+
+			"⚠️  WARNING: DESTRUCTIVE TEST DATA SEEDING SCRIPT\n"+
+			"==============================================================\n"+
+			"Target Postgres DSN: %s\n"+
+			"Target Neo4j URI:    %s\n"+
+			"--------------------------------------------------------------\n"+
+			"This operation will:\n"+
+			"  1. TRUNCATE/DELETE accounts matching test users and 'admin@admin.com'.\n"+
+			"  2. DETACH DELETE Neo4j nodes (User, Post, Comment, etc.).\n"+
+			"This will PERMANENTLY modify and overwrite database contents.\n"+
+			"==============================================================\n"+
+			"Are you sure you want to proceed?\n"+
+			"Type the target database name '%s' to confirm: ", pgDSN, neo4jURI, dbName)
+
+		var input string
+		_, err = fmt.Scanln(&input)
+		if err != nil || strings.TrimSpace(input) != dbName {
+			log.Fatalf("FATAL: Seeding aborted. Confirmation input did not match '%s'.", dbName)
+		}
+		log.Println("Confirmation success. Proceeding with seeding...")
+	}
+
 	// 1. Connect to Postgres
 	db, err := gorm.Open(postgres.Open(pgDSN), &gorm.Config{})
 	if err != nil {
@@ -772,4 +817,14 @@ func main() {
 	}
 
 	log.Println("Data generation complete!")
+}
+
+func getDbName(dsn string) string {
+	parts := strings.Fields(dsn)
+	for _, p := range parts {
+		if strings.HasPrefix(p, "dbname=") {
+			return strings.TrimPrefix(p, "dbname=")
+		}
+	}
+	return "auth_db"
 }

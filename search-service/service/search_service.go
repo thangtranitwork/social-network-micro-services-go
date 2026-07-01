@@ -57,7 +57,8 @@ func (s *SearchService) Search(ctx context.Context, query string, currentUserID 
 		POST: []*model.Post{},
 	}
 
-	if query == "" {
+	trimmedQuery := strings.TrimSpace(query)
+	if len(trimmedQuery) < 2 {
 		return results, nil
 	}
 

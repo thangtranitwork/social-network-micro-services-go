@@ -217,7 +217,83 @@ var (
 	initialized bool
 	logLevels   map[string]bool // levels allowed to print to console
 	serviceName string
+	logHttpBody bool
 )
+
+func RedactJSON(jsonStr string) string {
+	if jsonStr == "" {
+		return ""
+	}
+	var data interface{}
+	err := json.Unmarshal([]byte(jsonStr), &data)
+	if err != nil {
+		return jsonStr // Not a valid JSON, return as is
+	}
+	redactValue(data)
+	redactedBytes, err := json.Marshal(data)
+	if err != nil {
+		return jsonStr
+	}
+	return string(redactedBytes)
+}
+
+func redactValue(val interface{}) {
+	sensitiveKeys := map[string]bool{
+		"password":      true,
+		"token":         true,
+		"accesstoken":   true,
+		"refreshtoken":  true,
+		"authorization": true,
+		"cookie":        true,
+		"otp":           true,
+		"secret":        true,
+		"credential":    true,
+	}
+
+	switch m := val.(type) {
+	case map[string]interface{}:
+		for k, v := range m {
+			lowerK := strings.ToLower(k)
+			if sensitiveKeys[lowerK] {
+				m[k] = "[REDACTED]"
+			} else {
+				redactValue(v)
+			}
+		}
+	case []interface{}:
+		for _, item := range m {
+			redactValue(item)
+		}
+	}
+}
+
+func RedactQuery(query string) string {
+	if query == "" {
+		return ""
+	}
+	parts := strings.Split(query, "&")
+	sensitiveKeys := map[string]bool{
+		"password":      true,
+		"token":         true,
+		"accesstoken":   true,
+		"refreshtoken":  true,
+		"authorization": true,
+		"cookie":        true,
+		"otp":           true,
+		"secret":        true,
+		"credential":    true,
+	}
+	for i, part := range parts {
+		pair := strings.SplitN(part, "=", 2)
+		if len(pair) == 2 {
+			lowerK := strings.ToLower(pair[0])
+			if sensitiveKeys[lowerK] {
+				parts[i] = pair[0] + "=[REDACTED]"
+			}
+		}
+	}
+	return strings.Join(parts, "&")
+}
 
 func loadEnvFile(path string) {
 	file, err := os.Open(path)
@@ -272,6 +348,20 @@ func initLogger() {
 	// Read environment configuration
 	if envServiceName := os.Getenv("SERVICE_NAME"); envServiceName != "" {
 		serviceName = envServiceName
+	}
+
+	if os.Getenv("LOG_HTTP_BODY") == "true" {
+		logHttpBody = true
+	} else if os.Getenv("LOG_HTTP_BODY") == "false" {
+		logHttpBody = false
+	} else {
+		// Default to false in production/staging (when APP_ENV is production or staging)
+		appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+		if appEnv == "production" || appEnv == "prod" || appEnv == "staging" {
+			logHttpBody = false
+		} else {
+			logHttpBody = true
+		}
 	}
 
 	levelsEnv := os.Getenv("LOG_LEVELS")
@@ -596,6 +686,8 @@ func (w bodyLogWriter) WriteString(s string) (int, error) {
 // GinMiddleware provides request/response logging for Gin web services
 func GinMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		initLogger()
+
 		path := c.Request.URL.Path
 		isWebSocket := strings.ToLower(c.GetHeader("Upgrade")) == "websocket"
 		// Skip logging for telemetry, log streams, health checks, and WebSocket connections
@@ -607,7 +699,7 @@ func GinMiddleware() gin.HandlerFunc {
 		}
 
 		start := time.Now()
-		query := c.Request.URL.RawQuery
+		query := RedactQuery(c.Request.URL.RawQuery)
 		method := c.Request.Method
 		clientIP := c.ClientIP()
 
@@ -620,17 +712,23 @@ func GinMiddleware() gin.HandlerFunc {
 
 		// 1. Capture Request Body safely
 		reqBody := ""
-		if c.Request.Body != nil {
+		if logHttpBody && c.Request.Body != nil {
 			bodyBytes, err := io.ReadAll(c.Request.Body)
 			if err == nil {
 				c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-				reqBody = string(bodyBytes)
+				reqBody = RedactJSON(string(bodyBytes))
+				if len(reqBody) > 4096 {
+					reqBody = reqBody[:4096] + " ... [TRUNCATED]"
+				}
 			}
 		}
 
 		// 2. Intercept Response Body using bodyLogWriter
-		blw := &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
-		c.Writer = blw
+		var blw *bodyLogWriter
+		if logHttpBody {
+			blw = &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
+			c.Writer = blw
+		}
 
 		// Process request
 		c.Next()
@@ -645,7 +743,13 @@ func GinMiddleware() gin.HandlerFunc {
 		}
 
 		// Get Intercepted Response Body
-		respBody := blw.body.String()
+		respBody := ""
+		if logHttpBody && blw != nil {
+			respBody = RedactJSON(blw.body.String())
+			if len(respBody) > 4096 {
+				respBody = respBody[:4096] + " ... [TRUNCATED]"
+			}
+		}
 
 		logBuilder := Field("status", status).
 			Field("latency", latencyStr).

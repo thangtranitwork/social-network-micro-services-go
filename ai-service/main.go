@@ -87,7 +87,16 @@ func (s *AIService) callGeminiAPI(content string) ([]string, error) {
 	}
 
 	payloadBytes, _ := json.Marshal(payload)
-	resp, err := http.Post(requestURL, "application/json", bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequest("POST", requestURL, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

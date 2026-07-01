@@ -335,6 +335,7 @@ services:
     environment:
       - POSTGRES_DSN=host=postgres user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable
       - NEO4J_URI=bolt://neo4j:7687
+      - ALLOW_DESTRUCTIVE_SEED=true
     networks:
       - sn_network
 

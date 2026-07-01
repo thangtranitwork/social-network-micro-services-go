@@ -3,7 +3,10 @@ package handler
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"social-network-go/chat-service/config"
@@ -50,8 +53,30 @@ func NewChatHandler(chatSvc ChatServiceInterface) *ChatHandler {
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
-				// Allow all origins for the websocket upgrade
-				return true
+				origin := r.Header.Get("Origin")
+				if origin == "" {
+					return true
+				}
+				allowedOriginsEnv := os.Getenv("ALLOWED_ORIGINS")
+				if allowedOriginsEnv == "" {
+					// Fallback to allow localhost and 127.0.0.1 by default
+					u, err := url.Parse(origin)
+					if err != nil {
+						return false
+					}
+					hostname := u.Hostname()
+					return hostname == "localhost" || hostname == "127.0.0.1"
+				}
+				if allowedOriginsEnv == "*" {
+					return true
+				}
+				origins := strings.Split(allowedOriginsEnv, ",")
+				for _, o := range origins {
+					if strings.TrimSpace(o) == origin {
+						return true
+					}
+				}
+				return false
 			},
 		},
 	}
@@ -76,7 +101,10 @@ func sendSuccess(c *gin.Context, body interface{}) {
 func getCurrentUser(c *gin.Context) string {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		userID = c.Query("userId")
+		appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+		if appEnv != "production" && appEnv != "prod" && appEnv != "staging" {
+			userID = c.Query("userId")
+		}
 	}
 	return userID
 }
