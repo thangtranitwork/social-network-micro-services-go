@@ -473,23 +473,29 @@ func serializeJSONVal(v interface{}) string {
 	if err, ok := v.(error); ok {
 		return err.Error()
 	}
+	var res string
 	if p, ok := v.(proto.Message); ok {
 		bytes, err := protojson.Marshal(p)
 		if err == nil {
-			return string(bytes)
+			res = string(bytes)
 		}
 	}
-	switch val := v.(type) {
-	case string:
-		return val
-	case []byte:
-		return string(val)
+	if res == "" {
+		switch val := v.(type) {
+		case string:
+			res = val
+		case []byte:
+			res = string(val)
+		default:
+			bytes, err := json.Marshal(v)
+			if err != nil {
+				res = fmt.Sprintf("%v", v)
+			} else {
+				res = string(bytes)
+			}
+		}
 	}
-	bytes, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("%v", v)
-	}
-	return string(bytes)
+	return RedactJSON(res)
 }
 
 func isTTY() bool {
