@@ -427,6 +427,145 @@ func GetStatsLightweight() map[string]CommandStatsSnapshot {
 	return result
 }
 
+// normalizePath converts dynamic path parameters to standard placeholders (e.g. :username, :id)
+func normalizePath(path string) string {
+	path = strings.Split(path, "?")[0]
+	path = strings.TrimSuffix(path, "/")
+	if path == "" {
+		return "/"
+	}
+
+	// 1. Specific static prefix rules for maximum precision
+	if strings.HasPrefix(path, "/v1/users/of-user/") {
+		return "/v1/users/of-user/:username"
+	}
+	if strings.HasPrefix(path, "/v1/posts/of-user/") {
+		return "/v1/posts/of-user/:username"
+	}
+	if strings.HasPrefix(path, "/v1/posts/files/") {
+		return "/v1/posts/files/:username"
+	}
+	if strings.HasPrefix(path, "/v1/posts/like/") {
+		return "/v1/posts/like/:postId"
+	}
+	if strings.HasPrefix(path, "/v1/friends/mutual-friends/") {
+		return "/v1/friends/mutual-friends/:username"
+	}
+	if strings.HasPrefix(path, "/v1/friend-request/send/") {
+		return "/v1/friend-request/send/:username"
+	}
+	if strings.HasPrefix(path, "/v1/friend-request/accept/") {
+		return "/v1/friend-request/accept/:username"
+	}
+	if strings.HasPrefix(path, "/v1/friend-request/delete/") {
+		return "/v1/friend-request/delete/:username"
+	}
+
+	// 2. Generic segmentation rules
+	segments := strings.Split(path, "/")
+
+	// If /v1/users/<username>
+	if len(segments) == 4 && segments[1] == "v1" && segments[2] == "users" {
+		sub := segments[3]
+		if !strings.HasPrefix(sub, "update-") {
+			segments[3] = ":username"
+		}
+	}
+
+	// If /v1/friends/<username>
+	if len(segments) == 4 && segments[1] == "v1" && segments[2] == "friends" {
+		if segments[3] != "suggested" {
+			segments[3] = ":username"
+		}
+	}
+
+	// If /v1/blocks/<username>
+	if len(segments) == 4 && segments[1] == "v1" && segments[2] == "blocks" {
+		segments[3] = ":username"
+	}
+
+	// If /v1/stories/<id>
+	if len(segments) == 4 && segments[1] == "v1" && segments[2] == "stories" {
+		if segments[3] != "feed" {
+			segments[3] = ":id"
+		}
+	}
+
+	// If /v1/files/<id> or /v1/files/<id>/presigned
+	if len(segments) >= 4 && segments[1] == "v1" && segments[2] == "files" {
+		if segments[3] != "upload" && segments[3] != "upload-multiple" && segments[3] != "delete-multiple" {
+			if len(segments) >= 5 && segments[4] == "presigned" {
+				return "/v1/files/:id/presigned"
+			}
+			segments[3] = ":id"
+		}
+	}
+
+	// If /v1/admin/containers/<id>/...
+	if len(segments) >= 5 && segments[1] == "v1" && segments[2] == "admin" && segments[3] == "containers" {
+		segments[4] = ":id"
+	}
+
+	// 3. Fallback heuristic detection for IDs/UUIDs
+	for i, seg := range segments {
+		if seg == "" || strings.HasPrefix(seg, ":") {
+			continue
+		}
+		if isNumeric(seg) {
+			segments[i] = ":id"
+		} else if isHexOrUUID(seg) || isAlphanumericID(seg) {
+			segments[i] = ":id"
+		}
+	}
+
+	return strings.Join(segments, "/")
+}
+
+func isNumeric(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isHexOrUUID(s string) bool {
+	if len(s) == 24 {
+		for _, c := range s {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(s) == 36 && strings.Count(s, "-") == 4 {
+		return true
+	}
+	return false
+}
+
+func isAlphanumericID(s string) bool {
+	if len(s) < 5 {
+		return false
+	}
+	hasLetter := false
+	hasDigit := false
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			hasLetter = true
+		} else if c >= '0' && c <= '9' {
+			hasDigit = true
+		} else if c != '_' && c != '-' {
+			return false
+		}
+	}
+	return hasLetter && hasDigit
+}
+
 // Middleware is a Gin middleware to automatically profile requests for a service
 func Middleware(serviceName string) gin.HandlerFunc {
 	ensureInit()
@@ -444,17 +583,19 @@ func Middleware(serviceName string) gin.HandlerFunc {
 
 		isWebSocket := strings.ToLower(c.GetHeader("Upgrade")) == "websocket" || strings.Contains(path, "/ws") || strings.Contains(path, "/stream")
 
+		// Determine the matching route path template
+		var routePath string
+		if c.FullPath() == "" || strings.Contains(c.FullPath(), "*any") {
+			routePath = normalizePath(path)
+		} else {
+			routePath = normalizePath(c.FullPath())
+		}
+
 		var command string
 		if isWebSocket {
-			command = fmt.Sprintf("%s:WS %s", serviceName, c.FullPath())
-			if c.FullPath() == "" {
-				command = fmt.Sprintf("%s:WS %s", serviceName, path)
-			}
+			command = fmt.Sprintf("%s:WS %s", serviceName, routePath)
 		} else {
-			command = fmt.Sprintf("%s:%s %s", serviceName, c.Request.Method, c.FullPath())
-			if c.FullPath() == "" {
-				command = fmt.Sprintf("%s:%s %s", serviceName, c.Request.Method, path)
-			}
+			command = fmt.Sprintf("%s:%s %s", serviceName, c.Request.Method, routePath)
 		}
 
 		globalProfiler.mu.Lock()
