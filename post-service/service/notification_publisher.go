@@ -26,9 +26,13 @@ type KafkaNotificationPublisher struct {
 
 func NewKafkaNotificationPublisher(kafkaAddr string) *KafkaNotificationPublisher {
 	w := &kafka.Writer{
-		Addr:     kafka.TCP(kafkaAddr),
-		Topic:    "notification-events",
-		Balancer: &kafka.LeastBytes{},
+		Addr:         kafka.TCP(kafkaAddr),
+		Topic:        "notification-events",
+		Balancer:     &kafka.LeastBytes{},
+		Async:        true,
+		BatchSize:    100,
+		BatchTimeout: 50 * time.Millisecond,
+		WriteTimeout: 500 * time.Millisecond,
 	}
 	return &KafkaNotificationPublisher{writer: w}
 }
@@ -50,9 +54,7 @@ func (p *KafkaNotificationPublisher) Send(ctx context.Context, action string, cr
 		return err
 	}
 
-	logger.Info("Publishing SINGLE notification event to Kafka: %s", string(payload))
-
-	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	publishCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 
 	err = p.writer.WriteMessages(publishCtx, kafka.Message{
@@ -81,9 +83,7 @@ func (p *KafkaNotificationPublisher) SendToFriends(ctx context.Context, action s
 		return err
 	}
 
-	logger.Info("Publishing FRIENDS notification event to Kafka: %s", string(payload))
-
-	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	publishCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 
 	err = p.writer.WriteMessages(publishCtx, kafka.Message{

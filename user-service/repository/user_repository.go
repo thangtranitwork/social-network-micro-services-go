@@ -8,6 +8,7 @@ import (
 
 	"social-network-go/exception"
 	"social-network-go/logger"
+	"social-network-go/profiler"
 	"social-network-go/user-service/db"
 	"social-network-go/user-service/model"
 
@@ -416,91 +417,91 @@ func (r *Neo4jUserRepository) GetSuggestedFriends(ctx context.Context, currentUs
 		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 		defer session.Close(ctx)
 
-		res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-			query := `
-				MATCH (u:User {id: $id})
-				CALL {
-					WITH u
-					MATCH (u)-[:FRIEND]-(:User)-[:FRIEND]-(foaf:User)
-					RETURN foaf
-					UNION
-					WITH u
-					MATCH (u)-[:VIEW_PROFILE]-(foaf:User)
-					RETURN foaf
-					UNION
-					WITH u
-					MATCH (u)-[:IS_MEMBER_OF]->(:Chat)<-[:IS_MEMBER_OF]-(foaf:User)
-					RETURN foaf
-					UNION
-					WITH u
-					MATCH (u)-[:LIKED]->(:Post)<-[:POSTED]-(foaf:User)
-					RETURN foaf
-					UNION
-					WITH u
-					MATCH (u)-[:POSTED]->(:Post)<-[:LIKED]-(foaf:User)
-					RETURN foaf
-					UNION
-					WITH u
-					MATCH (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:POSTED]-(foaf:User)
-					RETURN foaf
-					UNION
-					WITH u
-					MATCH (u)-[:POSTED]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf:User)
-					RETURN foaf
-					UNION
-					WITH u
-					MATCH (foaf:User)
+		res, err := profiler.TrackResult("user-service:query suggestedFriends.neo4j", func() (interface{}, error) {
+			return session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+				query := `
+					MATCH (u:User {id: $id})
+					CALL {
+						WITH u
+						MATCH (u)-[:FRIEND]-(:User)-[:FRIEND]-(foaf:User)
+						RETURN foaf, 5 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:VIEW_PROFILE]->(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)<-[:VIEW_PROFILE]-(foaf:User)
+						RETURN foaf, 1 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:IS_MEMBER_OF]->(:Chat)<-[:IS_MEMBER_OF]-(foaf:User)
+						RETURN foaf, 30 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:LIKED]->(:Post)<-[:POSTED]-(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:POSTED]->(:Post)<-[:LIKED]-(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:LIKED]->(:Post)<-[:LIKED]-(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:POSTED]-(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:POSTED]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (u)-[:COMMENTED]->(:Comment)-[:REPLY_OF]-(:Comment)<-[:COMMENTED]-(foaf:User)
+						RETURN foaf, 2 AS signalScore
+						UNION ALL
+						WITH u
+						MATCH (foaf:User)
+						WHERE foaf <> u
+						RETURN foaf, 0 AS signalScore
+					}
+					WITH u, foaf, sum(signalScore) AS relationshipScore
 					WHERE foaf <> u
-					RETURN foaf
+					  AND NOT (u)-[:FRIEND]-(foaf)
+					  AND NOT (u)-[:BLOCK]-(foaf)
+					  AND NOT (u)-[:REQUEST]-(foaf)
+					WITH foaf,
+					     relationshipScore -
+					     abs(toInteger(substring(coalesce(u.birthdate, "1998-01-01"), 0, 4)) - toInteger(substring(coalesce(foaf.birthdate, "1998-01-01"), 0, 4))) * 2 AS score
+					RETURN foaf.id, foaf.username, foaf.givenName, foaf.familyName, foaf.email, foaf.bio, score, foaf.profilePictureId
+					ORDER BY score DESC LIMIT 20
+				`
+				result, err := tx.Run(ctx, query, map[string]interface{}{"id": currentUserID})
+				if err != nil {
+					return nil, err
 				}
-				WITH u, foaf
-				WHERE foaf <> u
-				  AND NOT (u)-[:FRIEND]-(foaf)
-				  AND NOT (u)-[:BLOCK]-(foaf)
-				  AND NOT (u)-[:REQUEST]-(foaf)
-				WITH distinct u, foaf
 
-				// 1. Calculate counts using COUNT subqueries
-				WITH u, foaf,
-				     COUNT { (u)-[:FRIEND]-(:User)-[:FRIEND]-(foaf) } as mutualCount,
-				     COUNT { (u)-[:VIEW_PROFILE]->(foaf) } as viewOut,
-				     COUNT { (u)<-[:VIEW_PROFILE]-(foaf) } as viewIn,
-				     COUNT { (u)-[:IS_MEMBER_OF]->(:Chat)<-[:IS_MEMBER_OF]-(foaf) } as chatRooms,
-				     COUNT { (u)-[:LIKED]->(:Post)<-[:POSTED]-(foaf) } +
-				     COUNT { (u)-[:POSTED]->(:Post)<-[:LIKED]-(foaf) } +
-				     COUNT { (u)-[:LIKED]->(:Post)<-[:LIKED]-(foaf) } +
-				     COUNT { (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:POSTED]-(foaf) } +
-				     COUNT { (u)-[:POSTED]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf) } +
-				     COUNT { (u)-[:COMMENTED]->(:Comment)-[:COMMENT_OF]->(:Post)<-[:COMMENT_OF]-(:Comment)<-[:COMMENTED]-(foaf) } +
-				     COUNT { (u)-[:COMMENTED]->(:Comment)-[:REPLY_OF]-(:Comment)<-[:COMMENTED]-(foaf) } as interactions
-				WITH u, foaf, mutualCount, viewOut, viewIn, chatRooms, interactions,
-				     abs(toInteger(substring(coalesce(u.birthdate, "1998-01-01"), 0, 4)) - toInteger(substring(coalesce(foaf.birthdate, "1998-01-01"), 0, 4))) as ageDiff
-
-				// Score calculation
-				WITH foaf,
-				     (mutualCount * 5) + (viewOut * 2) + (viewIn * 1) + (case when chatRooms > 0 then 30 else 0 end) + (interactions * 2) - (ageDiff * 2) as score
-				RETURN foaf.id, foaf.username, foaf.givenName, foaf.familyName, foaf.email, foaf.bio, score, foaf.profilePictureId
-				ORDER BY score DESC LIMIT 20
-			`
-			result, err := tx.Run(ctx, query, map[string]interface{}{"id": currentUserID})
-			if err != nil {
-				return nil, err
-			}
-
-			var list []*model.User
-			for result.Next(ctx) {
-				vals := result.Record().Values
-				list = append(list, &model.User{
-					ID:               getStringVal(vals[0]),
-					Username:         getStringVal(vals[1]),
-					GivenName:        getStringVal(vals[2]),
-					FamilyName:       getStringVal(vals[3]),
-					Email:            getStringVal(vals[4]),
-					Bio:              getStringVal(vals[5]),
-					ProfilePictureId: getStringVal(vals[7]),
-				})
-			}
-			return list, nil
+				var list []*model.User
+				for result.Next(ctx) {
+					vals := result.Record().Values
+					list = append(list, &model.User{
+						ID:               getStringVal(vals[0]),
+						Username:         getStringVal(vals[1]),
+						GivenName:        getStringVal(vals[2]),
+						FamilyName:       getStringVal(vals[3]),
+						Email:            getStringVal(vals[4]),
+						Bio:              getStringVal(vals[5]),
+						ProfilePictureId: getStringVal(vals[7]),
+					})
+				}
+				return list, nil
+			})
 		})
 		if err == nil {
 			return res.([]*model.User), nil
@@ -510,26 +511,28 @@ func (r *Neo4jUserRepository) GetSuggestedFriends(ctx context.Context, currentUs
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var list []*model.User
-	friends := r.fallbackFriends[currentUserID]
-	isFriendOrSelf := func(id string) bool {
-		if id == currentUserID {
-			return true
-		}
-		for _, fID := range friends {
-			if fID == id {
+	return profiler.TrackResult("user-service:query suggestedFriends.fallback", func() ([]*model.User, error) {
+		var list []*model.User
+		friends := r.fallbackFriends[currentUserID]
+		isFriendOrSelf := func(id string) bool {
+			if id == currentUserID {
 				return true
 			}
+			for _, fID := range friends {
+				if fID == id {
+					return true
+				}
+			}
+			return false
 		}
-		return false
-	}
 
-	for _, u := range r.fallbackUsers {
-		if u.ID != u.Username && !isFriendOrSelf(u.ID) {
-			list = append(list, u)
+		for _, u := range r.fallbackUsers {
+			if u.ID != u.Username && !isFriendOrSelf(u.ID) {
+				list = append(list, u)
+			}
 		}
-	}
-	return list, nil
+		return list, nil
+	})
 }
 
 func (r *Neo4jUserRepository) GetMutualFriends(ctx context.Context, currentUserID string, targetUsername string) ([]*model.User, error) {

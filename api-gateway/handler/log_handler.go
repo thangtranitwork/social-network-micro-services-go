@@ -162,6 +162,7 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 			StartTime time.Time   `json:"startTime"`
 			Pprof     interface{} `json:"pprof"`
 			Commands  interface{} `json:"commands"`
+			Routes    interface{} `json:"routes"`
 			Online    bool        `json:"online"`
 		}
 
@@ -172,6 +173,7 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 			StartTime: profiler.GetStartTime(),
 			Pprof:     profiler.GetPProfInfo(),
 			Commands:  profiler.GetStatsLightweight(),
+			Routes:    profiler.GetRouteStatsLightweight(),
 			Online:    true,
 		}
 
@@ -206,6 +208,7 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 					StartTime time.Time   `json:"startTime"`
 					Pprof     interface{} `json:"pprof"`
 					Commands  interface{} `json:"commands"`
+					Routes    interface{} `json:"routes"`
 				}
 				if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 					mu.Lock()
@@ -219,6 +222,7 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 					StartTime: data.StartTime,
 					Pprof:     data.Pprof,
 					Commands:  data.Commands,
+					Routes:    data.Routes,
 					Online:    true,
 				}
 				mu.Unlock()

@@ -10,6 +10,7 @@ import (
 
 	"social-network-go/logger"
 	"social-network-go/post-service/model"
+	"social-network-go/profiler"
 
 	"github.com/google/uuid"
 )
@@ -178,6 +179,7 @@ func (s *PostService) fetchActiveAds(ctx context.Context) ([]model.Post, error) 
 	}
 
 	results, err := s.Redis.HGetAll(ctx, "active_ads").Result()
+	profiler.TrackCacheLookup("post-service:cache activeAds", err == nil && len(results) > 0, err)
 	if err != nil {
 		return nil, err
 	}
@@ -247,58 +249,72 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		pageType = PageTypeRelevant
 	}
 
-	posts, err := s.Repo.GetSuggestedPosts(ctx, currentUserID, pageType, pageable.Skip, normalizeLimit(pageable.Limit))
+	posts, err := profiler.TrackResult("post-service:query newsfeed.repository", func() ([]*model.Post, error) {
+		return s.Repo.GetSuggestedPosts(ctx, currentUserID, pageType, pageable.Skip, normalizeLimit(pageable.Limit))
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	validPosts := make([]*model.Post, 0, len(posts))
-	for _, post := range posts {
-		if err := s.ValidateViewPost(ctx, post, currentUserID); err == nil {
-			validPosts = append(validPosts, post)
+	profiler.TrackExecution("post-service:code newsfeed.validatePosts", func() {
+		for _, post := range posts {
+			if err := s.ValidateViewPost(ctx, post, currentUserID); err == nil {
+				validPosts = append(validPosts, post)
+			}
 		}
-	}
+	})
 
 	if pageType == PageTypeRelevant && s.KeywordInteractor != nil {
 		ids := make([]string, 0, len(validPosts))
 		for _, p := range validPosts {
 			ids = append(ids, p.ID)
 		}
-		_ = s.KeywordInteractor.PostsLoaded(ctx, ids, currentUserID)
+		profiler.TrackExecution("post-service:integration newsfeed.keywords.postsLoaded", func() {
+			_ = s.KeywordInteractor.PostsLoaded(ctx, ids, currentUserID)
+		})
 	}
 
 	// Interleave ads if there are active ads and organic posts
 	if len(validPosts) > 0 {
-		ads, err := s.fetchActiveAds(ctx)
+		ads, err := profiler.TrackResult("post-service:query newsfeed.fetchActiveAds", func() ([]model.Post, error) {
+			return s.fetchActiveAds(ctx)
+		})
 		logger.WithContext(ctx).JsonField("ads", ads).Info("Fetched ads")
 		if err == nil && len(ads) > 0 {
-			interleaved := make([]*model.Post, 0, len(validPosts)+len(ads))
-			adIdx := 0
-			for i, post := range validPosts {
-				interleaved = append(interleaved, post)
-				// Interleave ad at index 2 (after 2 posts) and then every 5 posts
-				if i == 1 || (i > 1 && (i-1)%5 == 0) {
-					if adIdx < len(ads) {
-						adCopy := ads[adIdx]
-						interleaved = append(interleaved, &adCopy)
-						adIdx++
+			profiler.TrackExecution("post-service:code newsfeed.interleaveAds", func() {
+				interleaved := make([]*model.Post, 0, len(validPosts)+len(ads))
+				adIdx := 0
+				for i, post := range validPosts {
+					interleaved = append(interleaved, post)
+					// Interleave ad at index 2 (after 2 posts) and then every 5 posts
+					if i == 1 || (i > 1 && (i-1)%5 == 0) {
+						if adIdx < len(ads) {
+							adCopy := ads[adIdx]
+							interleaved = append(interleaved, &adCopy)
+							adIdx++
+						}
 					}
 				}
-			}
-			// If we still have ads left and the feed has less than 2 posts, append the first remaining ad
-			if adIdx < len(ads) && len(validPosts) < 2 {
-				adCopy := ads[adIdx]
-				interleaved = append(interleaved, &adCopy)
-				adIdx++
-			}
-			validPosts = interleaved
+				// If we still have ads left and the feed has less than 2 posts, append the first remaining ad
+				if adIdx < len(ads) && len(validPosts) < 2 {
+					adCopy := ads[adIdx]
+					interleaved = append(interleaved, &adCopy)
+					adIdx++
+				}
+				validPosts = interleaved
+			})
 		}
 	}
 
 	// Resolve authors (including both organic posts and interleaved ads!)
-	s.ResolveAuthors(ctx, validPosts)
+	profiler.TrackExecution("post-service:integration newsfeed.resolveAuthors", func() {
+		s.ResolveAuthors(ctx, validPosts)
+	})
 
-	s.enrichPostsWithPresignedURLs(ctx, validPosts)
+	profiler.TrackExecution("post-service:integration newsfeed.enrichPresignedURLs", func() {
+		s.enrichPostsWithPresignedURLs(ctx, validPosts)
+	})
 	return validPosts, nil
 }
 
@@ -326,38 +342,38 @@ func (s *PostService) UpdateContent(ctx context.Context, currentUserID, postID s
 }
 
 func (s *PostService) LikePost(ctx context.Context, userID, postID string) error {
-	post, err := s.GetPost(ctx, postID, userID)
-	if err != nil {
-		return err
-	}
-	if err := s.Repo.ValidateBlockByIDs(ctx, userID, post.AuthorID); err != nil {
-		return err
-	}
-
-	err = s.Repo.LikePost(ctx, userID, postID)
+	authorID, err := profiler.TrackResult("post-service:query likePost.repository", func() (string, error) {
+		return s.Repo.LikePost(ctx, userID, postID)
+	})
 	if err != nil {
 		return err
 	}
 
-	if s.KeywordInteractor != nil {
-		_ = s.KeywordInteractor.Interact(ctx, postID, userID, "LIKE_SCORE")
-	}
-	if s.Notification != nil && userID != post.AuthorID {
-		_ = s.Notification.Send(ctx, "LIKE_POST", userID, post.AuthorID, postID, "POST", "")
+	if s.KeywordInteractor != nil || (s.Notification != nil && userID != authorID) {
+		go func() {
+			sideEffectCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			if s.KeywordInteractor != nil {
+				profiler.TrackExecution("post-service:integration likePost.keywordInteract", func() {
+					_ = s.KeywordInteractor.Interact(sideEffectCtx, postID, userID, "LIKE_SCORE")
+				})
+			}
+			if s.Notification != nil && userID != authorID {
+				profiler.TrackExecution("post-service:integration likePost.notification", func() {
+					_ = s.Notification.Send(sideEffectCtx, "LIKE_POST", userID, authorID, postID, "POST", "")
+				})
+			}
+		}()
 	}
 	return nil
 }
 
 func (s *PostService) UnlikePost(ctx context.Context, userID, postID string) error {
-	post, err := s.GetPost(ctx, postID, userID)
-	if err != nil {
-		return err
-	}
-	if err := s.Repo.ValidateBlockByIDs(ctx, userID, post.AuthorID); err != nil {
-		return err
-	}
-
-	return s.Repo.UnlikePost(ctx, userID, postID)
+	_, err := profiler.TrackResult("post-service:query unlikePost.repository", func() (string, error) {
+		return s.Repo.UnlikePost(ctx, userID, postID)
+	})
+	return err
 }
 
 func (s *PostService) DeletePost(ctx context.Context, postID, currentUserID string, isAdmin bool) error {

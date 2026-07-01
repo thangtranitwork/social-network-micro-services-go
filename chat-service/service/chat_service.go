@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,10 +19,12 @@ import (
 	"social-network-go/exception"
 	"social-network-go/logger"
 	"social-network-go/pb"
+	"social-network-go/profiler"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"google.golang.org/grpc"
@@ -613,12 +616,18 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 		ctx := context.Background()
 		cacheKey := "chat:list:" + userID
 		cached, err := db.RedisClient.Get(ctx, cacheKey).Result()
+		lookupErr := err
+		if errors.Is(err, redis.Nil) {
+			lookupErr = nil
+		}
 		if err == nil && cached != "" {
 			var rooms []ChatRoom
 			if json.Unmarshal([]byte(cached), &rooms) == nil {
+				profiler.TrackCacheLookup("chat-service:cache chatList", true, nil)
 				return rooms
 			}
 		}
+		profiler.TrackCacheLookup("chat-service:cache chatList", false, lookupErr)
 	}
 
 	if db.Neo4jDriver == nil {

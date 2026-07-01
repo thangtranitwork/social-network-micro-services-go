@@ -10,6 +10,7 @@ import (
 	"social-network-go/exception"
 	"social-network-go/logger"
 	"social-network-go/pb"
+	"social-network-go/profiler"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -113,6 +114,11 @@ func (s *AuthService) Verify(email string, code uuid.UUID) error {
 
 	key := fmt.Sprintf("verify_code:%s", account.ID.String())
 	cachedCodeStr, err := red.RedisClient.Get(ctx, key).Result()
+	lookupErr := err
+	if err == redis.Nil {
+		lookupErr = nil
+	}
+	profiler.TrackCacheLookup("auth-service:cache verifyCode", err == nil && cachedCodeStr != "", lookupErr)
 	if err != nil {
 		if err == redis.Nil {
 			return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
@@ -168,6 +174,11 @@ func (s *AuthService) ResendEmail(email, clientIP string) (*model.VerifyCode, er
 	var code uuid.UUID
 
 	cachedCodeStr, err := red.RedisClient.Get(ctx, key).Result()
+	lookupErr := err
+	if err == redis.Nil {
+		lookupErr = nil
+	}
+	profiler.TrackCacheLookup("auth-service:cache verifyCode", err == nil && cachedCodeStr != "", lookupErr)
 	if err == nil {
 		// Key still exists, extend TTL and keep same code
 		code, err = uuid.Parse(cachedCodeStr)

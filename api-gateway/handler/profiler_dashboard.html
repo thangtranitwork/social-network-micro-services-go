@@ -487,6 +487,68 @@
             }
         }
 
+        function parseLegacyCommandName(cmdName) {
+            let method = 'ANY';
+            let path = cmdName;
+
+            const serviceSeparator = cmdName.indexOf(':');
+            const commandPart = serviceSeparator >= 0 ? cmdName.slice(serviceSeparator + 1) : cmdName;
+            path = commandPart;
+
+            const methodSeparator = commandPart.indexOf(' ');
+            if (methodSeparator >= 0) {
+                method = commandPart.slice(0, methodSeparator);
+                path = commandPart.slice(methodSeparator + 1);
+            }
+
+            return { method, path };
+        }
+
+        function buildProfilerRows(serviceName, svc, searchVal) {
+            const rows = [];
+            let requestCount = 0;
+            const elapsedSeconds = (Date.now() - new Date(svc.startTime).getTime()) / 1000;
+
+            const pushRoute = (route) => {
+                const routeRequests = route.requestCount || 0;
+                requestCount += routeRequests;
+
+                const command = route.command || `${serviceName}:${route.method || 'ANY'} ${route.path || ''}`;
+                const searchable = `${command} ${route.service || serviceName} ${route.method || ''} ${route.path || ''}`.toLowerCase();
+                if (searchVal && !searchable.includes(searchVal)) return;
+
+                const rps = elapsedSeconds > 0 ? (routeRequests / elapsedSeconds) : 0;
+                rows.push({
+                    ...route,
+                    service: route.service || serviceName,
+                    method: route.method || 'ANY',
+                    path: route.path || command,
+                    startTime: svc.startTime,
+                    rps: rps
+                });
+            };
+
+            if (Array.isArray(svc.routes)) {
+                svc.routes.forEach(pushRoute);
+                return { rows, requestCount };
+            }
+
+            if (svc.commands) {
+                for (const [cmdName, stats] of Object.entries(svc.commands)) {
+                    const { method, path } = parseLegacyCommandName(cmdName);
+                    pushRoute({
+                        command: cmdName,
+                        service: serviceName,
+                        method,
+                        path,
+                        ...stats
+                    });
+                }
+            }
+
+            return { rows, requestCount };
+        }
+
         function renderDashboard() {
             if (!latestData) return;
 
@@ -516,36 +578,10 @@
                         totalHeapAlloc += svc.pprof.heapAlloc || 0;
                     }
 
-                    if (svc.online && svc.commands) {
-                        for (const [cmdName, stats] of Object.entries(svc.commands)) {
-                            totalRequests += stats.requestCount;
-
-                            let method = 'ANY';
-                            let path = cmdName;
-                            const serviceParts = cmdName.split(':');
-                            if (serviceParts.length > 1) {
-                                const methodPathParts = serviceParts[1].split(' ');
-                                if (methodPathParts.length > 1) {
-                                    method = methodPathParts[0];
-                                    path = methodPathParts[1];
-                                } else {
-                                    path = serviceParts[1];
-                                }
-                            }
-
-                            if (searchVal && !cmdName.toLowerCase().includes(searchVal)) continue;
-
-                            const elapsedSeconds = (Date.now() - new Date(svc.startTime).getTime()) / 1000;
-                            const rps = elapsedSeconds > 0 ? (stats.requestCount / elapsedSeconds) : 0;
-                            rows.push({
-                                service: name,
-                                method,
-                                path,
-                                startTime: svc.startTime,
-                                rps: rps,
-                                ...stats
-                            });
-                        }
+                    if (svc.online && (Array.isArray(svc.routes) || svc.commands)) {
+                        const builtRows = buildProfilerRows(name, svc, searchVal);
+                        totalRequests += builtRows.requestCount;
+                        rows.push(...builtRows.rows);
                     }
                 }
 
@@ -563,36 +599,10 @@
                     totalGoroutines = svc.pprof ? (svc.pprof.goroutines || 0) : 0;
                     totalHeapAlloc = svc.pprof ? (svc.pprof.heapAlloc || 0) : 0;
 
-                    if (svc.commands) {
-                        for (const [cmdName, stats] of Object.entries(svc.commands)) {
-                            totalRequests += stats.requestCount;
-
-                            let method = 'ANY';
-                            let path = cmdName;
-                            const serviceParts = cmdName.split(':');
-                            if (serviceParts.length > 1) {
-                                const methodPathParts = serviceParts[1].split(' ');
-                                if (methodPathParts.length > 1) {
-                                    method = methodPathParts[0];
-                                    path = methodPathParts[1];
-                                } else {
-                                    path = serviceParts[1];
-                                }
-                            }
-
-                            if (searchVal && !cmdName.toLowerCase().includes(searchVal)) continue;
-
-                            const elapsedSeconds = (Date.now() - new Date(svc.startTime).getTime()) / 1000;
-                            const rps = elapsedSeconds > 0 ? (stats.requestCount / elapsedSeconds) : 0;
-                            rows.push({
-                                service: currentFilter,
-                                method,
-                                path,
-                                startTime: svc.startTime,
-                                rps: rps,
-                                ...stats
-                            });
-                        }
+                    if (Array.isArray(svc.routes) || svc.commands) {
+                        const builtRows = buildProfilerRows(currentFilter, svc, searchVal);
+                        totalRequests += builtRows.requestCount;
+                        rows.push(...builtRows.rows);
                     }
                 }
 

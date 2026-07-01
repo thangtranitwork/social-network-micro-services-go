@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,8 +11,10 @@ import (
 	"social-network-go/exception"
 	"social-network-go/logger"
 	"social-network-go/pb"
+	"social-network-go/profiler"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/redis/go-redis/v9"
 )
 
 type TokenClaims struct {
@@ -46,8 +49,15 @@ func (m *JWTTokenManager) GenerateToken(userId, email, role string, secret strin
 
 	if red.RedisClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		cachedUsername, err := red.RedisClient.Get(ctx, cacheKey).Result()
+		cachedUsername, err := profiler.TrackResult("auth-service:cache token.username.get", func() (string, error) {
+			return red.RedisClient.Get(ctx, cacheKey).Result()
+		})
 		cancel()
+		lookupErr := err
+		if errors.Is(err, redis.Nil) {
+			lookupErr = nil
+		}
+		profiler.TrackCacheLookup("auth-service:cache token.username", err == nil && cachedUsername != "", lookupErr)
 		if err == nil && cachedUsername != "" {
 			username = cachedUsername
 		}
@@ -57,11 +67,15 @@ func (m *JWTTokenManager) GenerateToken(userId, email, role string, secret strin
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		resp, err := m.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{UserId: userId})
+		resp, err := profiler.TrackResult("auth-service:grpc token.getUserProfile", func() (*pb.UserCommonInfoResponse, error) {
+			return m.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{UserId: userId})
+		})
 		if err == nil && resp != nil && resp.Username != "" {
 			username = resp.Username
 			if red.RedisClient != nil {
-				_ = red.RedisClient.Set(context.Background(), cacheKey, username, 24*time.Hour).Err()
+				_, _ = profiler.TrackResult("auth-service:cache token.username.set", func() (struct{}, error) {
+					return struct{}{}, red.RedisClient.Set(context.Background(), cacheKey, username, 24*time.Hour).Err()
+				})
 			}
 		} else {
 			logger.Field("userId", userId).Field("error", err).Error("Failed to get username for user")
@@ -83,7 +97,9 @@ func (m *JWTTokenManager) GenerateToken(userId, email, role string, secret strin
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	return profiler.TrackResult("auth-service:crypto token.sign", func() (string, error) {
+		return token.SignedString([]byte(secret))
+	})
 }
 
 func (m *JWTTokenManager) ValidateToken(tokenStr string) (*TokenClaims, error) {

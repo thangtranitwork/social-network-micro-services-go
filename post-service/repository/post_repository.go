@@ -9,6 +9,7 @@ import (
 
 	"social-network-go/post-service/db"
 	"social-network-go/post-service/model"
+	"social-network-go/profiler"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
@@ -33,8 +34,8 @@ type PostRepository interface {
 	GetSuggestedPosts(ctx context.Context, currentUserID string, pageType string, skip, limit int64) ([]*model.Post, error)
 	UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error
 	UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int) ([]string, string, error)
-	LikePost(ctx context.Context, userID, postID string) error
-	UnlikePost(ctx context.Context, userID, postID string) error
+	LikePost(ctx context.Context, userID, postID string) (string, error)
+	UnlikePost(ctx context.Context, userID, postID string) (string, error)
 	DeletePost(ctx context.Context, postID, currentUserID string, isAdmin bool) (string, []string, error)
 	ValidateBlockByIDs(ctx context.Context, userID, targetID string) error
 	ValidateBlockByUsername(ctx context.Context, userID, targetUsername string) error
@@ -345,10 +346,8 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 			  )
 			
 			OPTIONAL MATCH (viewer)-[friendship:FRIEND]->(author)
-			OPTIONAL MATCH path = shortestPath((viewer)-[*1..4]->(p))
-			
-			OPTIONAL MATCH (viewer)-[vu:VIEW_PROFILE]->(author)
-			OPTIONAL MATCH (author)-[uv:VIEW_PROFILE]->(viewer)
+				OPTIONAL MATCH (viewer)-[vu:VIEW_PROFILE]->(author)
+				OPTIONAL MATCH (author)-[uv:VIEW_PROFILE]->(viewer)
 			
 			OPTIONAL MATCH (p)-[:SHARED_FROM]->(origin:Post)<-[:POSTED]-(originAuthor:User)
 			OPTIONAL MATCH (viewer)-[block:BLOCK]-(originAuthor)
@@ -360,10 +359,9 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 			OPTIONAL MATCH (viewer)-[liked:LIKED]->(p)
 			OPTIONAL MATCH (viewer)-[loaded:LOADED]->(p)
 
-			WITH viewer, p, author, friendship, loaded,
-				 CASE WHEN path IS NULL THEN NULL ELSE length(path) END AS shortestPathLength,
-				 coalesce(vu.times, 0) AS viewForward,
-				 coalesce(uv.times, 0) AS viewBackward,
+				WITH viewer, p, author, friendship, loaded,
+					 coalesce(vu.times, 0) AS viewForward,
+					 coalesce(uv.times, 0) AS viewBackward,
 				 origin, originAuthor, block, originFriendship,
 				 liked,
 				 COALESCE(SUM(inter.score), 0) AS keywordScore,
@@ -386,23 +384,19 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 				 coalesce(p.shareCount, 0) * 5 AS shareScore,
 				 CASE WHEN loaded IS NOT NULL THEN loaded.times * (-20) ELSE 0 END AS loadedScore
 
-			WITH p, author, viewer, origin, originAuthor, liked,
-				 originCanView, shortestPathLength, viewForward, viewBackward, newPostScore, likeScore, commentScore, shareScore, friendship, loadedScore, keywordScore,
-				 CASE
-					 WHEN friendship IS NOT NULL THEN 100
-					 WHEN (viewer)-[:FRIEND]-()-[:FRIEND]-(author) AND friendship IS NULL OR (viewer)-[:REQUEST]-(author) THEN 50
-					 ELSE 0
-				 END
-				 + 2 * viewForward
-				 + 1 * viewBackward AS relationshipScore,
-				 CASE
-					 WHEN shortestPathLength IS NULL OR shortestPathLength = 1 THEN 0
-					 ELSE 120.0 / shortestPathLength
-				 END AS pathScore
+				WITH p, author, viewer, origin, originAuthor, liked,
+					 originCanView, viewForward, viewBackward, newPostScore, likeScore, commentScore, shareScore, friendship, loadedScore, keywordScore,
+					 CASE
+						 WHEN friendship IS NOT NULL THEN 100
+						 WHEN (viewer)-[:FRIEND]-()-[:FRIEND]-(author) AND friendship IS NULL OR (viewer)-[:REQUEST]-(author) THEN 50
+						 ELSE 0
+					 END
+					 + 2 * viewForward
+					 + 1 * viewBackward AS relationshipScore
 
-			WITH p, author, viewer, origin, originAuthor, liked, loadedScore,
-				 originCanView, friendship, keywordScore,
-				 pathScore + newPostScore + relationshipScore + likeScore + commentScore + shareScore + loadedScore + keywordScore AS totalScore
+				WITH p, author, viewer, origin, originAuthor, liked, loadedScore,
+					 originCanView, friendship, keywordScore,
+					 newPostScore + relationshipScore + likeScore + commentScore + shareScore + loadedScore + keywordScore AS totalScore
 
 			ORDER BY totalScore DESC, p.createdAt DESC
 			SKIP $skip LIMIT $limit
@@ -421,10 +415,12 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 		`
 	}
 
-	return r.queryPosts(ctx, currentUserID, query, map[string]interface{}{
-		"currentUserID": currentUserID,
-		"skip":          skip,
-		"limit":         limit,
+	return profiler.TrackResult(fmt.Sprintf("post-service:query newsfeed.neo4j.%s", pageType), func() ([]*model.Post, error) {
+		return r.queryPosts(ctx, currentUserID, query, map[string]interface{}{
+			"currentUserID": currentUserID,
+			"skip":          skip,
+			"limit":         limit,
+		})
 	})
 }
 
@@ -571,14 +567,26 @@ func (r *Neo4jPostRepository) UpdateContent(ctx context.Context, currentUserID, 
 	return deletedFiles, finalContent, err
 }
 
-func (r *Neo4jPostRepository) LikePost(ctx context.Context, userID, postID string) error {
+func (r *Neo4jPostRepository) LikePost(ctx context.Context, userID, postID string) (string, error) {
 	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		check, err := tx.Run(ctx, `
-			MATCH (u:User {id: $userID}), (p:Post {id: $postID})
-			RETURN EXISTS((u)-[:LIKED]->(p))
+			MATCH (u:User {id: $userID}), (author:User)-[:POSTED]->(p:Post {id: $postID})
+			WHERE p.deletedAt IS NULL
+			OPTIONAL MATCH (u)-[liked:LIKED]->(p)
+			OPTIONAL MATCH (u)-[friendship:FRIEND]-(author)
+			OPTIONAL MATCH (u)-[block:BLOCK]-(author)
+			WITH u, author, p, liked,
+			     CASE
+			       WHEN author.id = u.id THEN true
+			       WHEN block IS NOT NULL THEN false
+			       WHEN p.privacy = 'PUBLIC' THEN true
+			       WHEN p.privacy = 'FRIEND' AND friendship IS NOT NULL THEN true
+			       ELSE false
+			     END AS canView
+			RETURN author.id, liked IS NOT NULL, canView
 		`, map[string]interface{}{"userID": userID, "postID": postID})
 		if err != nil {
 			return nil, err
@@ -586,34 +594,62 @@ func (r *Neo4jPostRepository) LikePost(ctx context.Context, userID, postID strin
 		if !check.Next(ctx) {
 			return nil, errors.New("POST_NOT_FOUND")
 		}
-		if check.Record().Values[0].(bool) {
+		vals := check.Record().Values
+		authorID := getStringVal(vals[0])
+		if liked, ok := vals[1].(bool); ok && liked {
 			return nil, errors.New("LIKED_POST")
+		}
+		if canView, ok := vals[2].(bool); !ok || !canView {
+			return nil, errors.New("UNAUTHORIZED")
 		}
 
 		_, err = tx.Run(ctx, `
 			MATCH (u:User {id: $userID}), (p:Post {id: $postID})
-			MERGE (u)-[:LIKED]->(p)
-			SET p.likeCount = coalesce(p.likeCount, 0) + 1
+			MERGE (u)-[liked:LIKED]->(p)
+			ON CREATE SET liked.createdAt = datetime(), p.likeCount = coalesce(p.likeCount, 0) + 1
 			RETURN p.id
 		`, map[string]interface{}{"userID": userID, "postID": postID})
-		return nil, err
+		return authorID, err
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	return res.(string), nil
 }
 
-func (r *Neo4jPostRepository) UnlikePost(ctx context.Context, userID, postID string) error {
+func (r *Neo4jPostRepository) UnlikePost(ctx context.Context, userID, postID string) (string, error) {
 	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		check, err := tx.Run(ctx, `
-			MATCH (u:User {id: $userID}), (p:Post {id: $postID})
-			RETURN EXISTS((u)-[:LIKED]->(p))
+			MATCH (u:User {id: $userID}), (author:User)-[:POSTED]->(p:Post {id: $postID})
+			WHERE p.deletedAt IS NULL
+			OPTIONAL MATCH (u)-[liked:LIKED]->(p)
+			OPTIONAL MATCH (u)-[friendship:FRIEND]-(author)
+			OPTIONAL MATCH (u)-[block:BLOCK]-(author)
+			WITH u, author, p, liked,
+			     CASE
+			       WHEN author.id = u.id THEN true
+			       WHEN block IS NOT NULL THEN false
+			       WHEN p.privacy = 'PUBLIC' THEN true
+			       WHEN p.privacy = 'FRIEND' AND friendship IS NOT NULL THEN true
+			       ELSE false
+			     END AS canView
+			RETURN author.id, liked IS NOT NULL, canView
 		`, map[string]interface{}{"userID": userID, "postID": postID})
 		if err != nil {
 			return nil, err
 		}
-		if !check.Next(ctx) || !check.Record().Values[0].(bool) {
+		if !check.Next(ctx) {
+			return nil, errors.New("POST_NOT_FOUND")
+		}
+		vals := check.Record().Values
+		authorID := getStringVal(vals[0])
+		if canView, ok := vals[2].(bool); !ok || !canView {
+			return nil, errors.New("UNAUTHORIZED")
+		}
+		if liked, ok := vals[1].(bool); !ok || !liked {
 			return nil, errors.New("NOT_LIKED_POST")
 		}
 
@@ -623,9 +659,12 @@ func (r *Neo4jPostRepository) UnlikePost(ctx context.Context, userID, postID str
 			SET p.likeCount = CASE WHEN coalesce(p.likeCount, 0) > 0 THEN p.likeCount - 1 ELSE 0 END
 			RETURN p.id
 		`, map[string]interface{}{"userID": userID, "postID": postID})
-		return nil, err
+		return authorID, err
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	return res.(string), nil
 }
 
 func (r *Neo4jPostRepository) DeletePost(ctx context.Context, postID, currentUserID string, isAdmin bool) (string, []string, error) {

@@ -1,4 +1,4 @@
-.PHONY: all tidy build test run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean dev-restart
+.PHONY: all tidy build test run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean dev-restart spam-api
 
 # Environment defaults
 export CGO_ENABLED ?= 0
@@ -13,6 +13,11 @@ export NOTIF_HTTP_PORT ?= 10085
 export FILE_GRPC_PORT ?= 10057
 export FILE_HTTP_PORT ?= 10087
 export ADMIN_HTTP_PORT ?= 10088
+SPAM_URL ?= http://localhost:11111
+SPAM_C ?= 25
+SPAM_N ?= 30
+SPAM_DELAY ?= 100
+SPAM_TIMEOUT ?= 8s
 
 all: tidy build
 
@@ -146,4 +151,4 @@ dev-restart:
 
 spam-api:
 	@echo "====== Running Scenario API Spammer ======"
-	go run scripts/spammer/main.go -url http://localhost:11111 -c 30 -n 15 -delay 100
+	go run scripts/spammer/main.go -url $(SPAM_URL) -c $(SPAM_C) -n $(SPAM_N) -delay $(SPAM_DELAY) -timeout $(SPAM_TIMEOUT)

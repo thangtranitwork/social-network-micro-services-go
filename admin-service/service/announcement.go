@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"social-network-go/admin-service/db"
+	"social-network-go/profiler"
+
+	"github.com/redis/go-redis/v9"
 )
 
 const RedisAnnouncementKey = "system_announcement"
@@ -20,6 +23,11 @@ func (s *AdminService) GetAnnouncement(ctx context.Context) (*AnnouncementModel,
 	}
 
 	val, err := db.RedisClient.Get(ctx, RedisAnnouncementKey).Result()
+	lookupErr := err
+	if errors.Is(err, redis.Nil) {
+		lookupErr = nil
+	}
+	profiler.TrackCacheLookup("admin-service:cache announcement", err == nil && val != "", lookupErr)
 	if err != nil {
 		// Key does not exist
 		return &AnnouncementModel{Text: "", Active: false}, nil

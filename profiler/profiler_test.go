@@ -156,6 +156,65 @@ func TestTrackExecutionWithReturnError(t *testing.T) {
 	}
 }
 
+func TestTrackResult(t *testing.T) {
+	Reset()
+
+	res, err := TrackResult("test-typed-result", func() (string, error) {
+		time.Sleep(5 * time.Millisecond)
+		return "typed", nil
+	})
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if res != "typed" {
+		t.Fatalf("Expected typed result, got %q", res)
+	}
+
+	stats, found := GetCommandStats("test-typed-result")
+	if !found {
+		t.Fatalf("Expected test-typed-result stats to be found")
+	}
+	if stats.RequestCount.Load() != 1 {
+		t.Errorf("Expected RequestCount to be 1, got %d", stats.RequestCount.Load())
+	}
+}
+
+func TestTrackEvent(t *testing.T) {
+	Reset()
+
+	TrackEvent("test-event")
+	TrackEvent("test-event")
+
+	stats, found := GetCommandStats("test-event")
+	if !found {
+		t.Fatalf("Expected test-event stats to be found")
+	}
+	if stats.RequestCount.Load() != 2 {
+		t.Errorf("Expected RequestCount to be 2, got %d", stats.RequestCount.Load())
+	}
+	if stats.PendingCount.Load() != 0 {
+		t.Errorf("Expected PendingCount to stay 0, got %d", stats.PendingCount.Load())
+	}
+}
+
+func TestTrackCacheLookup(t *testing.T) {
+	Reset()
+
+	TrackCacheLookup("test-cache", true, nil)
+	TrackCacheLookup("test-cache", false, nil)
+	TrackCacheLookup("test-cache", false, errors.New("redis down"))
+
+	for _, command := range []string{"test-cache.hit", "test-cache.miss", "test-cache.error"} {
+		stats, found := GetCommandStats(command)
+		if !found {
+			t.Fatalf("Expected %s stats to be found", command)
+		}
+		if stats.RequestCount.Load() != 1 {
+			t.Errorf("Expected %s RequestCount to be 1, got %d", command, stats.RequestCount.Load())
+		}
+	}
+}
+
 func TestNormalizePath(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -202,3 +261,87 @@ func TestNormalizePath(t *testing.T) {
 	}
 }
 
+func TestParseProfiledCommandKeepsNormalizedPathParams(t *testing.T) {
+	tests := []struct {
+		command     string
+		wantService string
+		wantMethod  string
+		wantPath    string
+	}{
+		{
+			command:     "api-gateway:GET /v1/users/:username",
+			wantService: "api-gateway",
+			wantMethod:  "GET",
+			wantPath:    "/v1/users/:username",
+		},
+		{
+			command:     "post-service:POST /v1/posts/like/:postId",
+			wantService: "post-service",
+			wantMethod:  "POST",
+			wantPath:    "/v1/posts/like/:postId",
+		},
+		{
+			command:     "notification-service:WS /v1/notifications/ws",
+			wantService: "notification-service",
+			wantMethod:  "WS",
+			wantPath:    "/v1/notifications/ws",
+		},
+		{
+			command:     "background-job",
+			wantService: "",
+			wantMethod:  "ANY",
+			wantPath:    "background-job",
+		},
+	}
+
+	for _, tc := range tests {
+		gotService, gotMethod, gotPath := parseProfiledCommand(tc.command)
+		if gotService != tc.wantService || gotMethod != tc.wantMethod || gotPath != tc.wantPath {
+			t.Errorf("parseProfiledCommand(%q) = (%q, %q, %q); want (%q, %q, %q)",
+				tc.command, gotService, gotMethod, gotPath, tc.wantService, tc.wantMethod, tc.wantPath)
+		}
+	}
+}
+
+func TestGetRouteStatsLightweightReturnsStructuredRows(t *testing.T) {
+	Reset()
+
+	TrackExecution("api-gateway:GET /v1/users/:username", func() {})
+
+	routes := GetRouteStatsLightweight()
+	if len(routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(routes))
+	}
+
+	route := routes[0]
+	if route.Command != "api-gateway:GET /v1/users/:username" {
+		t.Errorf("Command = %q; want %q", route.Command, "api-gateway:GET /v1/users/:username")
+	}
+	if route.Service != "api-gateway" {
+		t.Errorf("Service = %q; want api-gateway", route.Service)
+	}
+	if route.Method != "GET" {
+		t.Errorf("Method = %q; want GET", route.Method)
+	}
+	if route.Path != "/v1/users/:username" {
+		t.Errorf("Path = %q; want /v1/users/:username", route.Path)
+	}
+	if route.RequestCount != 1 {
+		t.Errorf("RequestCount = %d; want 1", route.RequestCount)
+	}
+}
+
+func TestGetRouteStatsLightweightSkipsLegacyWildcardCommands(t *testing.T) {
+	Reset()
+
+	TrackExecution("api-gateway:GET /v1/posts/*any", func() {})
+	TrackExecution("api-gateway:GET /v1/posts/:id", func() {})
+
+	routes := GetRouteStatsLightweight()
+	if len(routes) != 1 {
+		t.Fatalf("expected 1 route after pruning wildcard command, got %d", len(routes))
+	}
+	if routes[0].Path != "/v1/posts/:id" {
+		t.Errorf("Path = %q; want /v1/posts/:id", routes[0].Path)
+	}
+}

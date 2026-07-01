@@ -10,6 +10,7 @@ import (
 	"social-network-go/auth-service/repository"
 	"social-network-go/exception"
 	"social-network-go/pb"
+	"social-network-go/profiler"
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
@@ -36,6 +37,11 @@ func (s *AuthService) checkEmailRateLimit(ctx context.Context, clientIP string) 
 
 	key := fmt.Sprintf("email_rate_limit:%s", clientIP)
 	count, err := red.RedisClient.Get(ctx, key).Int()
+	lookupErr := err
+	if err == redis.Nil {
+		lookupErr = nil
+	}
+	profiler.TrackCacheLookup("auth-service:cache emailRateLimit", err == nil && count > 0, lookupErr)
 	if err != nil && err != redis.Nil {
 		return err
 	}

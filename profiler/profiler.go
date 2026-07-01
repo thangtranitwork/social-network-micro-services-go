@@ -95,6 +95,14 @@ type CommandStatsSnapshot struct {
 	P99                time.Duration `json:"p99"`
 }
 
+type RouteStatsSnapshot struct {
+	Command string `json:"command"`
+	Service string `json:"service"`
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	CommandStatsSnapshot
+}
+
 var globalProfiler *ZProfiler
 var once sync.Once
 
@@ -158,6 +166,38 @@ func recordExecution(command string, duration time.Duration) {
 		if len(stats.LastExecutions) > 100 {
 			stats.LastExecutions = stats.LastExecutions[1:]
 		}
+	}
+}
+
+func recordEvent(command string) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "PROFILER PANIC in recordEvent: %v - Command: %s\n", r, command)
+		}
+	}()
+
+	ensureInit()
+
+	if command == "" {
+		return
+	}
+
+	globalProfiler.mu.Lock()
+	defer globalProfiler.mu.Unlock()
+
+	stats, exists := globalProfiler.stats[command]
+	if !exists {
+		stats = &CommandStats{
+			LastExecutions: make([]time.Duration, 0, 100),
+		}
+		globalProfiler.stats[command] = stats
+	}
+
+	stats.RequestCount.Add(1)
+	stats.LastRequestTime.Store(time.Now().UnixNano())
+	stats.LastExecutions = append(stats.LastExecutions, 0)
+	if len(stats.LastExecutions) > 100 {
+		stats.LastExecutions = stats.LastExecutions[1:]
 	}
 }
 
@@ -365,6 +405,52 @@ func TrackExecutionWithReturn(command string, fn func() (any, error)) (any, erro
 	return result, err
 }
 
+// TrackResult tracks a typed operation and returns its result without forcing callers to type assert.
+func TrackResult[T any](command string, fn func() (T, error)) (T, error) {
+	var zero T
+	if fn == nil {
+		return zero, nil
+	}
+
+	ensureInit()
+
+	globalProfiler.mu.Lock()
+	stats, exists := globalProfiler.stats[command]
+	if !exists {
+		stats = &CommandStats{
+			LastExecutions: make([]time.Duration, 0, 10),
+		}
+		globalProfiler.stats[command] = stats
+	}
+	stats.PendingCount.Add(1)
+	globalProfiler.mu.Unlock()
+
+	start := time.Now()
+	defer func() {
+		recordExecution(command, time.Since(start))
+	}()
+
+	return fn()
+}
+
+// TrackEvent records a count-only profiler event with no pending duration.
+func TrackEvent(command string) {
+	recordEvent(command)
+}
+
+// TrackCacheLookup records hit/miss/error counters for a cache lookup prefix.
+func TrackCacheLookup(command string, hit bool, err error) {
+	if err != nil {
+		TrackEvent(command + ".error")
+		return
+	}
+	if hit {
+		TrackEvent(command + ".hit")
+		return
+	}
+	TrackEvent(command + ".miss")
+}
+
 // Reset clears all stats and resets the start time
 func Reset() {
 	ensureInit()
@@ -425,6 +511,61 @@ func GetStatsLightweight() map[string]CommandStatsSnapshot {
 		result[k] = snapshot
 	}
 	return result
+}
+
+// GetRouteStatsLightweight returns profiler stats as structured rows for dashboard consumers.
+func GetRouteStatsLightweight() []RouteStatsSnapshot {
+	stats := GetStatsLightweight()
+	result := make([]RouteStatsSnapshot, 0, len(stats))
+
+	for command, snapshot := range stats {
+		if isLegacyWildcardCommand(command) {
+			continue
+		}
+		service, method, path := parseProfiledCommand(command)
+		result = append(result, RouteStatsSnapshot{
+			Command:              command,
+			Service:              service,
+			Method:               method,
+			Path:                 path,
+			CommandStatsSnapshot: snapshot,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Service != result[j].Service {
+			return result[i].Service < result[j].Service
+		}
+		if result[i].Path != result[j].Path {
+			return result[i].Path < result[j].Path
+		}
+		return result[i].Method < result[j].Method
+	})
+
+	return result
+}
+
+func parseProfiledCommand(command string) (service, method, path string) {
+	method = "ANY"
+	path = command
+
+	if idx := strings.Index(command, ":"); idx >= 0 {
+		service = command[:idx]
+		command = command[idx+1:]
+		path = command
+	}
+
+	if idx := strings.Index(command, " "); idx >= 0 {
+		method = command[:idx]
+		path = command[idx+1:]
+	}
+
+	return service, method, path
+}
+
+func isLegacyWildcardCommand(command string) bool {
+	_, _, path := parseProfiledCommand(command)
+	return strings.Contains(path, "*any")
 }
 
 // normalizePath converts dynamic path parameters to standard placeholders (e.g. :username, :id)
@@ -642,6 +783,7 @@ func Handler(c *gin.Context) {
 		"startTime": GetStartTime(),
 		"pprof":     GetPProfInfo(),
 		"commands":  GetStatsLightweight(),
+		"routes":    GetRouteStatsLightweight(),
 	})
 }
 
@@ -718,6 +860,9 @@ func loadStats() {
 	}
 
 	for k, v := range persistentData.Stats {
+		if isLegacyWildcardCommand(k) {
+			continue
+		}
 		if v != nil {
 			if v.LastExecutions == nil {
 				v.LastExecutions = make([]time.Duration, 0, 100)

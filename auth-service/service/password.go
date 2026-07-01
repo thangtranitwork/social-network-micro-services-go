@@ -6,6 +6,7 @@ import (
 
 	red "social-network-go/auth-service/redis"
 	"social-network-go/exception"
+	"social-network-go/profiler"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -40,6 +41,11 @@ func (s *AuthService) ForgotPasswordWithContinueURL(email, continueURL, clientIP
 	var code uuid.UUID
 
 	cachedCodeStr, err := red.RedisClient.Get(ctx, userCodeKey).Result()
+	lookupErr := err
+	if err == redis.Nil {
+		lookupErr = nil
+	}
+	profiler.TrackCacheLookup("auth-service:cache resetPasswordCode", err == nil && cachedCodeStr != "", lookupErr)
 	if err == nil {
 		// Key still exists, extend TTL and keep same code
 		code, err = uuid.Parse(cachedCodeStr)
@@ -86,6 +92,11 @@ func (s *AuthService) VerifyResetPassword(email, codeStr string) error {
 	// 1. Get the account ID for this token from Redis
 	tokenKey := fmt.Sprintf("reset_password_token:%s", code.String())
 	accountIDStr, err := red.RedisClient.Get(ctx, tokenKey).Result()
+	lookupErr := err
+	if err == redis.Nil {
+		lookupErr = nil
+	}
+	profiler.TrackCacheLookup("auth-service:cache resetPasswordToken", err == nil && accountIDStr != "", lookupErr)
 	if err != nil {
 		if err == redis.Nil {
 			return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)
@@ -129,6 +140,7 @@ func (s *AuthService) UpdatePassword(email, codeStr, newPassword string) error {
 
 	// Verify that the code was successfully verified previously (resetVerifiedKey should exist)
 	exists, err := red.RedisClient.Exists(ctx, resetVerifiedKey(email, code)).Result()
+	profiler.TrackCacheLookup("auth-service:cache resetPasswordVerified", err == nil && exists > 0, err)
 	if err != nil {
 		return err
 	}
@@ -178,6 +190,11 @@ func (s *AuthService) ResetPassword(codeStr, newPassword string) error {
 	// Get account ID from token
 	tokenKey := fmt.Sprintf("reset_password_token:%s", code.String())
 	accountIDStr, err := red.RedisClient.Get(ctx, tokenKey).Result()
+	lookupErr := err
+	if err == redis.Nil {
+		lookupErr = nil
+	}
+	profiler.TrackCacheLookup("auth-service:cache resetPasswordToken", err == nil && accountIDStr != "", lookupErr)
 	if err != nil {
 		if err == redis.Nil {
 			return exception.NewAppException(exception.VerificationCodeNotMatchedOrExpired)

@@ -13,6 +13,7 @@ import (
 	"social-network-go/post-service/config"
 	"social-network-go/post-service/model"
 	"social-network-go/post-service/repository"
+	"social-network-go/profiler"
 
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -107,12 +108,18 @@ func (s *PostService) ResolveAuthor(ctx context.Context, authorID string) model.
 
 	if s.Redis != nil {
 		cached, err := s.Redis.Get(ctx, cacheKey).Result()
+		lookupErr := err
+		if errors.Is(err, redis.Nil) {
+			lookupErr = nil
+		}
 		if err == nil && cached != "" {
 			var info model.AuthorInfo
 			if json.Unmarshal([]byte(cached), &info) == nil {
+				profiler.TrackCacheLookup("post-service:cache authorProfile", true, nil)
 				return info
 			}
 		}
+		profiler.TrackCacheLookup("post-service:cache authorProfile", false, lookupErr)
 	}
 
 	if s.UserClient != nil {
@@ -180,20 +187,24 @@ func (s *PostService) ResolveAuthors(ctx context.Context, posts []*model.Post) {
 						var info model.AuthorInfo
 						if json.Unmarshal([]byte(strVal), &info) == nil {
 							authorMap[info.ID] = info
+							profiler.TrackCacheLookup("post-service:cache authorProfile", true, nil)
 							continue
 						}
 					}
 				}
 				key := keys[i]
+				profiler.TrackCacheLookup("post-service:cache authorProfile", false, nil)
 				uncachedIDs = append(uncachedIDs, idToKey[key])
 			}
 		} else {
 			for id := range uniqueIDsMap {
+				profiler.TrackCacheLookup("post-service:cache authorProfile", false, err)
 				uncachedIDs = append(uncachedIDs, id)
 			}
 		}
 	} else {
 		for id := range uniqueIDsMap {
+			profiler.TrackCacheLookup("post-service:cache authorProfile", false, nil)
 			uncachedIDs = append(uncachedIDs, id)
 		}
 	}

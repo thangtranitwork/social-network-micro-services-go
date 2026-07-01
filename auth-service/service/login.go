@@ -11,6 +11,7 @@ import (
 	"social-network-go/auth-service/model"
 	red "social-network-go/auth-service/redis"
 	"social-network-go/exception"
+	"social-network-go/profiler"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -60,12 +61,16 @@ func (s *AuthService) validateLogin(ctx context.Context, account *model.Account)
 
 	// Check if user is suspended in Redis
 	suspendedKey := fmt.Sprintf("auth:suspended:user:%s", account.ID.String())
-	existsSuspended, err := red.RedisClient.Exists(ctx, suspendedKey).Result()
+	existsSuspended, err := profiler.TrackResult("auth-service:cache login.checkSuspended", func() (int64, error) {
+		return red.RedisClient.Exists(ctx, suspendedKey).Result()
+	})
 	if err == nil && existsSuspended > 0 {
 		return fmt.Errorf("USER_SUSPENDED")
 	}
 
-	exists, err := red.RedisClient.Exists(ctx, loginLockKey(account.ID)).Result()
+	exists, err := profiler.TrackResult("auth-service:cache login.checkLock", func() (int64, error) {
+		return red.RedisClient.Exists(ctx, loginLockKey(account.ID)).Result()
+	})
 	if err != nil {
 		return err
 	}
@@ -122,36 +127,58 @@ func (s *AuthService) Login(email, password, twoFactorCode string, isAdmin bool)
 		role = "ADMIN"
 	}
 
-	account, err := s.AccountRepo.FindByEmailAndRole(ctx, email, role)
+	account, err := profiler.TrackResult("auth-service:query login.findAccount", func() (*model.Account, error) {
+		return s.AccountRepo.FindByEmailAndRole(ctx, email, role)
+	})
 	if err != nil {
 		return "", "", exception.NewAppException(exception.AccountNotFound)
 	}
 
-	if err := s.validateLogin(ctx, account); err != nil {
+	_, err = profiler.TrackResult("auth-service:code login.validateAccount", func() (struct{}, error) {
+		return struct{}{}, s.validateLogin(ctx, account)
+	})
+	if err != nil {
 		return "", "", err
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(account.Password), []byte(password)); err != nil {
-		return "", "", s.processLoginFailed(ctx, account.ID)
+	_, err = profiler.TrackResult("auth-service:crypto login.comparePassword", func() (struct{}, error) {
+		return struct{}{}, bcrypt.CompareHashAndPassword([]byte(account.Password), []byte(password))
+	})
+	if err != nil {
+		_, failedErr := profiler.TrackResult("auth-service:cache login.processFailed", func() (struct{}, error) {
+			return struct{}{}, s.processLoginFailed(ctx, account.ID)
+		})
+		return "", "", failedErr
 	}
 
-	s.processLoginSucceeded(ctx, account.ID)
+	profiler.TrackExecution("auth-service:cache login.processSucceeded", func() {
+		s.processLoginSucceeded(ctx, account.ID)
+	})
 
 	if account.IsTwoFactorEnabled {
 		if twoFactorCode == "" {
 			return "", "", exception.NewAppException(exception.NewAppError(401, "2FA_REQUIRED", "Two-factor authentication is required"))
 		}
-		valid := totp.Validate(twoFactorCode, account.TwoFactorSecret)
+		valid, err := profiler.TrackResult("auth-service:crypto login.validate2FA", func() (bool, error) {
+			return totp.Validate(twoFactorCode, account.TwoFactorSecret), nil
+		})
+		if err != nil {
+			return "", "", err
+		}
 		if !valid {
 			return "", "", exception.NewAppException(exception.NewAppError(401, "INVALID_2FA_CODE", "Invalid 2FA code"))
 		}
 	}
 
-	accessToken, err := s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTSecret, s.Cfg.AccessTokenDuration)
+	accessToken, err := profiler.TrackResult("auth-service:crypto login.generateAccessToken", func() (string, error) {
+		return s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTSecret, s.Cfg.AccessTokenDuration)
+	})
 	if err != nil {
 		return "", "", err
 	}
-	refreshToken, err := s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTRefreshSecret, s.Cfg.RefreshTokenDuration)
+	refreshToken, err := profiler.TrackResult("auth-service:crypto login.generateRefreshToken", func() (string, error) {
+		return s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTRefreshSecret, s.Cfg.RefreshTokenDuration)
+	})
 	if err != nil {
 		return "", "", err
 	}

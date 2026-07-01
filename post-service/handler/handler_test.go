@@ -67,12 +67,12 @@ func (m *MockPostRepository) UpdateContent(ctx context.Context, currentUserID, p
 	return m.FileIDs, c, m.Err
 }
 
-func (m *MockPostRepository) LikePost(ctx context.Context, userID, postID string) error {
-	return m.Err
+func (m *MockPostRepository) LikePost(ctx context.Context, userID, postID string) (string, error) {
+	return userID, m.Err
 }
 
-func (m *MockPostRepository) UnlikePost(ctx context.Context, userID, postID string) error {
-	return m.Err
+func (m *MockPostRepository) UnlikePost(ctx context.Context, userID, postID string) (string, error) {
+	return userID, m.Err
 }
 
 func (m *MockPostRepository) DeletePost(ctx context.Context, postID, currentUserID string, isAdmin bool) (string, []string, error) {
