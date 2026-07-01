@@ -145,5 +145,5 @@ dev-restart:
 	@echo "====== $(svc) rebuilt and started in background! ======"
 
 spam-api:
-	@echo "====== Running API Spammer ======"
-	go run scripts/spammer/main.go -url http://localhost:11111/health -c 10 -n 2500 -delay 5
+	@echo "====== Running Scenario API Spammer ======"
+	go run scripts/spammer/main.go -url http://localhost:11111 -c 30 -n 15 -delay 100

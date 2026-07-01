@@ -1,38 +1,93 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+type loginResponse struct {
+	Body struct {
+		Token string `json:"token"`
+	} `json:"body"`
+}
+
+type postResponse struct {
+	Body struct {
+		ID string `json:"id"`
+	} `json:"body"`
+}
+
+type newsfeedResponse struct {
+	Body []struct {
+		ID       string `json:"id"`
+		Content  string `json:"content"`
+		Username string `json:"username"`
+	} `json:"body"`
+}
+
 func main() {
-	targetURL := flag.String("url", "http://localhost:11111/health", "Target URL to spam")
-	concurrency := flag.Int("c", 10, "Number of concurrent workers")
-	totalRequests := flag.Int("n", 200, "Total requests to send (0 for infinite)")
-	delayMs := flag.Int("delay", 10, "Delay in milliseconds between requests per worker")
+	targetURL := flag.String("url", "http://localhost:11111", "API Gateway base URL")
+	concurrency := flag.Int("c", 15, "Number of concurrent workers (simulated users)")
+	totalCycles := flag.Int("n", 15, "Number of scenario cycles to run per worker")
+	delayMs := flag.Int("delay", 500, "Delay in milliseconds between scenario steps")
 	flag.Parse()
 
-	fmt.Printf("=============================================\n")
-	fmt.Printf("   Microservices API Spammer (Load Tester)\n")
-	fmt.Printf("=============================================\n")
-	fmt.Printf("Target URL:      %s\n", *targetURL)
-	fmt.Printf("Concurrency:     %d workers\n", *concurrency)
-	fmt.Printf("Total Requests:  %d\n", *totalRequests)
-	fmt.Printf("Worker Delay:    %d ms\n", *delayMs)
-	fmt.Printf("=============================================\n\n")
+	rand.Seed(time.Now().UnixNano())
+
+	fmt.Printf("==================================================\n")
+	fmt.Printf("   Advanced Multi-Scenario Load Generator (Go)\n")
+	fmt.Printf("==================================================\n")
+	fmt.Printf("Gateway URL:      %s\n", *targetURL)
+	fmt.Printf("Concurrent Users: %d\n", *concurrency)
+	fmt.Printf("Cycles/Worker:    %d\n", *totalCycles)
+	fmt.Printf("Step Delay:       %d ms\n", *delayMs)
+	fmt.Printf("==================================================\n\n")
+
+	// Pre-generate accounts list (using seeded users 1-90 and presidents)
+	var testAccounts []struct {
+		Email    string
+		Username string
+	}
+	// Add presidents
+	presidents := []string{"obama", "trump", "biden", "putin", "xijinping", "macron", "zelenskyy", "hochiminh"}
+	for i, p := range presidents {
+		testAccounts = append(testAccounts, struct {
+			Email    string
+			Username string
+		}{
+			Email:    fmt.Sprintf("test-%d@test.com", i+1),
+			Username: p,
+		})
+	}
+	// Add generic test users (user_1 to user_90)
+	for i := 1; i <= 90; i++ {
+		testAccounts = append(testAccounts, struct {
+			Email    string
+			Username string
+		}{
+			Email:    fmt.Sprintf("test-%d@test.com", i+10),
+			Username: fmt.Sprintf("user_%d", i),
+		})
+	}
 
 	var (
-		wg           sync.WaitGroup
-		success      int64
-		tooManyReqs  int64 // 429
-		banned       int64 // 403
-		otherErrors  int64
-		reqCompleted int64
+		wg            sync.WaitGroup
+		successAPIs   int64
+		postsCreated  int64
+		commentsAdded int64
+		likesGiven    int64
+		chatsSent     int64
+		profilesViewed int64
+		searchesDone  int64
+		errorsCount   int64
 	)
 
 	startTime := time.Now()
@@ -42,46 +97,230 @@ func main() {
 		go func(workerID int) {
 			defer wg.Done()
 			client := &http.Client{
-				Timeout: 2 * time.Second,
+				Timeout: 6 * time.Second,
 			}
 
-			for {
-				// Check limit
-				if *totalRequests > 0 {
-					current := atomic.AddInt64(&reqCompleted, 1)
-					if current > int64(*totalRequests) {
-						break
+			// Assign a distinct account to this worker
+			account := testAccounts[workerID%len(testAccounts)]
+
+			// 1. Authenticate
+			loginBody, _ := json.Marshal(map[string]string{
+				"email":    account.Email,
+				"password": "123456Aa@",
+			})
+			req, err := http.NewRequest("POST", *targetURL+"/v1/auth/login", bytes.NewBuffer(loginBody))
+			if err != nil {
+				atomic.AddInt64(&errorsCount, 1)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				atomic.AddInt64(&errorsCount, 1)
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				atomic.AddInt64(&errorsCount, 1)
+				return
+			}
+
+			var logResp loginResponse
+			if err := json.NewDecoder(resp.Body).Decode(&logResp); err != nil {
+				atomic.AddInt64(&errorsCount, 1)
+				return
+			}
+			token := logResp.Body.Token
+			atomic.AddInt64(&successAPIs, 1)
+
+			// 2. Perform various scenarios in cycles
+			for cycle := 0; cycle < *totalCycles; cycle++ {
+				// Randomly select one scenario for this cycle
+				scenarioType := rand.Intn(4)
+
+				switch scenarioType {
+				case 0:
+					// --- SCENARIO 0: Content Creator ---
+					// A: Create Post
+					postText := fmt.Sprintf("Just created a new status update! User @%s testing Go microservices. Timestamp: %s", account.Username, time.Now().Format("15:04:05"))
+					postBody, _ := json.Marshal(map[string]interface{}{
+						"content": postText,
+						"privacy": "PUBLIC",
+					})
+					req, _ = http.NewRequest("POST", *targetURL+"/v1/posts/post", bytes.NewBuffer(postBody))
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("Authorization", "Bearer "+token)
+					resp, err = client.Do(req)
+					if err != nil {
+						atomic.AddInt64(&errorsCount, 1)
+					} else {
+						bodyBytes, _ := io.ReadAll(resp.Body)
+						resp.Body.Close()
+						if resp.StatusCode == http.StatusOK {
+							atomic.AddInt64(&successAPIs, 1)
+							atomic.AddInt64(&postsCreated, 1)
+
+							// Try to self-like
+							var pResp postResponse
+							if err := json.Unmarshal(bodyBytes, &pResp); err == nil && pResp.Body.ID != "" {
+								time.Sleep(time.Duration(*delayMs) * time.Millisecond)
+								reqLike, _ := http.NewRequest("POST", fmt.Sprintf("%s/v1/posts/like/%s", *targetURL, pResp.Body.ID), nil)
+								reqLike.Header.Set("Authorization", "Bearer "+token)
+								if respL, errL := client.Do(reqLike); errL == nil {
+									respL.Body.Close()
+									if respL.StatusCode == http.StatusOK {
+										atomic.AddInt64(&successAPIs, 1)
+										atomic.AddInt64(&likesGiven, 1)
+									} else {
+										atomic.AddInt64(&errorsCount, 1)
+									}
+								} else {
+									atomic.AddInt64(&errorsCount, 1)
+								}
+							}
+						} else {
+							atomic.AddInt64(&errorsCount, 1)
+						}
 					}
-				}
 
-				req, err := http.NewRequest("GET", *targetURL, nil)
-				if err != nil {
-					atomic.AddInt64(&otherErrors, 1)
-					continue
-				}
+				case 1:
+					// --- SCENARIO 1: Feeder & Commenter ---
+					// A: Fetch Newsfeed
+					req, _ = http.NewRequest("GET", *targetURL+"/v1/posts/newsfeed", nil)
+					req.Header.Set("Authorization", "Bearer "+token)
+					resp, err = client.Do(req)
+					if err != nil {
+						atomic.AddInt64(&errorsCount, 1)
+					} else {
+						bodyBytes, _ := io.ReadAll(resp.Body)
+						resp.Body.Close()
+						if resp.StatusCode == http.StatusOK {
+							atomic.AddInt64(&successAPIs, 1)
 
-				// Generate randomized client IP headers to simulate different users
-				// if testing from a single machine without auth
-				simulatedIP := fmt.Sprintf("192.168.10.%d", (workerID%250)+1)
-				req.Header.Set("X-Forwarded-For", simulatedIP)
-				req.Header.Set("X-Real-IP", simulatedIP)
+							var feed newsfeedResponse
+							if err := json.Unmarshal(bodyBytes, &feed); err == nil && len(feed.Body) > 0 {
+								// Interact with a random post from newsfeed
+								targetPost := feed.Body[rand.Intn(len(feed.Body))]
 
-				resp, err := client.Do(req)
-				if err != nil {
-					atomic.AddInt64(&otherErrors, 1)
-				} else {
-					_, _ = io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
+								time.Sleep(time.Duration(*delayMs) * time.Millisecond)
 
-					switch resp.StatusCode {
-					case http.StatusOK:
-						atomic.AddInt64(&success, 1)
-					case http.StatusTooManyRequests:
-						atomic.AddInt64(&tooManyReqs, 1)
-					case http.StatusForbidden:
-						atomic.AddInt64(&banned, 1)
-					default:
-						atomic.AddInt64(&otherErrors, 1)
+								// B: Comment on it
+								commentBody, _ := json.Marshal(map[string]interface{}{
+									"postId":  targetPost.ID,
+									"content": fmt.Sprintf("Interesting thoughts @%s! Greetings from @%s.", targetPost.Username, account.Username),
+								})
+								reqComment, _ := http.NewRequest("POST", *targetURL+"/v1/posts/comment", bytes.NewBuffer(commentBody))
+								reqComment.Header.Set("Content-Type", "application/json")
+								reqComment.Header.Set("Authorization", "Bearer "+token)
+								if respC, errC := client.Do(reqComment); errC == nil {
+									respC.Body.Close()
+									if respC.StatusCode == http.StatusOK {
+										atomic.AddInt64(&successAPIs, 1)
+										atomic.AddInt64(&commentsAdded, 1)
+									} else {
+										atomic.AddInt64(&errorsCount, 1)
+									}
+								} else {
+									atomic.AddInt64(&errorsCount, 1)
+								}
+
+								// C: Like the post
+								time.Sleep(time.Duration(*delayMs) * time.Millisecond)
+								reqL, _ := http.NewRequest("POST", fmt.Sprintf("%s/v1/posts/like/%s", *targetURL, targetPost.ID), nil)
+								reqL.Header.Set("Authorization", "Bearer "+token)
+								if respL, errL := client.Do(reqL); errL == nil {
+									respL.Body.Close()
+									if respL.StatusCode == http.StatusOK {
+										atomic.AddInt64(&successAPIs, 1)
+										atomic.AddInt64(&likesGiven, 1)
+									}
+								}
+							}
+						} else {
+							atomic.AddInt64(&errorsCount, 1)
+						}
+					}
+
+				case 2:
+					// --- SCENARIO 2: Chat Room active talker ---
+					// A: Fetch Chat List
+					req, _ = http.NewRequest("GET", *targetURL+"/v1/chat", nil)
+					req.Header.Set("Authorization", "Bearer "+token)
+					resp, err = client.Do(req)
+					if err != nil {
+						atomic.AddInt64(&errorsCount, 1)
+					} else {
+						_, _ = io.Copy(io.Discard, resp.Body)
+						resp.Body.Close()
+						if resp.StatusCode == http.StatusOK {
+							atomic.AddInt64(&successAPIs, 1)
+						} else {
+							atomic.AddInt64(&errorsCount, 1)
+						}
+					}
+
+					time.Sleep(time.Duration(*delayMs) * time.Millisecond)
+
+					// B: Send Chat Message to a random partner
+					partner := testAccounts[rand.Intn(len(testAccounts))]
+					if partner.Username != account.Username {
+						chatBody, _ := json.Marshal(map[string]string{
+							"username": partner.Username,
+							"text":     fmt.Sprintf("Hey @%s, how are you? Let's catch up sometime! Sent from @%s.", partner.Username, account.Username),
+						})
+						reqChat, _ := http.NewRequest("POST", *targetURL+"/v1/chat/send", bytes.NewBuffer(chatBody))
+						reqChat.Header.Set("Content-Type", "application/json")
+						reqChat.Header.Set("Authorization", "Bearer "+token)
+						if respChat, errChat := client.Do(reqChat); errChat == nil {
+							respChat.Body.Close()
+							if respChat.StatusCode == http.StatusOK {
+								atomic.AddInt64(&successAPIs, 1)
+								atomic.AddInt64(&chatsSent, 1)
+							} else {
+								atomic.AddInt64(&errorsCount, 1)
+							}
+						} else {
+							atomic.AddInt64(&errorsCount, 1)
+						}
+					}
+
+				case 3:
+					// --- SCENARIO 3: Investigator / Profiler stalker ---
+					// A: Search Users
+					targetUser := testAccounts[rand.Intn(len(testAccounts))].Username
+					req, _ = http.NewRequest("GET", *targetURL+"/v1/search?query="+targetUser, nil)
+					req.Header.Set("Authorization", "Bearer "+token)
+					resp, err = client.Do(req)
+					if err != nil {
+						atomic.AddInt64(&errorsCount, 1)
+					} else {
+						_, _ = io.Copy(io.Discard, resp.Body)
+						resp.Body.Close()
+						if resp.StatusCode == http.StatusOK {
+							atomic.AddInt64(&successAPIs, 1)
+							atomic.AddInt64(&searchesDone, 1)
+						} else {
+							atomic.AddInt64(&errorsCount, 1)
+						}
+					}
+
+					time.Sleep(time.Duration(*delayMs) * time.Millisecond)
+
+					// B: View Profile
+					reqProf, _ := http.NewRequest("GET", *targetURL+"/v1/users/"+targetUser, nil)
+					reqProf.Header.Set("Authorization", "Bearer "+token)
+					if respP, errP := client.Do(reqProf); errP == nil {
+						_, _ = io.Copy(io.Discard, respP.Body)
+						respP.Body.Close()
+						if respP.StatusCode == http.StatusOK {
+							atomic.AddInt64(&successAPIs, 1)
+							atomic.AddInt64(&profilesViewed, 1)
+						} else {
+							atomic.AddInt64(&errorsCount, 1)
+						}
+					} else {
+						atomic.AddInt64(&errorsCount, 1)
 					}
 				}
 
@@ -92,7 +331,7 @@ func main() {
 		}(i)
 	}
 
-	// Progress reporter goroutine
+	// Reporter
 	stopReporter := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -100,11 +339,16 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				s := atomic.LoadInt64(&success)
-				tm := atomic.LoadInt64(&tooManyReqs)
-				b := atomic.LoadInt64(&banned)
-				e := atomic.LoadInt64(&otherErrors)
-				fmt.Printf("\rProgress - Success (200): %d | Too Many Requests (429): %d | Banned (403): %d | Errors: %d", s, tm, b, e)
+				s := atomic.LoadInt64(&successAPIs)
+				pc := atomic.LoadInt64(&postsCreated)
+				cc := atomic.LoadInt64(&commentsAdded)
+				lg := atomic.LoadInt64(&likesGiven)
+				cs := atomic.LoadInt64(&chatsSent)
+				pv := atomic.LoadInt64(&profilesViewed)
+				sd := atomic.LoadInt64(&searchesDone)
+				e := atomic.LoadInt64(&errorsCount)
+				fmt.Printf("\rAPIs: %d | Posts: %d | Comments: %d | Likes: %d | Chats: %d | Profile: %d | Search: %d | Err: %d",
+					s, pc, cc, lg, cs, pv, sd, e)
 			case <-stopReporter:
 				return
 			}
@@ -115,12 +359,16 @@ func main() {
 	close(stopReporter)
 
 	duration := time.Since(startTime)
-	fmt.Printf("\n\n================- RESULTS -================\n")
-	fmt.Printf("Duration:               %v\n", duration)
-	fmt.Printf("Success (200 OK):       %d\n", success)
-	fmt.Printf("Rate Limited (429):     %d\n", tooManyReqs)
-	fmt.Printf("Spam Banned (403):      %d\n", banned)
-	fmt.Printf("Network/Other Errors:   %d\n", otherErrors)
-	fmt.Printf("Total Requests Sent:    %d\n", success+tooManyReqs+banned+otherErrors)
-	fmt.Printf("===========================================\n")
+	fmt.Printf("\n\n================- SIMULATION RESULTS -================\n")
+	fmt.Printf("Duration:                   %v\n", duration)
+	fmt.Printf("Successful API Calls:       %d\n", successAPIs)
+	fmt.Printf("Posts Created:              %d\n", postsCreated)
+	fmt.Printf("Comments Added:             %d\n", commentsAdded)
+	fmt.Printf("Likes Given:                %d\n", likesGiven)
+	fmt.Printf("Chat Messages Sent:         %d\n", chatsSent)
+	fmt.Printf("Profiles Viewed:            %d\n", profilesViewed)
+	fmt.Printf("Searches Conducted:         %d\n", searchesDone)
+	fmt.Printf("Errors/Failures:            %d\n", errorsCount)
+	fmt.Printf("Total Successful Ops:       %d\n", successAPIs+postsCreated+commentsAdded+likesGiven+chatsSent+profilesViewed+searchesDone)
+	fmt.Printf("======================================================\n")
 }
