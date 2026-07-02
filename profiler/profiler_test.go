@@ -123,16 +123,20 @@ func TestTrackExecutionPanic(t *testing.T) {
 func TestTrackExecutionWithReturnPanic(t *testing.T) {
 	Reset()
 
-	// With return panic is not recovered inside zprofiler, let's verify zprofiler's logic:
-	// zprofiler's TrackExecutionWithReturn does not wrap fn with recover. So it would panic out.
-	// But let's verify our implementation works identically.
 	defer func() {
 		if r := recover(); r == nil {
 			t.Errorf("Expected panic from TrackExecutionWithReturn to propagate, but it was swallowed")
-		} else {
-			// Check if stats still got registered. In standard implementation, stats might not record if panic happens
-			// because the deferred recordExecution is not set up on TrackExecutionWithReturn in zprofiler.
-			// Let's verify we behave the same.
+			return
+		}
+		stats, found := GetCommandStats("test-ret-panic")
+		if !found {
+			t.Fatalf("Expected test-ret-panic stats to be found")
+		}
+		if stats.RequestCount.Load() != 1 {
+			t.Errorf("Expected RequestCount to be 1, got %d", stats.RequestCount.Load())
+		}
+		if stats.PendingCount.Load() != 0 {
+			t.Errorf("Expected PendingCount to return to 0, got %d", stats.PendingCount.Load())
 		}
 	}()
 

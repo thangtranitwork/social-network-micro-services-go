@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -22,6 +23,7 @@ func TestJsonFieldLogging(t *testing.T) {
 	// Set environment for console logging
 	os.Setenv("LOG_LEVELS", "INFO,WARN,ERROR,FATAL")
 	initialized = false // Force re-initialization
+	once = sync.Once{}
 	initLogger()
 
 	// Create and log an entry with normal fields and json fields
@@ -79,6 +81,41 @@ func TestJsonFieldLogging(t *testing.T) {
 	}
 }
 
+func TestErrIsSemanticErrorFieldWrapper(t *testing.T) {
+	entry := NewEntry().Err(errors.New("network timeout"))
+
+	if got := entry.jsonFields["error"]; got != "network timeout" {
+		t.Fatalf("expected Err to populate error in jsonFields, got %v", got)
+	}
+}
+
+func TestDisabledLevelDoesNotWrite(t *testing.T) {
+	oldStdout := os.Stdout
+	oldLevels := os.Getenv("LOG_LEVELS")
+	defer func() {
+		os.Stdout = oldStdout
+		os.Setenv("LOG_LEVELS", oldLevels)
+		initialized = false
+		once = sync.Once{}
+	}()
+
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	os.Setenv("LOG_LEVELS", "WARN,ERROR")
+	initialized = false
+	once = sync.Once{}
+
+	Info("this info should be dropped")
+
+	w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	if output := strings.TrimSpace(buf.String()); output != "" {
+		t.Fatalf("Expected disabled INFO log to produce no output, got %q", output)
+	}
+}
+
 func TestSerializeJSONVal(t *testing.T) {
 	tests := []struct {
 		input    interface{}
@@ -113,6 +150,7 @@ func TestUnaryServerInterceptor(t *testing.T) {
 
 	// Force re-initialization
 	initialized = false
+	once = sync.Once{}
 	initLogger()
 
 	interceptor := UnaryServerInterceptor()
@@ -140,10 +178,7 @@ func TestUnaryServerInterceptor(t *testing.T) {
 	if !strings.Contains(output, "grpc_method") {
 		t.Error("Expected grpc_method key in stdout")
 	}
-	if !strings.Contains(output, "grpc_req") {
-		t.Error("Expected grpc_req key in stdout")
-	}
-	if !strings.Contains(output, "grpc_resp") {
-		t.Error("Expected grpc_resp key in stdout")
+	if strings.Contains(output, "grpc_req") || strings.Contains(output, "grpc_resp") {
+		t.Error("Expected gRPC payload logging to be disabled by default")
 	}
 }

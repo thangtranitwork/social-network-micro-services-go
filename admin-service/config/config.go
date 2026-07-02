@@ -14,6 +14,7 @@ type Config struct {
 	RedisAddr   string
 	RedisPass   string
 	PostgresDSN string
+	KafkaAddr   string
 }
 
 func LoadConfig() *Config {
@@ -37,5 +38,6 @@ func LoadConfig() *Config {
 		RedisAddr:   getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPass:   getEnv("REDIS_PASSWORD", ""),
 		PostgresDSN: getEnv("POSTGRES_DSN", "host=localhost user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable"),
+		KafkaAddr:   getEnv("KAFKA_ADDR", "localhost:9092"),
 	}
 }

@@ -17,6 +17,7 @@ type Config struct {
 	NotificationHttpAddr string
 	FileHttpAddr         string
 	AdminHttpAddr        string
+	AIHttpAddr           string
 	RedisAddr            string
 	SearchHttpAddr       string
 	StoryHttpAddr        string
@@ -42,6 +43,7 @@ func LoadConfig() *Config {
 		NotificationHttpAddr: getEnv("NOTIFICATION_HTTP_ADDR", "http://localhost:10085"),
 		FileHttpAddr:         getEnv("FILE_HTTP_ADDR", "http://localhost:10087"),
 		AdminHttpAddr:        getEnv("ADMIN_HTTP_ADDR", "http://localhost:10088"),
+		AIHttpAddr:           getEnv("AI_HTTP_ADDR", "http://localhost:10091"),
 		RedisAddr:            getEnv("REDIS_ADDR", "localhost:6379"),
 		SearchHttpAddr:       getEnv("SEARCH_HTTP_ADDR", "http://localhost:10089"),
 		StoryHttpAddr:        getEnv("STORY_HTTP_ADDR", "http://localhost:10090"),

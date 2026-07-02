@@ -36,17 +36,22 @@ func main() {
 	// Initialize Notification Publisher
 	notifPublisher := service.NewKafkaNotificationPublisher(cfg.KafkaAddr)
 	defer notifPublisher.Close()
+	moderationPublisher := service.NewKafkaModerationPublisher(cfg.KafkaAddr)
+	defer moderationPublisher.Close()
+	keywordPublisher := service.NewKafkaKeywordPublisher(cfg.KafkaAddr, db.Neo4jDriver)
+	defer keywordPublisher.Close()
 
 	// Initialize File Client
 	fileClient, err := service.NewGrpcFileClient(cfg.FileGrpcAddr)
 	if err != nil {
 		logger.Warn("Warning: Failed to connect to File gRPC at %s: %v", cfg.FileGrpcAddr, err)
-		postSvc.WithIntegrations(nil, notifPublisher, nil)
+		postSvc.WithIntegrations(nil, notifPublisher, keywordPublisher).WithModeration(moderationPublisher)
 	} else {
-		postSvc.WithIntegrations(fileClient, notifPublisher, nil)
+		postSvc.WithIntegrations(fileClient, notifPublisher, keywordPublisher).WithModeration(moderationPublisher)
 	}
 
 	postHandler := handler.NewPostHandler(postSvc)
+	reportHandler := handler.NewReportHandler(service.NewReportService(moderationPublisher))
 
 	// Start Ad gRPC Server
 	go func() {
@@ -154,6 +159,9 @@ func main() {
 	r.POST("/v1/comments/like/:commentId", postHandler.LikeComment)
 	r.DELETE("/v1/comments/unlike/:commentId", postHandler.UnlikeComment)
 	r.DELETE("/v1/comments/:commentId", postHandler.DeleteComment)
+
+	// User report API
+	r.POST("/v1/reports", reportHandler.SubmitReport)
 
 	logger.Info("Post HTTP Server starting on port %s", cfg.HTTPPort)
 	if err := r.Run(":" + cfg.HTTPPort); err != nil {

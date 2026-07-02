@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"social-network-go/admin-service/db"
@@ -10,11 +11,28 @@ import (
 )
 
 type AdminService struct {
-	repo repository.AdminRepository
+	repo           repository.AdminRepository
+	moderationRepo repository.ModerationRepository
+	moderation     moderationStore
 }
 
 func NewAdminService(repo repository.AdminRepository) *AdminService {
-	return &AdminService{repo: repo}
+	return &AdminService{
+		repo:           repo,
+		moderationRepo: repository.NewModerationRepository(db.PostgresDB),
+		moderation: moderationStore{
+			items:   make(map[string]*model.ModerationQueueItem),
+			audits:  make([]model.ModerationAuditLog, 0),
+			reports: make(map[string]map[string]bool),
+		},
+	}
+}
+
+type moderationStore struct {
+	mu      sync.RWMutex
+	items   map[string]*model.ModerationQueueItem
+	audits  []model.ModerationAuditLog
+	reports map[string]map[string]bool
 }
 
 func (s *AdminService) GetOnlineUsersCount() int {

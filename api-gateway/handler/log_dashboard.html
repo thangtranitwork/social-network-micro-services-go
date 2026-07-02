@@ -366,7 +366,7 @@
                     <!-- Unified Tracer Tab -->
                     <div class="pt-2 border-t border-stone-100" id="row-all-services">
                         <button class="w-full flex items-center justify-between p-2 rounded-xl text-left text-xs font-bold text-indigo-700 hover:bg-indigo-50 border border-transparent hover:border-indigo-150 transition-all" onclick="selectService('all-services')">
-                            <span>🔍 Trace Request ID</span>
+                            <span>🔍 Trace ID</span>
                             <span class="text-[9px] bg-indigo-100/60 px-1.5 py-0.5 rounded text-indigo-700 font-extrabold uppercase">Trace Mode</span>
                         </button>
                     </div>
@@ -403,7 +403,7 @@
 
                         <!-- Centralized Request Tracer Controls -->
                         <div class="flex items-center gap-2" id="trace-search-group" style="display: none;">
-                            <input type="text" class="px-3 py-1.5 bg-white border border-stone-200 text-stone-900 placeholder-stone-400 rounded-xl text-xs outline-none focus:border-indigo-500 w-80 transition-all mono" placeholder="Enter Request ID to trace..." id="trace-request-input" onkeydown="if(event.key==='Enter') performTraceSearch()">
+                            <input type="text" class="px-3 py-1.5 bg-white border border-stone-200 text-stone-900 placeholder-stone-400 rounded-xl text-xs outline-none focus:border-indigo-500 w-80 transition-all mono" placeholder="Enter Trace ID to trace..." id="trace-request-input" onkeydown="if(event.key==='Enter') performTraceSearch()">
                             <button class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md shadow-indigo-600/10 transition-all active:scale-95" onclick="performTraceSearch()">
                                 <span>Trace Request</span>
                             </button>
@@ -524,7 +524,7 @@
                     eventSource = null;
                 }
                 clearTerminal();
-                appendLogLine("2026/01/01 00:00:00 [INFO] Trace Mode Enabled. Enter a Request ID in the input box above to search logs across all services.");
+                appendLogLine("2026/01/01 00:00:00 [INFO] Trace Mode Enabled. Enter a Trace ID in the input box above to search logs across all services.");
             } else {
                 normalControls.style.display = 'flex';
                 traceSearch.style.display = 'none';
@@ -541,15 +541,15 @@
         async function performTraceSearch() {
             const reqID = document.getElementById('trace-request-input').value.trim();
             if (!reqID) {
-                alert('Please enter a Request ID.');
+                alert('Please enter a Trace ID.');
                 return;
             }
 
             clearTerminal();
-            appendLogLine("2026/01/01 00:00:00 [INFO] Tracing request_id: " + reqID + " across all services...");
+            appendLogLine("2026/01/01 00:00:00 [INFO] Tracing trace_id: " + reqID + " across all services...");
 
             try {
-                let response = await fetch('/logs/search?request_id=' + encodeURIComponent(reqID), {
+                let response = await fetch('/logs/search?trace_id=' + encodeURIComponent(reqID), {
                     headers: {
                         'Authorization': 'Bearer ' + getAuthToken()
                     }
@@ -559,7 +559,7 @@
                     if (response.status === 401 || response.status === 403) {
                         const newToken = await refreshAdminToken();
                         if (newToken) {
-                            response = await fetch('/logs/search?request_id=' + encodeURIComponent(reqID), {
+                            response = await fetch('/logs/search?trace_id=' + encodeURIComponent(reqID), {
                                 headers: {
                                     'Authorization': 'Bearer ' + newToken
                                 }
@@ -582,7 +582,7 @@
 
                 const results = await response.json();
                 if (results.length === 0) {
-                    appendLogLine("2026/01/01 00:00:00 [WARN] No logs found matching request_id: " + reqID);
+                    appendLogLine("2026/01/01 00:00:00 [WARN] No logs found matching trace_id: " + reqID);
                     return;
                 }
 
@@ -664,6 +664,29 @@
             return str.replace(ansiRegex, '');
         }
 
+        function escapeHtml(value) {
+            return String(value ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function appendContextField(contextFields, key, val) {
+            contextFields.push(
+                '<div class="text-[11px] leading-5 whitespace-pre-wrap break-words">' +
+                '<span style="color: #22d3ee; font-weight: 500;">' + escapeHtml(key) + ':</span> ' +
+                '<span style="color: #f1f5f9;">' + escapeHtml(val) + '</span>' +
+                '</div>'
+            );
+        }
+
+        function contextFieldsToHtml(contextFields) {
+            if (!contextFields.length) return "";
+            return '<div class="mt-1.5 pl-9 flex flex-col gap-0.5">' + contextFields.join("") + '</div>';
+        }
+
         function formatLogLine(rawText) {
             let text = stripAnsi(rawText);
 
@@ -688,10 +711,9 @@
                     levelBadge = '<span style="color: #818cf8; background: rgba(129, 140, 248, 0.15); padding: 0.15rem 0.4rem; border-radius: 4px; font-weight: bold; margin-right: 0.5rem; font-size: 0.7rem;">INFO</span>';
                 }
 
-                let contextHtml = "";
+                let contextFields = [];
                 let jsonFields = [];
                 if (entry.fields) {
-                    contextHtml = ' <span class="text-stone-600">|</span>';
                     for (const [key, val] of Object.entries(entry.fields)) {
                         let strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
 
@@ -704,10 +726,12 @@
                             jsonFields.push({ key: "Request Payload", val: strVal, theme: "warn", color: "var(--warn)" });
                         } else if (key === "resp_body") {
                             jsonFields.push({ key: "Response Body", val: strVal, theme: "cyan", color: "#06b6d4" });
+                        }else if (key === "gemini_error") {
+                            jsonFields.push({ key: "Gemini Error", val: strVal, theme: "error", color: "var(--error)" });
                         } else if (isJson) {
                             jsonFields.push({ key: key, val: strVal, theme: "purple", color: "#a855f7" });
                         } else {
-                            contextHtml += ' <span style="color: #22d3ee; font-weight: 500;">' + key + '</span>=<span style="color: #f1f5f9;">' + strVal + '</span>';
+                            appendContextField(contextFields, key, strVal);
                         }
                     }
                 }
@@ -715,8 +739,8 @@
                 return {
                     timestamp,
                     levelBadge,
-                    message: entry.message || "",
-                    contextHtml,
+                    message: escapeHtml(entry.message || ""),
+                    contextHtml: contextFieldsToHtml(contextFields),
                     callerStr: entry.caller || "",
                     levelClass,
                     jsonFields
@@ -761,11 +785,10 @@
 
                 const parts = text.split(" |");
                 let message = parts[0];
-                let contextHtml = "";
+                let contextFields = [];
                 let jsonFields = [];
 
                 if (parts.length > 1) {
-                    contextHtml = ' <span class="text-stone-600">|</span>';
                     const fieldsString = parts.slice(1).join(" |");
                     const fieldPairs = fieldsString.match(/([^\s=]+)=(?:"[^"\\]*(?:\\.[^"\\]*)*"|[^\s|]*)/g);
                     if (fieldPairs) {
@@ -793,10 +816,14 @@
                                     jsonFields.push({ key: "Request Payload", val: val, theme: "warn", color: "var(--warn)" });
                                 } else if (key === "resp_body") {
                                     jsonFields.push({ key: "Response Body", val: val, theme: "cyan", color: "#06b6d4" });
+                                } else if (key === "error") {
+                                    jsonFields.push({ key: "Error Detail", val: val, theme: "error", color: "var(--error)" });
+                                } else if (key === "gemini_error") {
+                                    jsonFields.push({ key: "Gemini Error", val: val, theme: "error", color: "var(--error)" });
                                 } else if (isJson) {
                                     jsonFields.push({ key: key, val: val, theme: "purple", color: "#a855f7" });
                                 } else {
-                                    contextHtml += ' <span style="color: #22d3ee; font-weight: 500;">' + key + '</span>=<span style="color: #f1f5f9;">' + val + '</span>';
+                                    appendContextField(contextFields, key, val);
                                 }
                             }
                         });
@@ -806,8 +833,8 @@
                 return {
                     timestamp,
                     levelBadge,
-                    message,
-                    contextHtml,
+                    message: escapeHtml(message),
+                    contextHtml: contextFieldsToHtml(contextFields),
                     callerStr,
                     levelClass,
                     jsonFields
@@ -833,8 +860,8 @@
             timeTag.className = 'text-stone-500 w-20 shrink-0 select-none';
             timeTag.innerText = formatted.timestamp || new Date().toTimeString().split(' ')[0];
 
-            const contentSpan = document.createElement('span');
-            contentSpan.className = 'flex-1 overflow-hidden truncate';
+            const contentSpan = document.createElement('div');
+            contentSpan.className = 'flex-1 min-w-0 whitespace-normal break-words';
             if (formatted.levelClass) {
                 contentSpan.classList.add(formatted.levelClass);
             }
@@ -870,6 +897,10 @@
                         btn.style.background = 'rgba(6, 182, 212, 0.12)';
                         btn.style.border = '1px solid rgba(6, 182, 212, 0.2)';
                         btn.style.color = '#22d3ee';
+                    } else if (field.theme === "error") {
+                        btn.style.background = 'rgba(239, 68, 68, 0.12)';
+                        btn.style.border = '1px solid rgba(239, 68, 68, 0.2)';
+                        btn.style.color = '#f87171';
                     } else {
                         btn.style.background = 'rgba(168, 85, 247, 0.12)';
                         btn.style.border = '1px solid rgba(168, 85, 247, 0.2)';

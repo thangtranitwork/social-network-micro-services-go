@@ -108,6 +108,11 @@ func (h *AdminHandler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/v1/admin/containers/:id/logs/ws", h.StreamContainerLogs)
 
 	// Content Moderation Routes
+	r.GET("/v1/admin/moderation/queue", h.GetModerationQueue)
+	r.POST("/v1/admin/moderation/:id/approve", h.ApproveModerationItem)
+	r.POST("/v1/admin/moderation/:id/hide", h.HideModerationItem)
+	r.POST("/v1/admin/moderation/:id/delete", h.DeleteModerationItem)
+	r.POST("/v1/admin/moderation/:id/suspend-author", h.SuspendModerationAuthor)
 	r.DELETE("/v1/admin/posts/:id", h.DeletePost)
 	r.POST("/v1/admin/users/:id/suspend", h.SuspendUser)
 	r.POST("/v1/admin/users/:id/unsuspend", h.UnsuspendUser)

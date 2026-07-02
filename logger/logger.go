@@ -63,6 +63,12 @@ func NewEntry() *Entry {
 
 // Field adds a single key-value context field to the entry
 func (e *Entry) Field(key string, value interface{}) *Entry {
+	if (key == "error" || key == "gemini_error") && value != nil {
+		if err, ok := value.(error); ok {
+			return e.JsonField(key, err.Error())
+		}
+		return e.JsonField(key, value)
+	}
 	e.fields[key] = value
 	return e
 }
@@ -76,7 +82,7 @@ func (e *Entry) JsonField(key string, value interface{}) *Entry {
 // Err adds a standard error field ("error") to the entry
 func (e *Entry) Err(err error) *Entry {
 	if err != nil {
-		e.fields["error"] = err.Error()
+		return e.JsonField("error", err.Error())
 	}
 	return e
 }
@@ -122,7 +128,7 @@ func (e *Entry) Req(c interface{}) *Entry {
 // Fields adds multiple key-value context fields to the entry
 func (e *Entry) Fields(fields Fields) *Entry {
 	for k, v := range fields {
-		e.fields[k] = v
+		e.Field(k, v)
 	}
 	return e
 }
@@ -176,12 +182,10 @@ func Fatal(format string, args ...interface{}) {
 func WithContext(ctx context.Context) *Entry {
 	e := NewEntry()
 	if ctx != nil {
-		// Tự động lấy trace_id/request_id nếu tồn tại trong context
+		// Trace ID is the primary log correlation key. Request ID still propagates
+		// through context/headers but is not emitted on every log line.
 		if traceID, ok := ctx.Value("trace_id").(string); ok {
 			e.Field("trace_id", traceID)
-		}
-		if reqID, ok := ctx.Value("request_id").(string); ok {
-			e.Field("request_id", reqID)
 		}
 	}
 	return e
@@ -219,9 +223,12 @@ var (
 	logLevels   map[string]bool // levels allowed to print to console
 	serviceName string
 	logHttpBody bool
+	logGrpcBody bool
 	once        sync.Once
 	mu          sync.Mutex // protects logFile, rotation, and file writes
 )
+
+const maxHTTPBodyLogSize = 4096
 
 func RedactJSON(jsonStr string) string {
 	if jsonStr == "" {
@@ -414,11 +421,17 @@ func getCaller() string {
 				return fmt.Sprintf("%s:%d", filepath.Base(file), line)
 			}
 		}
+		logGrpcBody = os.Getenv("LOG_GRPC_BODY") == "true"
 	}
 	if fallback != "" {
 		return fallback
 	}
 	return "unknown:0"
+}
+
+func IsLevelEnabled(level Level) bool {
+	once.Do(initLogger)
+	return logLevels[string(level)]
 }
 
 func prettyPrintJSON(raw string) string {
@@ -569,6 +582,10 @@ func rotateLogFile() {
 func logMessage(level Level, color string, message string, ctx map[string]interface{}, jsonCtx map[string]interface{}) {
 	once.Do(initLogger)
 
+	if !logLevels[string(level)] {
+		return
+	}
+
 	caller := getCaller()
 
 	if ctx == nil {
@@ -596,7 +613,7 @@ func logMessage(level Level, color string, message string, ctx map[string]interf
 	fileLine := string(jsonBytes) + "\n"
 
 	// Write to file with rotation check and log level filter under mutex
-	if logFile != nil && logLevels[string(level)] {
+	if logFile != nil {
 		mu.Lock()
 		rotateLogFile()
 		_, _ = logFile.WriteString(fileLine)
@@ -604,94 +621,124 @@ func logMessage(level Level, color string, message string, ctx map[string]interf
 	}
 
 	// 2. Format log for console (stdout), filtered by LOG_LEVELS
-	if logLevels[string(level)] {
-		if isTTY() {
-			// Extract req_body and resp_body if they exist so they don't print in the inline context on console
-			var reqBodyVal, respBodyVal interface{}
-			var hasReq, hasResp bool
+	if isTTY() {
+		// Extract req_body and resp_body if they exist so they don't print in the inline context on console
+		var reqBodyVal, respBodyVal interface{}
+		var hasReq, hasResp bool
 
-			if v, ok := ctx["req_body"]; ok {
-				reqBodyVal = v
-				hasReq = true
-			}
-			if v, ok := ctx["resp_body"]; ok {
-				respBodyVal = v
-				hasResp = true
-			}
-
-			// Make a copy of ctx for console so we can exclude long fields inline
-			consoleCtx := make(map[string]interface{})
-			for k, v := range ctx {
-				if k != "req_body" && k != "resp_body" {
-					if _, isJson := jsonCtx[k]; !isJson {
-						consoleCtx[k] = v
-					}
-				}
-			}
-			consoleCtx["caller"] = caller
-
-			ctxStr := ""
-			if len(consoleCtx) > 0 {
-				ctxStr = " " + colorGray + "|" + colorReset
-				keys := make([]string, 0, len(consoleCtx))
-				for k := range consoleCtx {
-					keys = append(keys, k)
-				}
-				sort.Strings(keys)
-				for _, k := range keys {
-					ctxStr += fmt.Sprintf(" %s=%s", colorCyan+k+colorReset, serializeVal(consoleCtx[k]))
-				}
-			}
-
-			extraConsole := ""
-			if hasReq {
-				prettyReq := prettyPrintJSON(fmt.Sprintf("%v", reqBodyVal))
-				extraConsole += "\n  " + colorYellow + "► Request Body:" + colorReset + "\n" + prettyReq
-			}
-			if hasResp {
-				prettyResp := prettyPrintJSON(fmt.Sprintf("%v", respBodyVal))
-				extraConsole += "\n  " + colorCyan + "◄ Response Body:" + colorReset + "\n" + prettyResp
-			}
-
-			// Sort jsonCtx keys for deterministic console output
-			jsonKeys := make([]string, 0, len(jsonCtx))
-			for k := range jsonCtx {
-				jsonKeys = append(jsonKeys, k)
-			}
-			sort.Strings(jsonKeys)
-			for _, k := range jsonKeys {
-				val := serializeJSONVal(jsonCtx[k])
-				prettyVal := prettyPrintJSON(val)
-				extraConsole += "\n  " + colorYellow + "► " + k + ":" + colorReset + "\n" + prettyVal
-			}
-
-			fmt.Fprintf(os.Stdout, "%s %s[%s]%s %s%s%s\n",
-				time.Now().Format("2006/01/02 15:04:05.000"),
-				color, level, colorReset,
-				message,
-				ctxStr,
-				extraConsole,
-			)
-		} else {
-			// If redirected, write the clean JSON format directly to stdout
-			fmt.Fprint(os.Stdout, fileLine)
+		if v, ok := ctx["req_body"]; ok {
+			reqBodyVal = v
+			hasReq = true
 		}
+		if v, ok := ctx["resp_body"]; ok {
+			respBodyVal = v
+			hasResp = true
+		}
+
+		// Make a copy of ctx for console so we can exclude long fields inline
+		consoleCtx := make(map[string]interface{})
+		for k, v := range ctx {
+			if k != "req_body" && k != "resp_body" {
+				if _, isJson := jsonCtx[k]; !isJson {
+					consoleCtx[k] = v
+				}
+			}
+		}
+		consoleCtx["caller"] = caller
+
+		fieldsBlock := ""
+		if len(consoleCtx) > 0 {
+			keys := make([]string, 0, len(consoleCtx))
+			for k := range consoleCtx {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				fieldsBlock += fmt.Sprintf("\n  %s%s:%s %s", colorCyan, k, colorReset, serializeVal(consoleCtx[k]))
+			}
+		}
+
+		extraConsole := ""
+		if hasReq {
+			prettyReq := prettyPrintJSON(fmt.Sprintf("%v", reqBodyVal))
+			extraConsole += "\n  " + colorYellow + "► Request Body:" + colorReset + "\n" + prettyReq
+		}
+		if hasResp {
+			prettyResp := prettyPrintJSON(fmt.Sprintf("%v", respBodyVal))
+			extraConsole += "\n  " + colorCyan + "◄ Response Body:" + colorReset + "\n" + prettyResp
+		}
+
+		// Sort jsonCtx keys for deterministic console output
+		jsonKeys := make([]string, 0, len(jsonCtx))
+		for k := range jsonCtx {
+			jsonKeys = append(jsonKeys, k)
+		}
+		sort.Strings(jsonKeys)
+		for _, k := range jsonKeys {
+			val := serializeJSONVal(jsonCtx[k])
+			prettyVal := prettyPrintJSON(val)
+			extraConsole += "\n  " + colorYellow + "► " + k + ":" + colorReset + "\n" + prettyVal
+		}
+
+		fmt.Fprintf(os.Stdout, "%s %s[%s]%s %s%s%s\n",
+			time.Now().Format("2006/01/02 15:04:05.000"),
+			color, level, colorReset,
+			message,
+			fieldsBlock,
+			extraConsole,
+		)
+	} else {
+		// If redirected, write the clean JSON format directly to stdout
+		fmt.Fprint(os.Stdout, fileLine)
 	}
 }
 
 type bodyLogWriter struct {
 	gin.ResponseWriter
-	body *bytes.Buffer
+	body      *bytes.Buffer
+	truncated bool
 }
 
-func (w bodyLogWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
+func (w *bodyLogWriter) Write(b []byte) (int, error) {
+	w.capture(b)
 	return w.ResponseWriter.Write(b)
 }
 
-func (w bodyLogWriter) WriteString(s string) (int, error) {
-	w.body.WriteString(s)
+func (w *bodyLogWriter) WriteString(s string) (int, error) {
+	w.capture([]byte(s))
 	return w.ResponseWriter.WriteString(s)
+}
+
+func (w *bodyLogWriter) capture(b []byte) {
+	remaining := maxHTTPBodyLogSize - w.body.Len()
+	if remaining <= 0 {
+		w.truncated = true
+		return
+	}
+	if len(b) > remaining {
+		w.body.Write(b[:remaining])
+		w.truncated = true
+		return
+	}
+	w.body.Write(b)
+}
+
+func shouldLogHTTPBody(req *http.Request) bool {
+	if req == nil || req.Body == nil {
+		return false
+	}
+	if req.ContentLength < 0 || req.ContentLength > maxHTTPBodyLogSize {
+		return false
+	}
+	contentType := strings.ToLower(req.Header.Get("Content-Type"))
+	if strings.HasPrefix(contentType, "multipart/") ||
+		strings.HasPrefix(contentType, "image/") ||
+		strings.HasPrefix(contentType, "video/") ||
+		strings.HasPrefix(contentType, "audio/") ||
+		strings.Contains(contentType, "octet-stream") {
+		return false
+	}
+	return true
 }
 
 // GinMiddleware provides request/response logging for Gin web services
@@ -714,29 +761,20 @@ func GinMiddleware() gin.HandlerFunc {
 		method := c.Request.Method
 		clientIP := c.ClientIP()
 
-		var reqID string
-		if val, exists := c.Get("request_id"); exists {
-			reqID = fmt.Sprintf("%v", val)
-		} else {
-			reqID = c.GetHeader("X-Request-ID")
-		}
-
 		// 1. Capture Request Body safely
 		reqBody := ""
-		if logHttpBody && c.Request.Body != nil {
+		captureBody := logHttpBody && shouldLogHTTPBody(c.Request) && (IsLevelEnabled(LevelInfo) || IsLevelEnabled(LevelError))
+		if captureBody {
 			bodyBytes, err := io.ReadAll(c.Request.Body)
 			if err == nil {
 				c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 				reqBody = RedactJSON(string(bodyBytes))
-				if len(reqBody) > 4096 {
-					reqBody = reqBody[:4096] + " ... [TRUNCATED]"
-				}
 			}
 		}
 
 		// 2. Intercept Response Body using bodyLogWriter
 		var blw *bodyLogWriter
-		if logHttpBody {
+		if captureBody {
 			blw = &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
 			c.Writer = blw
 		}
@@ -746,6 +784,13 @@ func GinMiddleware() gin.HandlerFunc {
 
 		latency := time.Since(start)
 		status := c.Writer.Status()
+		level := LevelInfo
+		if status >= 500 {
+			level = LevelError
+		}
+		if !IsLevelEnabled(level) {
+			return
+		}
 
 		// Format latency to a clean, rounded string (e.g. 40.87ms)
 		latencyStr := fmt.Sprintf("%.2fms", float64(latency.Nanoseconds())/1e6)
@@ -755,11 +800,18 @@ func GinMiddleware() gin.HandlerFunc {
 
 		// Get Intercepted Response Body
 		respBody := ""
-		if logHttpBody && blw != nil {
+		if captureBody && blw != nil {
 			respBody = RedactJSON(blw.body.String())
-			if len(respBody) > 4096 {
-				respBody = respBody[:4096] + " ... [TRUNCATED]"
+			if blw.truncated {
+				respBody += " ... [TRUNCATED]"
 			}
+		}
+
+		var traceID string
+		if val, exists := c.Get("trace_id"); exists {
+			traceID = fmt.Sprintf("%v", val)
+		} else {
+			traceID = c.GetHeader("X-Trace-ID")
 		}
 
 		logBuilder := Field("status", status).
@@ -769,8 +821,8 @@ func GinMiddleware() gin.HandlerFunc {
 		if query != "" {
 			logBuilder = logBuilder.Field("query", query)
 		}
-		if reqID != "" {
-			logBuilder = logBuilder.Field("request_id", reqID)
+		if traceID != "" {
+			logBuilder = logBuilder.Field("trace_id", traceID)
 		}
 		if reqBody != "" {
 			logBuilder = logBuilder.Field("req_body", reqBody)
@@ -781,7 +833,7 @@ func GinMiddleware() gin.HandlerFunc {
 
 		msg := fmt.Sprintf("HTTP %s %s", method, path)
 
-		if status >= 500 {
+		if level == LevelError {
 			logBuilder.Error("%s", msg)
 		} else {
 			logBuilder.Info("%s", msg)
@@ -810,6 +862,10 @@ func TraceMiddleware() gin.HandlerFunc {
 
 		c.Writer.Header().Set("X-Trace-ID", traceID)
 		c.Writer.Header().Set("X-Request-ID", requestID)
+
+		// Set on request headers so they propagate downstream over HTTP proxy
+		c.Request.Header.Set("X-Trace-ID", traceID)
+		c.Request.Header.Set("X-Request-ID", requestID)
 
 		c.Set("trace_id", traceID)
 		c.Set("request_id", requestID)
@@ -886,15 +942,19 @@ func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 
 		entry := WithContext(ctx).
 			Field("grpc_method", info.FullMethod).
-			Field("duration_ms", duration.Milliseconds()).
-			JsonField("grpc_req", req)
+			Field("duration_ms", duration.Milliseconds())
+		if logGrpcBody {
+			entry.JsonField("grpc_req", req)
+		}
 
 		if err != nil {
 			entry.Field("error", err.Error()).
 				Error("gRPC Method %s - Failed", info.FullMethod)
 		} else {
-			entry.JsonField("grpc_resp", resp).
-				Info("gRPC Method %s - Success", info.FullMethod)
+			if logGrpcBody {
+				entry.JsonField("grpc_resp", resp)
+			}
+			entry.Info("gRPC Method %s - Success", info.FullMethod)
 		}
 
 		return resp, err

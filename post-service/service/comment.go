@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
+	"social-network-go/internal/moderation"
 	"social-network-go/post-service/model"
 
 	"github.com/google/uuid"
@@ -33,6 +35,19 @@ func (s *PostService) Comment(ctx context.Context, authorID, postID, content str
 	if s.Notification != nil && authorID != post.AuthorID {
 		_ = s.Notification.Send(ctx, "COMMENT", authorID, post.AuthorID, commentID, "COMMENT", truncateByWord(content))
 	}
+	mediaIDs := []string{}
+	if fileID != nil && *fileID != "" {
+		mediaIDs = append(mediaIDs, *fileID)
+	}
+	s.requestModeration(ctx, moderation.RequestEvent{
+		TargetType: moderation.TargetComment,
+		TargetID:   commentID,
+		AuthorID:   authorID,
+		Content:    content,
+		MediaIDs:   mediaIDs,
+		Source:     moderation.SourceCommentCreated,
+		OccurredAt: time.Now(),
+	})
 
 	return s.GetCommentByID(ctx, commentID, authorID)
 }
@@ -76,6 +91,19 @@ func (s *PostService) ReplyComment(ctx context.Context, authorID, originalCommen
 			_ = s.Notification.Send(ctx, "REPLY_COMMENT", authorID, original.AuthorID, commentID, "COMMENT", truncateByWord(original.Content))
 		}
 	}
+	mediaIDs := []string{}
+	if fileID != nil && *fileID != "" {
+		mediaIDs = append(mediaIDs, *fileID)
+	}
+	s.requestModeration(ctx, moderation.RequestEvent{
+		TargetType: moderation.TargetComment,
+		TargetID:   commentID,
+		AuthorID:   authorID,
+		Content:    content,
+		MediaIDs:   mediaIDs,
+		Source:     moderation.SourceCommentCreated,
+		OccurredAt: time.Now(),
+	})
 
 	return s.GetCommentByID(ctx, commentID, authorID)
 }

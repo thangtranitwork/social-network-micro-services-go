@@ -30,7 +30,7 @@ func ProxyTo(target string) gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
-		logger.Info("[PROXY] %s %s -> %s%s", c.Request.Method, c.Request.URL.Path, target, c.Request.URL.Path)
+		logger.WithContext(c.Request.Context()).Info("[PROXY] %s %s -> %s%s", c.Request.Method, c.Request.URL.Path, target, c.Request.URL.Path)
 		proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }

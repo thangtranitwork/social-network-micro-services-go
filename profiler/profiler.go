@@ -16,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const AdminTokenHeader = "X-Profiler-Token"
+
 type ZProfiler struct {
 	mu        sync.RWMutex
 	stats     map[string]*CommandStats
@@ -382,6 +384,10 @@ func TrackExecution(command string, fn func()) {
 
 // TrackExecutionWithReturn tracks a command execution with return value and updates pending count
 func TrackExecutionWithReturn(command string, fn func() (any, error)) (any, error) {
+	if fn == nil {
+		return nil, nil
+	}
+
 	ensureInit()
 
 	globalProfiler.mu.Lock()
@@ -397,12 +403,11 @@ func TrackExecutionWithReturn(command string, fn func() (any, error)) (any, erro
 	globalProfiler.mu.Unlock()
 
 	start := time.Now()
-	result, err := fn()
-	duration := time.Since(start)
+	defer func() {
+		recordExecution(command, time.Since(start))
+	}()
 
-	recordExecution(command, duration)
-
-	return result, err
+	return fn()
 }
 
 // TrackResult tracks a typed operation and returns its result without forcing callers to type assert.
@@ -773,10 +778,27 @@ func IsEnabled() bool {
 	return appEnv != "production" && appEnv != "prod" && appEnv != "staging"
 }
 
+func IsAuthorized(c *gin.Context) bool {
+	adminToken := os.Getenv("PROFILER_ADMIN_TOKEN")
+	if adminToken == "" {
+		return true
+	}
+	if c.GetHeader(AdminTokenHeader) == adminToken {
+		return true
+	}
+	authHeader := c.GetHeader("Authorization")
+	const bearerPrefix = "Bearer "
+	return strings.HasPrefix(authHeader, bearerPrefix) && strings.TrimPrefix(authHeader, bearerPrefix) == adminToken
+}
+
 // Handler returns the current profiling stats and memory info as JSON
 func Handler(c *gin.Context) {
 	if !IsEnabled() {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Profiler endpoint is disabled"})
+		return
+	}
+	if !IsAuthorized(c) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Profiler endpoint is unauthorized"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -792,6 +814,11 @@ func EndpointGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !IsEnabled() {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Profiler endpoint is disabled"})
+			c.Abort()
+			return
+		}
+		if !IsAuthorized(c) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Profiler endpoint is unauthorized"})
 			c.Abort()
 			return
 		}
@@ -818,7 +845,7 @@ func saveStats() {
 	globalProfiler.mu.RLock()
 	persistentData := profilerPersistentData{
 		StartTime: globalProfiler.startTime,
-		Stats:     globalProfiler.stats,
+		Stats:     copyStatsLocked(globalProfiler.stats),
 	}
 	globalProfiler.mu.RUnlock()
 
@@ -833,6 +860,24 @@ func saveStats() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "PROFILER ERROR saving stats to %s: %v\n", filePath, err)
 	}
+}
+
+func copyStatsLocked(stats map[string]*CommandStats) map[string]*CommandStats {
+	copied := make(map[string]*CommandStats, len(stats))
+	for command, stat := range stats {
+		if stat == nil {
+			continue
+		}
+		next := &CommandStats{
+			LastExecutions: append([]time.Duration{}, stat.LastExecutions...),
+		}
+		next.RequestCount.Store(stat.RequestCount.Load())
+		next.TotalExecutionTime.Store(stat.TotalExecutionTime.Load())
+		next.LastRequestTime.Store(stat.LastRequestTime.Load())
+		next.PendingCount.Store(stat.PendingCount.Load())
+		copied[command] = next
+	}
+	return copied
 }
 
 func loadStats() {

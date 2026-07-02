@@ -25,6 +25,7 @@ func main() {
 	// Initialize Repository & Service
 	repo := repository.NewAdminRepository()
 	svc := service.NewAdminService(repo)
+	svc.StartModerationWorker(cfg.KafkaAddr)
 
 	// Initialize Handler
 	adminHandler := handler.NewAdminHandler(svc)

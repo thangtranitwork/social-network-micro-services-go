@@ -44,12 +44,18 @@ func InitDB(cfg *config.Config) {
 		PostgresDB = pgDB
 		logger.Info("Admin-Service connected to PostgreSQL successfully")
 
-		// Auto Migrate Advertisement tables
-		err = pgDB.AutoMigrate(&model.AdCampaign{}, &model.AdInteraction{})
+		// Auto Migrate Admin-owned PostgreSQL tables.
+		err = pgDB.AutoMigrate(
+			&model.AdCampaign{},
+			&model.AdInteraction{},
+			&model.ModerationQueueRecord{},
+			&model.ModerationReportRecord{},
+			&model.ModerationAuditRecord{},
+		)
 		if err != nil {
-			logger.Error("Failed to auto-migrate advertisement tables: %v", err)
+			logger.Error("Failed to auto-migrate admin PostgreSQL tables: %v", err)
 		} else {
-			logger.Info("Successfully auto-migrated advertisement tables")
+			logger.Info("Successfully auto-migrated admin PostgreSQL tables")
 		}
 	}
 }

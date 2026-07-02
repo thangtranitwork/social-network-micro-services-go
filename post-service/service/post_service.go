@@ -67,6 +67,7 @@ type PostService struct {
 	FileClient        FileClient
 	Notification      NotificationPublisher
 	KeywordInteractor KeywordInteractor
+	Moderation        ModerationPublisher
 }
 
 func NewPostService(cfg *config.Config, repo repository.PostRepository) *PostService {
@@ -100,6 +101,11 @@ func (s *PostService) WithIntegrations(fileClient FileClient, notification Notif
 	s.FileClient = fileClient
 	s.Notification = notification
 	s.KeywordInteractor = keyword
+	return s
+}
+
+func (s *PostService) WithModeration(publisher ModerationPublisher) *PostService {
+	s.Moderation = publisher
 	return s
 }
 

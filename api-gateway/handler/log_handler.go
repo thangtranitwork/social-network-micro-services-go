@@ -154,6 +154,7 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 			"notification-service": cfg.NotificationHttpAddr,
 			"file-service":         cfg.FileHttpAddr,
 			"admin-service":        cfg.AdminHttpAddr,
+			"ai-service":           cfg.AIHttpAddr,
 			"search-service":       cfg.SearchHttpAddr,
 			"story-service":        cfg.StoryHttpAddr,
 		}
@@ -188,7 +189,18 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 			go func(name, addr string) {
 				defer wg.Done()
 
-				resp, err := client.Get(addr + "/debug/profiler")
+				req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, addr+"/debug/profiler", nil)
+				if err != nil {
+					mu.Lock()
+					result[name] = ServiceData{Online: false}
+					mu.Unlock()
+					return
+				}
+				if token := os.Getenv("PROFILER_ADMIN_TOKEN"); token != "" {
+					req.Header.Set(profiler.AdminTokenHeader, token)
+				}
+
+				resp, err := client.Do(req)
 				if err != nil {
 					mu.Lock()
 					result[name] = ServiceData{Online: false}
@@ -244,11 +256,14 @@ type LogSearchResult struct {
 	Fields    map[string]interface{} `json:"fields,omitempty"`
 }
 
-// SearchLogs searches all microservice log files for a specific request_id, limited to last 100k lines
+// SearchLogs searches all microservice log files for a specific trace_id or request_id, limited to last 100k lines
 func SearchLogs(c *gin.Context) {
-	reqID := c.Query("request_id")
-	if reqID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "request_id query param required"})
+	targetID := c.Query("trace_id")
+	if targetID == "" {
+		targetID = c.Query("request_id")
+	}
+	if targetID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "trace_id or request_id query param required"})
 		return
 	}
 
@@ -317,7 +332,7 @@ func SearchLogs(c *gin.Context) {
 				}
 
 				line := scanner.Text()
-				if strings.Contains(line, reqID) {
+				if strings.Contains(line, targetID) {
 					// Redact line immediately
 					line = logger.RedactJSON(line)
 

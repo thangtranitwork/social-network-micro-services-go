@@ -1,7 +1,9 @@
 package router
 
 import (
+	"context"
 	"net/http"
+	"os"
 	"time"
 
 	"social-network-go/api-gateway/config"
@@ -38,7 +40,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-ID, X-User-Email, X-User-Role, x-continue-page")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-ID, X-User-Email, X-User-Role, x-continue-page, X-Trace-ID, X-Request-ID, x-trace-id, x-request-id")
 		c.Writer.Header().Set("Vary", "Origin")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -100,32 +102,64 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 				"notification-service": cfg.NotificationHttpAddr,
 				"file-service":         cfg.FileHttpAddr,
 				"admin-service":        cfg.AdminHttpAddr,
+				"ai-service":           cfg.AIHttpAddr,
 				"search-service":       cfg.SearchHttpAddr,
 				"story-service":        cfg.StoryHttpAddr,
 			}
 
-			client := &http.Client{Timeout: 100 * time.Millisecond}
+			client := &http.Client{Timeout: 500 * time.Millisecond}
+			resetRemote := func(addr string) gin.H {
+				ctx, cancel := context.WithTimeout(c.Request.Context(), 500*time.Millisecond)
+				defer cancel()
+
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, addr+"/debug/profiler/reset", nil)
+				if err != nil {
+					return gin.H{"ok": false, "error": err.Error()}
+				}
+				if token := os.Getenv("PROFILER_ADMIN_TOKEN"); token != "" {
+					req.Header.Set(profiler.AdminTokenHeader, token)
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					return gin.H{"ok": false, "error": err.Error()}
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					return gin.H{"ok": false, "status": resp.StatusCode}
+				}
+				return gin.H{"ok": true, "status": resp.StatusCode}
+			}
 
 			if serviceQuery != "" {
 				if serviceQuery == "api-gateway" {
 					profiler.Reset()
+					c.JSON(http.StatusOK, gin.H{"status": "success", "services": gin.H{"api-gateway": gin.H{"ok": true}}})
 				} else if addr, exists := services[serviceQuery]; exists {
-					_, _ = client.Post(addr+"/debug/profiler/reset", "application/json", nil)
+					result := resetRemote(addr)
+					status := http.StatusOK
+					if ok, _ := result["ok"].(bool); !ok {
+						status = http.StatusBadGateway
+					}
+					c.JSON(status, gin.H{"status": "success", "services": gin.H{serviceQuery: result}})
 				} else {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid service name"})
-					return
 				}
+				return
 			} else {
 				// Reset all
 				profiler.Reset()
-				for _, addr := range services {
-					go func(addr string) {
-						_, _ = client.Post(addr+"/debug/profiler/reset", "application/json", nil)
-					}(addr)
+				results := gin.H{"api-gateway": gin.H{"ok": true}}
+				status := http.StatusOK
+				for name, addr := range services {
+					result := resetRemote(addr)
+					results[name] = result
+					if ok, _ := result["ok"].(bool); !ok {
+						status = http.StatusBadGateway
+					}
 				}
+				c.JSON(status, gin.H{"status": "success", "services": results})
+				return
 			}
-
-			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 	}
 
@@ -206,6 +240,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 		})
 		authGroup.Any("/v1/comments/*any", proxy.ProxyTo(cfg.PostHttpAddr))
 		authGroup.Any("/v1/comments", proxy.ProxyTo(cfg.PostHttpAddr))
+		authGroup.Any("/v1/reports/*any", proxy.ProxyTo(cfg.PostHttpAddr))
+		authGroup.Any("/v1/reports", proxy.ProxyTo(cfg.PostHttpAddr))
 
 		// Proxy to Chat Service
 		authGroup.Any("/v1/chat/*any", proxy.ProxyTo(cfg.ChatHttpAddr))

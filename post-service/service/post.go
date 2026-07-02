@@ -5,15 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
+	"social-network-go/internal/moderation"
 	"social-network-go/logger"
 	"social-network-go/post-service/model"
 	"social-network-go/profiler"
 
 	"github.com/google/uuid"
 )
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 func (s *PostService) CreatePost(ctx context.Context, authorID, content, privacy string, fileIDs []string) (*model.Post, error) {
 	content = strings.TrimSpace(content)
@@ -50,6 +56,15 @@ func (s *PostService) CreatePost(ctx context.Context, authorID, content, privacy
 	if s.Notification != nil {
 		_ = s.Notification.SendToFriends(ctx, "POST", authorID, postID, "POST", truncateByWord(content))
 	}
+	s.requestModeration(ctx, moderation.RequestEvent{
+		TargetType: moderation.TargetPost,
+		TargetID:   postID,
+		AuthorID:   authorID,
+		Content:    content,
+		MediaIDs:   fileIDs,
+		Source:     moderation.SourcePostCreated,
+		OccurredAt: now,
+	})
 
 	post := &model.Post{
 		ID:         postID,
@@ -282,6 +297,11 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		})
 		logger.WithContext(ctx).JsonField("ads", ads).Info("Fetched ads")
 		if err == nil && len(ads) > 0 {
+			// Shuffle the ads slice to show ads randomly
+			rand.Shuffle(len(ads), func(i, j int) {
+				ads[i], ads[j] = ads[j], ads[i]
+			})
+
 			profiler.TrackExecution("post-service:code newsfeed.interleaveAds", func() {
 				interleaved := make([]*model.Post, 0, len(validPosts)+len(ads))
 				adIdx := 0
@@ -338,6 +358,17 @@ func (s *PostService) UpdateContent(ctx context.Context, currentUserID, postID s
 	if s.KeywordInteractor != nil {
 		_ = s.KeywordInteractor.ExtractPostKeywords(ctx, postID, finalContent, true)
 	}
+	if content != nil {
+		s.requestModeration(ctx, moderation.RequestEvent{
+			TargetType: moderation.TargetPost,
+			TargetID:   postID,
+			AuthorID:   currentUserID,
+			Content:    finalContent,
+			MediaIDs:   newFileIDs,
+			Source:     moderation.SourcePostUpdated,
+			OccurredAt: time.Now(),
+		})
+	}
 	return nil
 }
 
@@ -367,6 +398,18 @@ func (s *PostService) LikePost(ctx context.Context, userID, postID string) error
 		}()
 	}
 	return nil
+}
+
+func (s *PostService) requestModeration(ctx context.Context, event moderation.RequestEvent) {
+	if s.Moderation == nil || strings.TrimSpace(event.Content) == "" {
+		return
+	}
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now()
+	}
+	if err := s.Moderation.RequestReview(ctx, event); err != nil {
+		logger.WithContext(ctx).Err(err).Warn("Failed to publish moderation request for %s/%s", event.TargetType, event.TargetID)
+	}
 }
 
 func (s *PostService) UnlikePost(ctx context.Context, userID, postID string) error {
