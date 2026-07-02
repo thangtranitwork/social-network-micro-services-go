@@ -116,7 +116,7 @@ func (s *AIService) callGeminiAPI(ctx context.Context, content string) ([]string
 	req.Header.Set("X-goog-api-key", s.GeminiKey)
 
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: 25 * time.Second,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -308,7 +308,7 @@ Content: %q`, content)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-goog-api-key", s.GeminiKey)
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return ModerationResult{}, err
@@ -697,7 +697,7 @@ func (s *AIService) StartModerationWorker() {
 				continue
 			}
 
-			ctx, cancel := context.WithTimeout(baseCtx, 7*time.Second)
+			ctx, cancel := context.WithTimeout(baseCtx, 25*time.Second)
 			result, _ := profiler.TrackResult("ai-service:worker moderation.review", func() (ModerationResult, error) {
 				return s.ModerateContent(ctx, event), nil
 			})
