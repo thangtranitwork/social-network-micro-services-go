@@ -37,6 +37,16 @@ type Post struct {
 	AdMediaURL  string `json:"adMediaUrl,omitempty"`
 }
 
+type NewsfeedCandidate struct {
+	Post                      *Post
+	ViewForward               int
+	ViewBackward              int
+	LoadedTimes               int
+	KeywordScore              int
+	IsFriend                  bool
+	IsSecondDegreeOrRequested bool
+}
+
 type Comment struct {
 	ID                string     `json:"id"`
 	PostID            string     `json:"postId"`

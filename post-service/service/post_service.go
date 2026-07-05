@@ -55,7 +55,6 @@ type NotificationPublisher interface {
 type KeywordInteractor interface {
 	Interact(ctx context.Context, postID string, actorID string, score string) error
 	ExtractPostKeywords(ctx context.Context, postID string, content string, isUpdate bool) error
-	PostsLoaded(ctx context.Context, postIDs []string, userID string) error
 }
 
 type PostService struct {

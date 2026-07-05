@@ -128,6 +128,11 @@ func main() {
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 		})
 	}
+	debugNewsfeedGroup := r.Group("/debug/newsfeed")
+	debugNewsfeedGroup.Use(profiler.EndpointGuard())
+	{
+		debugNewsfeedGroup.GET("/score-breakdown", postHandler.GetNewsfeedScoreBreakdown)
+	}
 
 	// REST APIs (Internal Routes mapped under Gateway)
 	r.GET("/v1/posts/newsfeed", postHandler.GetNewsfeed)

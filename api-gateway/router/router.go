@@ -90,6 +90,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 	{
 		adminObsGroup.GET("/logs/stream", handler.StreamLogs)
 		adminObsGroup.GET("/logs/search", handler.SearchLogs)
+		adminObsGroup.GET("/debug/newsfeed/score-breakdown", handler.NewsfeedScoreBreakdownHandler(cfg))
 		adminObsGroup.GET("/debug/profiler", handler.ProfilerAggregatorHandler(cfg))
 		adminObsGroup.POST("/debug/profiler/reset", func(c *gin.Context) {
 			serviceQuery := c.Query("service")

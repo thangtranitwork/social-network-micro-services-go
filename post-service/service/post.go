@@ -264,12 +264,38 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		pageType = PageTypeRelevant
 	}
 
-	posts, err := profiler.TrackResult("post-service:query newsfeed.repository", func() ([]*model.Post, error) {
-		return s.Repo.GetSuggestedPosts(ctx, currentUserID, pageType, pageable.Skip, normalizeLimit(pageable.Limit))
-	})
-	if err != nil {
-		return nil, err
+	limit := normalizeLimit(pageable.Limit)
+	var posts []*model.Post
+	if pageType == PageTypeRelevant {
+		candidates, err := profiler.TrackResult("post-service:query newsfeed.repositoryCandidates", func() ([]*model.NewsfeedCandidate, error) {
+			return s.Repo.GetRelevantNewsfeedCandidates(ctx, currentUserID)
+		})
+		if err != nil {
+			return nil, err
+		}
+		logger.WithContext(ctx).JsonField("newsfeed_strategy", map[string]interface{}{
+			"type":           pageType,
+			"candidateCount": len(candidates),
+			"scorer":         "go_rule_based",
+		}).Info("Newsfeed candidates fetched")
+		profiler.TrackExecution("post-service:code newsfeed.rankCandidates", func() {
+			posts = postsFromRankedCandidates(candidates, pageable.Skip, limit, time.Now())
+		})
+	} else {
+		var err error
+		posts, err = profiler.TrackResult("post-service:query newsfeed.repository", func() ([]*model.Post, error) {
+			return s.Repo.GetSuggestedPosts(ctx, currentUserID, pageType, pageable.Skip, limit)
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
+	logger.WithContext(ctx).JsonField("newsfeed_result", map[string]interface{}{
+		"type":         pageType,
+		"organicCount": len(posts),
+		"skip":         pageable.Skip,
+		"limit":        limit,
+	}).Info("Newsfeed organic posts ranked")
 
 	validPosts := make([]*model.Post, 0, len(posts))
 	profiler.TrackExecution("post-service:code newsfeed.validatePosts", func() {
@@ -280,14 +306,13 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		}
 	})
 
-	if pageType == PageTypeRelevant && s.KeywordInteractor != nil {
-		ids := make([]string, 0, len(validPosts))
-		for _, p := range validPosts {
-			ids = append(ids, p.ID)
+	if pageType == PageTypeRelevant {
+		postIDs := postIDsForLoaded(validPosts)
+		if _, err := profiler.TrackResult("post-service:query newsfeed.markLoaded", func() (struct{}, error) {
+			return struct{}{}, s.Repo.MarkPostsLoaded(ctx, currentUserID, postIDs)
+		}); err != nil {
+			logger.WithContext(ctx).Err(err).Warn("failed to mark newsfeed posts loaded")
 		}
-		profiler.TrackExecution("post-service:integration newsfeed.keywords.postsLoaded", func() {
-			_ = s.KeywordInteractor.PostsLoaded(ctx, ids, currentUserID)
-		})
 	}
 
 	// Interleave ads if there are active ads and organic posts
@@ -336,6 +361,138 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		s.enrichPostsWithPresignedURLs(ctx, validPosts)
 	})
 	return validPosts, nil
+}
+
+type NewsfeedScoreDebugItem struct {
+	PostID                    string                 `json:"postId"`
+	AuthorID                  string                 `json:"authorId"`
+	Privacy                   string                 `json:"privacy"`
+	CreatedAt                 time.Time              `json:"createdAt"`
+	Rank                      int                    `json:"rank"`
+	IsFriend                  bool                   `json:"isFriend"`
+	IsSecondDegreeOrRequested bool                   `json:"isSecondDegreeOrRequested"`
+	ViewForward               int                    `json:"viewForward"`
+	ViewBackward              int                    `json:"viewBackward"`
+	LoadedTimes               int                    `json:"loadedTimes"`
+	KeywordScore              int                    `json:"keywordScore"`
+	Score                     NewsfeedScoreBreakdown `json:"score"`
+	OriginalPostID            string                 `json:"originalPostId,omitempty"`
+	OriginalAuthorID          string                 `json:"originalAuthorId,omitempty"`
+	OriginalPostCanView       bool                   `json:"originalPostCanView"`
+}
+
+func (s *PostService) GetNewsfeedScoreBreakdown(ctx context.Context, currentUserID string, pageable Pageable) ([]NewsfeedScoreDebugItem, error) {
+	if currentUserID == "" {
+		return nil, errors.New("USER_REQUIRED")
+	}
+
+	limit := normalizeLimit(pageable.Limit)
+	candidates, err := profiler.TrackResult("post-service:query newsfeed.debugCandidates", func() ([]*model.NewsfeedCandidate, error) {
+		return s.Repo.GetRelevantNewsfeedCandidates(ctx, currentUserID)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	ranked := rankNewsfeedCandidates(candidates, now)
+	ranked = uniqueNewsfeedCandidatesByPostID(ranked)
+	if pageable.Skip < 0 {
+		pageable.Skip = 0
+	}
+	if pageable.Skip >= int64(len(ranked)) {
+		return []NewsfeedScoreDebugItem{}, nil
+	}
+	end := pageable.Skip + limit
+	if end > int64(len(ranked)) {
+		end = int64(len(ranked))
+	}
+
+	items := make([]NewsfeedScoreDebugItem, 0, end-pageable.Skip)
+	for idx, candidate := range ranked[pageable.Skip:end] {
+		if candidate == nil || candidate.Post == nil {
+			continue
+		}
+		post := candidate.Post
+		items = append(items, NewsfeedScoreDebugItem{
+			PostID:                    post.ID,
+			AuthorID:                  post.AuthorID,
+			Privacy:                   post.Privacy,
+			CreatedAt:                 post.CreatedAt,
+			Rank:                      int(pageable.Skip) + idx + 1,
+			IsFriend:                  candidate.IsFriend,
+			IsSecondDegreeOrRequested: candidate.IsSecondDegreeOrRequested,
+			ViewForward:               candidate.ViewForward,
+			ViewBackward:              candidate.ViewBackward,
+			LoadedTimes:               candidate.LoadedTimes,
+			KeywordScore:              candidate.KeywordScore,
+			Score:                     ScoreNewsfeedCandidate(candidate, now),
+			OriginalPostID:            post.OriginalPostID,
+			OriginalAuthorID:          post.OriginalAuthorID,
+			OriginalPostCanView:       post.OriginalPostCanView,
+		})
+	}
+
+	return items, nil
+}
+
+func postsFromRankedCandidates(candidates []*model.NewsfeedCandidate, skip, limit int64, now time.Time) []*model.Post {
+	ranked := rankNewsfeedCandidates(candidates, now)
+	ranked = uniqueNewsfeedCandidatesByPostID(ranked)
+	if skip < 0 {
+		skip = 0
+	}
+	if limit <= 0 {
+		return []*model.Post{}
+	}
+	if skip >= int64(len(ranked)) {
+		return []*model.Post{}
+	}
+
+	end := skip + limit
+	if end > int64(len(ranked)) {
+		end = int64(len(ranked))
+	}
+
+	posts := make([]*model.Post, 0, end-skip)
+	for _, candidate := range ranked[skip:end] {
+		if candidate != nil && candidate.Post != nil {
+			posts = append(posts, candidate.Post)
+		}
+	}
+	return posts
+}
+
+func uniqueNewsfeedCandidatesByPostID(candidates []*model.NewsfeedCandidate) []*model.NewsfeedCandidate {
+	unique := make([]*model.NewsfeedCandidate, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == nil || candidate.Post == nil || candidate.Post.ID == "" {
+			continue
+		}
+		if _, exists := seen[candidate.Post.ID]; exists {
+			continue
+		}
+		seen[candidate.Post.ID] = struct{}{}
+		unique = append(unique, candidate)
+	}
+	return unique
+}
+
+func postIDsForLoaded(posts []*model.Post) []string {
+	ids := make([]string, 0, len(posts))
+	seen := make(map[string]struct{}, len(posts))
+	for _, post := range posts {
+		if post == nil || post.ID == "" || post.IsAd {
+			continue
+		}
+		if _, exists := seen[post.ID]; exists {
+			continue
+		}
+		seen[post.ID] = struct{}{}
+		ids = append(ids, post.ID)
+	}
+	return ids
 }
 
 func (s *PostService) UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error {

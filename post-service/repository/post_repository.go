@@ -32,6 +32,8 @@ type PostRepository interface {
 	GetPostsOfUser(ctx context.Context, authorUsername string, currentUserID string, skip, limit int64) ([]*model.Post, error)
 	GetAllPosts(ctx context.Context, skip, limit int64) ([]*model.Post, error)
 	GetSuggestedPosts(ctx context.Context, currentUserID string, pageType string, skip, limit int64) ([]*model.Post, error)
+	GetRelevantNewsfeedCandidates(ctx context.Context, currentUserID string) ([]*model.NewsfeedCandidate, error)
+	MarkPostsLoaded(ctx context.Context, currentUserID string, postIDs []string) error
 	UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error
 	UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int) ([]string, string, error)
 	LikePost(ctx context.Context, userID, postID string) (string, error)
@@ -255,12 +257,116 @@ func (r *Neo4jPostRepository) GetAllPosts(ctx context.Context, skip, limit int64
 }
 
 func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUserID string, pageType string, skip, limit int64) ([]*model.Post, error) {
-	var query string
+	query := getSuggestedPostsQuery(pageType)
+
+	return profiler.TrackResult(fmt.Sprintf("post-service:query newsfeed.neo4j.%s", pageType), func() ([]*model.Post, error) {
+		return r.queryPosts(ctx, currentUserID, query, map[string]interface{}{
+			"currentUserID": currentUserID,
+			"skip":          skip,
+			"limit":         limit,
+		})
+	})
+}
+
+func (r *Neo4jPostRepository) GetRelevantNewsfeedCandidates(ctx context.Context, currentUserID string) ([]*model.NewsfeedCandidate, error) {
+	return profiler.TrackResult("post-service:query newsfeed.neo4j.relevantCandidates", func() ([]*model.NewsfeedCandidate, error) {
+		return r.queryNewsfeedCandidates(ctx, getRelevantNewsfeedCandidateQuery(), map[string]interface{}{
+			"currentUserID": currentUserID,
+		})
+	})
+}
+
+func getRelevantNewsfeedCandidateQuery() string {
+	return `
+			MATCH (viewer:User {id: $currentUserID})
+			MATCH (author:User)-[:POSTED]->(p:Post)
+			WHERE p.deletedAt IS NULL
+			  AND NOT (viewer)-[:BLOCK]-(author)
+			  AND (
+				  p.privacy = 'PUBLIC'
+				  OR author.id = viewer.id
+				  OR (p.privacy = 'FRIEND' AND EXISTS((viewer)-[:FRIEND]-(author)))
+			  )
+
+			OPTIONAL MATCH (viewer)-[friendship:FRIEND]-(author)
+			OPTIONAL MATCH (viewer)-[vu:VIEW_PROFILE]->(author)
+			OPTIONAL MATCH (author)-[uv:VIEW_PROFILE]->(viewer)
+
+			OPTIONAL MATCH (p)-[:SHARED_FROM]->(origin:Post)<-[:POSTED]-(originAuthor:User)
+			OPTIONAL MATCH (viewer)-[block:BLOCK]-(originAuthor)
+			OPTIONAL MATCH (viewer)-[originFriendship:FRIEND]-(originAuthor)
+
+			OPTIONAL MATCH (p)-[:HAS_KEYWORDS]->(keyword:Keyword)
+			OPTIONAL MATCH (viewer)-[inter:INTERACT_WITH]->(keyword)
+
+			OPTIONAL MATCH (viewer)-[liked:LIKED]->(p)
+			OPTIONAL MATCH (viewer)-[loaded:LOADED]->(p)
+
+			WITH viewer, p, author, friendship, loaded,
+				 coalesce(vu.times, 0) AS viewForward,
+				 coalesce(uv.times, 0) AS viewBackward,
+				 origin, originAuthor, block, originFriendship,
+				 liked,
+				 COALESCE(SUM(inter.score), 0) AS keywordScore
+
+			RETURN p.id, p.content, p.privacy, p.createdAt, p.updatedAt,
+			       author.id, coalesce(p.likeCount, 0), liked IS NOT NULL,
+			       p.files, coalesce(p.commentCount, 0), coalesce(p.shareCount, 0),
+			       origin.id, originAuthor.id,
+			       CASE
+			         WHEN origin IS NULL THEN true
+			         WHEN origin.deletedAt IS NOT NULL THEN false
+			         WHEN block IS NOT NULL THEN false
+			         WHEN origin.privacy = 'PUBLIC' THEN true
+			         WHEN origin.privacy = 'FRIEND' AND (viewer.id = originAuthor.id OR originFriendship IS NOT NULL) THEN true
+			         WHEN origin.privacy = 'PRIVATE' AND viewer.id = originAuthor.id THEN true
+			         ELSE false
+			       END,
+			       friendship IS NOT NULL,
+			       origin.content, origin.createdAt, origin.updatedAt, origin.privacy, origin.files,
+			       viewForward, viewBackward, coalesce(loaded.times, 0), keywordScore,
+			       friendship IS NOT NULL,
+			       EXISTS((viewer)-[:FRIEND]-()-[:FRIEND]-(author)) OR EXISTS((viewer)-[:REQUEST]-(author))
+	`
+}
+
+func (r *Neo4jPostRepository) MarkPostsLoaded(ctx context.Context, currentUserID string, postIDs []string) error {
+	if currentUserID == "" || len(postIDs) == 0 {
+		return nil
+	}
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		_, err := tx.Run(ctx, getMarkPostsLoadedQuery(), map[string]interface{}{
+			"currentUserID": currentUserID,
+			"postIDs":       postIDs,
+		})
+		return nil, err
+	})
+
+	return err
+}
+
+func getMarkPostsLoadedQuery() string {
+	return `
+		MATCH (viewer:User {id: $currentUserID})
+		UNWIND $postIDs AS postID
+		MATCH (p:Post {id: postID})
+		MERGE (viewer)-[l:LOADED]->(p)
+		ON CREATE SET l.times = 1
+		ON MATCH SET l.times = coalesce(l.times, 0) + 1
+		RETURN count(p)
+	`
+}
+
+func getSuggestedPostsQuery(pageType string) string {
 	switch pageType {
 	case PageTypeFriendOnly:
-		query = `
+		return `
 			MATCH (viewer:User {id: $currentUserID})
-			MATCH (viewer)-[:FRIEND]->(author:User)-[:POSTED]->(p:Post)
+			MATCH (viewer)-[:FRIEND]-(author:User)-[:POSTED]->(p:Post)
 			WHERE p.deletedAt IS NULL AND p.privacy IN ['PUBLIC', 'FRIEND']
 			  AND NOT (viewer)-[:BLOCK]-(author)
 			
@@ -296,13 +402,13 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 				   origin.content, origin.createdAt, origin.updatedAt, origin.privacy, origin.files
 		`
 	case PageTypeTime:
-		query = `
+		return `
 			MATCH (viewer:User {id: $currentUserID})
 			MATCH (author:User)-[:POSTED]->(p:Post)
 			WHERE p.deletedAt IS NULL
 			  AND NOT (viewer)-[:BLOCK]-(author)
 			
-			OPTIONAL MATCH (viewer)-[friendship:FRIEND]->(author)
+			OPTIONAL MATCH (viewer)-[friendship:FRIEND]-(author)
 			WHERE (
 				p.privacy = 'PUBLIC' 
 				OR author.id = viewer.id 
@@ -334,7 +440,7 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 			SKIP $skip LIMIT $limit
 		`
 	default:
-		query = `
+		return `
 			MATCH (viewer:User {id: $currentUserID})
 			MATCH (author:User)-[:POSTED]->(p:Post)
 			WHERE p.deletedAt IS NULL
@@ -342,16 +448,16 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 			  AND (
 				  p.privacy = 'PUBLIC' 
 				  OR author.id = viewer.id 
-				  OR (p.privacy = 'FRIEND' AND EXISTS((viewer)-[:FRIEND]->(author)))
+				  OR (p.privacy = 'FRIEND' AND EXISTS((viewer)-[:FRIEND]-(author)))
 			  )
 			
-			OPTIONAL MATCH (viewer)-[friendship:FRIEND]->(author)
+			OPTIONAL MATCH (viewer)-[friendship:FRIEND]-(author)
 				OPTIONAL MATCH (viewer)-[vu:VIEW_PROFILE]->(author)
 				OPTIONAL MATCH (author)-[uv:VIEW_PROFILE]->(viewer)
 			
 			OPTIONAL MATCH (p)-[:SHARED_FROM]->(origin:Post)<-[:POSTED]-(originAuthor:User)
 			OPTIONAL MATCH (viewer)-[block:BLOCK]-(originAuthor)
-			OPTIONAL MATCH (viewer)-[originFriendship:FRIEND]->(originAuthor)
+			OPTIONAL MATCH (viewer)-[originFriendship:FRIEND]-(originAuthor)
 			
 			OPTIONAL MATCH (p)-[:HAS_KEYWORDS]->(keyword:Keyword)
 			OPTIONAL MATCH (viewer)-[inter:INTERACT_WITH]->(keyword)
@@ -414,14 +520,6 @@ func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUser
 				   origin.content, origin.createdAt, origin.updatedAt, origin.privacy, origin.files
 		`
 	}
-
-	return profiler.TrackResult(fmt.Sprintf("post-service:query newsfeed.neo4j.%s", pageType), func() ([]*model.Post, error) {
-		return r.queryPosts(ctx, currentUserID, query, map[string]interface{}{
-			"currentUserID": currentUserID,
-			"skip":          skip,
-			"limit":         limit,
-		})
-	})
 }
 
 func (r *Neo4jPostRepository) UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error {
@@ -1164,6 +1262,27 @@ func (r *Neo4jPostRepository) queryPosts(ctx context.Context, currentUserID stri
 	return res.([]*model.Post), nil
 }
 
+func (r *Neo4jPostRepository) queryNewsfeedCandidates(ctx context.Context, query string, params map[string]interface{}) ([]*model.NewsfeedCandidate, error) {
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return nil, err
+		}
+		candidates := make([]*model.NewsfeedCandidate, 0)
+		for result.Next(ctx) {
+			candidates = append(candidates, newsfeedCandidateFromRecord(result.Record().Values))
+		}
+		return candidates, result.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.([]*model.NewsfeedCandidate), nil
+}
+
 func (r *Neo4jPostRepository) queryComments(ctx context.Context, currentUserID string, query string, params map[string]interface{}) ([]*model.Comment, error) {
 	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
 	defer session.Close(ctx)
@@ -1223,6 +1342,35 @@ func (r *Neo4jPostRepository) queryComments(ctx context.Context, currentUserID s
 		return nil, err
 	}
 	return res.([]*model.Comment), nil
+}
+
+func newsfeedCandidateFromRecord(vals []interface{}) *model.NewsfeedCandidate {
+	candidate := &model.NewsfeedCandidate{
+		Post: postFromRecord(vals),
+	}
+	if len(vals) > 20 {
+		candidate.ViewForward = getIntVal(vals[20])
+	}
+	if len(vals) > 21 {
+		candidate.ViewBackward = getIntVal(vals[21])
+	}
+	if len(vals) > 22 {
+		candidate.LoadedTimes = getIntVal(vals[22])
+	}
+	if len(vals) > 23 {
+		candidate.KeywordScore = getIntVal(vals[23])
+	}
+	if len(vals) > 24 {
+		if v, ok := vals[24].(bool); ok {
+			candidate.IsFriend = v
+		}
+	}
+	if len(vals) > 25 {
+		if v, ok := vals[25].(bool); ok {
+			candidate.IsSecondDegreeOrRequested = v
+		}
+	}
+	return candidate
 }
 
 func postFromRecord(vals []interface{}) *model.Post {

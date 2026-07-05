@@ -111,10 +111,6 @@ func (p *KafkaKeywordPublisher) Interact(ctx context.Context, postID string, act
 	return err
 }
 
-func (p *KafkaKeywordPublisher) PostsLoaded(ctx context.Context, postIDs []string, userID string) error {
-	return nil
-}
-
 func (p *KafkaKeywordPublisher) Close() error {
 	return p.writer.Close()
 }

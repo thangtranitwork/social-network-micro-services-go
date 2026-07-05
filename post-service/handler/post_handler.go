@@ -39,6 +39,28 @@ func (h *PostHandler) GetNewsfeed(c *gin.Context) {
 	sendSuccess(c, posts)
 }
 
+func (h *PostHandler) GetNewsfeedScoreBreakdown(c *gin.Context) {
+	userID := c.Query("userId")
+	if userID == "" {
+		userID = c.Query("current_user_id")
+	}
+	if userID == "" {
+		userID = getCurrentUser(c)
+	}
+	if userID == "" {
+		exception.SendError(c, exception.Unauthorized)
+		return
+	}
+
+	items, err := h.PostSvc.GetNewsfeedScoreBreakdown(c.Request.Context(), userID, getPageable(c))
+	if err != nil {
+		logger.WithContext(c.Request.Context()).Err(err).Error("GetNewsfeedScoreBreakdown failed")
+		exception.SendError(c, exception.FailToGetPost)
+		return
+	}
+	sendSuccess(c, items)
+}
+
 func (h *PostHandler) GetPostsOfUser(c *gin.Context) {
 	username := c.Param("username")
 	userID := getCurrentUser(c)

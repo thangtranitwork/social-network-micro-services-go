@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 type MockPostRepository struct {
 	Post       *model.Post
 	Posts      []*model.Post
+	Candidates []*model.NewsfeedCandidate
 	CommentObj *model.Comment
 	Comments   []*model.Comment
 	FileIDs    []string
@@ -53,6 +55,21 @@ func (m *MockPostRepository) GetAllPosts(ctx context.Context, skip, limit int64)
 
 func (m *MockPostRepository) GetSuggestedPosts(ctx context.Context, currentUserID string, pageType string, skip, limit int64) ([]*model.Post, error) {
 	return m.Posts, m.Err
+}
+
+func (m *MockPostRepository) GetRelevantNewsfeedCandidates(ctx context.Context, currentUserID string) ([]*model.NewsfeedCandidate, error) {
+	if m.Candidates != nil {
+		return m.Candidates, m.Err
+	}
+	candidates := make([]*model.NewsfeedCandidate, 0, len(m.Posts))
+	for _, post := range m.Posts {
+		candidates = append(candidates, &model.NewsfeedCandidate{Post: post})
+	}
+	return candidates, m.Err
+}
+
+func (m *MockPostRepository) MarkPostsLoaded(ctx context.Context, currentUserID string, postIDs []string) error {
+	return m.Err
 }
 
 func (m *MockPostRepository) UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error {
@@ -149,6 +166,7 @@ func setupTestRouter(repo *MockPostRepository) *gin.Engine {
 
 	// Register Routes
 	r.GET("/v1/posts/newsfeed", h.GetNewsfeed)
+	r.GET("/debug/newsfeed/score-breakdown", h.GetNewsfeedScoreBreakdown)
 	r.GET("/v1/posts/of-user/:username", h.GetPostsOfUser)
 	r.GET("/v1/posts/:id", h.GetPost)
 	r.POST("/v1/posts/post", h.CreatePost)
@@ -184,6 +202,42 @@ func TestGetNewsfeed(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
+	}
+}
+
+func TestGetNewsfeedScoreBreakdownOmitsPostContent(t *testing.T) {
+	now := time.Now()
+	mockRepo := &MockPostRepository{
+		Candidates: []*model.NewsfeedCandidate{
+			{
+				Post: &model.Post{
+					ID:                  "post-1",
+					Content:             "Secret private content",
+					AuthorID:            "author-1",
+					Privacy:             "PUBLIC",
+					CreatedAt:           now,
+					OriginalPostID:      "origin-1",
+					OriginalAuthorID:    "origin-author-1",
+					OriginalPostCanView: false,
+				},
+				KeywordScore: 5,
+				IsFriend:     true,
+			},
+		},
+	}
+	r := setupTestRouter(mockRepo)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/debug/newsfeed/score-breakdown?userId=user-1&skip=0&limit=5", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "Secret private content") {
+		t.Fatalf("expected score breakdown to omit post content, got body: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"score"`) {
+		t.Fatalf("expected score breakdown to include score components, got body: %s", w.Body.String())
 	}
 }
 
