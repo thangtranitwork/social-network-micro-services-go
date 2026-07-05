@@ -30,6 +30,10 @@ func (m *MockAuthService) RefreshToken(tokenStr string) (string, error) {
 	return m.MockAccessToken, m.Err
 }
 
+func (m *MockAuthService) RefreshTokenForRole(tokenStr, expectedRole string) (string, error) {
+	return m.MockAccessToken, m.Err
+}
+
 func (m *MockAuthService) Logout(refreshToken string) error {
 	return m.Err
 }
@@ -100,7 +104,10 @@ func setupTestRouter(svc *MockAuthService) *gin.Engine {
 		authRoutes.POST("/login", h.Login)
 		authRoutes.POST("/login-admin", h.LoginAdmin)
 		authRoutes.POST("/refresh", h.Refresh)
+		authRoutes.POST("/refresh-admin", h.RefreshAdmin)
 		authRoutes.DELETE("/logout", h.Logout)
+		authRoutes.DELETE("/logout-user", h.LogoutUser)
+		authRoutes.DELETE("/logout-admin", h.LogoutAdmin)
 		authRoutes.POST("/forgot-password", h.ForgotPassword)
 		authRoutes.POST("/reset-password", h.ResetPassword)
 		authRoutes.POST("/change-password", h.ChangePassword)
@@ -219,6 +226,46 @@ func TestLogout(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
+	}
+}
+
+func TestLogoutUserOnlyClearsUserRefreshCookie(t *testing.T) {
+	mockSvc := &MockAuthService{}
+	r := setupTestRouter(mockSvc)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("DELETE", "/v1/auth/logout-user", nil)
+	req.AddCookie(&http.Cookie{Name: "token", Value: "user-refresh-token"})
+	req.AddCookie(&http.Cookie{Name: "admin_token", Value: "admin-refresh-token"})
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == "admin_token" {
+			t.Fatal("logout-user must not clear admin refresh cookie")
+		}
+	}
+}
+
+func TestLogoutAdminOnlyClearsAdminRefreshCookie(t *testing.T) {
+	mockSvc := &MockAuthService{}
+	r := setupTestRouter(mockSvc)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("DELETE", "/v1/auth/logout-admin", nil)
+	req.AddCookie(&http.Cookie{Name: "token", Value: "user-refresh-token"})
+	req.AddCookie(&http.Cookie{Name: "admin_token", Value: "admin-refresh-token"})
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == "token" {
+			t.Fatal("logout-admin must not clear user refresh cookie")
+		}
 	}
 }
 

@@ -167,6 +167,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 	r.POST("/v1/auth/login", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.POST("/v1/auth/login-admin", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.POST("/v1/auth/refresh", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
+	r.POST("/v1/auth/refresh-admin", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.POST("/v1/auth/forgot-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.POST("/v1/auth/reset-password", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
 	r.GET("/v1/auth/google/login", publicRateLimit, proxy.ProxyTo(cfg.AuthHttpAddr))
@@ -194,6 +195,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 	{
 		// Proxy to Auth Service (Protected routes)
 		authGroup.DELETE("/v1/auth/logout", proxy.ProxyTo(cfg.AuthHttpAddr))
+		authGroup.DELETE("/v1/auth/logout-user", proxy.ProxyTo(cfg.AuthHttpAddr))
+		authGroup.DELETE("/v1/auth/logout-admin", proxy.ProxyTo(cfg.AuthHttpAddr))
 		authGroup.POST("/v1/auth/change-password", proxy.ProxyTo(cfg.AuthHttpAddr))
 		authGroup.Any("/v1/auth/2fa/*any", proxy.ProxyTo(cfg.AuthHttpAddr))
 		authGroup.Any("/v1/auth/2fa", proxy.ProxyTo(cfg.AuthHttpAddr))

@@ -187,6 +187,10 @@ func (s *AuthService) Login(email, password, twoFactorCode string, isAdmin bool)
 }
 
 func (s *AuthService) RefreshToken(tokenStr string) (string, error) {
+	return s.RefreshTokenForRole(tokenStr, "")
+}
+
+func (s *AuthService) RefreshTokenForRole(tokenStr, expectedRole string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -204,6 +208,9 @@ func (s *AuthService) RefreshToken(tokenStr string) (string, error) {
 	if err != nil || !token.Valid {
 		return "", exception.NewAppException(exception.InvalidOrExpiredRefreshToken)
 	}
+	if expectedRole != "" && claims.Role != expectedRole {
+		return "", exception.NewAppException(exception.InvalidOrExpiredRefreshToken)
+	}
 
 	accountID, err := uuid.Parse(claims.UserId)
 	if err != nil {
@@ -212,6 +219,9 @@ func (s *AuthService) RefreshToken(tokenStr string) (string, error) {
 	account, err := s.AccountRepo.FindByID(ctx, accountID)
 	if err != nil {
 		return "", exception.NewAppException(exception.AccountNotFound)
+	}
+	if expectedRole != "" && account.Role != expectedRole {
+		return "", exception.NewAppException(exception.InvalidOrExpiredRefreshToken)
 	}
 
 	return s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTSecret, s.Cfg.AccessTokenDuration)

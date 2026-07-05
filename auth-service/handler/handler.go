@@ -16,6 +16,7 @@ import (
 type AuthServiceInterface interface {
 	Login(email, password, twoFactorCode string, isAdmin bool) (string, string, error)
 	RefreshToken(tokenStr string) (string, error)
+	RefreshTokenForRole(tokenStr, expectedRole string) (string, error)
 	Logout(refreshToken string) error
 	Register(email, password, givenName, familyName, birthdate, clientIP string) (*model.VerifyCode, error)
 	Verify(email string, code uuid.UUID) error
