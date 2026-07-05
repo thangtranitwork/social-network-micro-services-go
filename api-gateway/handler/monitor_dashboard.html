@@ -1361,7 +1361,7 @@
             isRefreshing = true;
             refreshPromise = (async () => {
                 try {
-                    const response = await fetch('/v1/auth/refresh', {
+                    const response = await fetch('/v1/auth/refresh-admin', {
                         method: 'POST'
                     });
                     if (response.ok) {

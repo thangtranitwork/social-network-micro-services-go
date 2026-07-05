@@ -392,6 +392,16 @@
                                 <option value="ERROR">ERROR</option>
                                 <option value="FATAL">FATAL</option>
                             </select>
+                            <select class="px-3 py-1.5 bg-white border border-stone-200 text-stone-700 rounded-xl text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" id="method-filter" onchange="applyFilter()">
+                                <option value="ALL">All Methods</option>
+                                <option value="GET">GET</option>
+                                <option value="POST">POST</option>
+                                <option value="PUT">PUT</option>
+                                <option value="PATCH">PATCH</option>
+                                <option value="DELETE">DELETE</option>
+                                <option value="OPTIONS">OPTIONS</option>
+                                <option value="HEAD">HEAD</option>
+                            </select>
                             <input type="text" class="px-3 py-1.5 bg-white border border-stone-200 text-stone-700 placeholder-stone-400 rounded-xl text-xs outline-none focus:border-indigo-500 w-44 transition-all" placeholder="Search / Filter..." id="search-input" oninput="applyFilter()">
                             <button class="px-3 py-1.5 bg-white border border-stone-200 hover:bg-stone-50 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl transition-all shadow-sm flex items-center gap-1 active:scale-95" onclick="togglePlayPause()" id="play-pause-btn">
                                 <span>Pause</span>
@@ -687,6 +697,19 @@
             return '<div class="mt-1.5 pl-9 flex flex-col gap-0.5">' + contextFields.join("") + '</div>';
         }
 
+        function extractLogMethod(...sources) {
+            for (const source of sources) {
+                if (source === undefined || source === null) continue;
+                const text = String(source).toUpperCase();
+                const explicitMatch = text.match(/(?:^|[\s"'{,])METHOD["']?\s*[:=]\s*["']?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b/);
+                if (explicitMatch) return explicitMatch[1];
+
+                const httpMatch = text.match(/\bHTTP\s+(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b/);
+                if (httpMatch) return httpMatch[1];
+            }
+            return "ALL";
+        }
+
         function formatLogLine(rawText) {
             let text = stripAnsi(rawText);
 
@@ -735,6 +758,7 @@
                         }
                     }
                 }
+                const method = extractLogMethod(entry.method, entry.fields?.method, entry.message, text);
 
                 return {
                     timestamp,
@@ -743,7 +767,9 @@
                     contextHtml: contextFieldsToHtml(contextFields),
                     callerStr: entry.caller || "",
                     levelClass,
-                    jsonFields
+                    jsonFields,
+                    level: lvl,
+                    method
                 };
             } catch (e) {
                 // Fallback to legacy text parsing
@@ -837,9 +863,21 @@
                     contextHtml: contextFieldsToHtml(contextFields),
                     callerStr,
                     levelClass,
-                    jsonFields
+                    jsonFields,
+                    level: levelClass.replace("level-", "").toUpperCase(),
+                    method: extractLogMethod(message, text)
                 };
             }
+        }
+
+        function shouldDisplayLogLine(line, selectedLevel, selectedMethod) {
+            const text = line.dataset.searchText || line.innerText || "";
+            const lineLevel = line.dataset.level || "ALL";
+            const lineMethod = line.dataset.method || "ALL";
+            const matchesSearch = !filterText || text.includes(filterText.toLowerCase());
+            const matchesLevel = selectedLevel === "ALL" || lineLevel === selectedLevel;
+            const matchesMethod = selectedMethod === "ALL" || lineMethod === selectedMethod;
+            return matchesSearch && matchesLevel && matchesMethod;
         }
 
         function appendLogLine(rawText, customClass = '') {
@@ -850,6 +888,9 @@
             lineDiv.className = 'log-line border-b border-white/[0.03] py-2 flex flex-col items-stretch';
 
             const formatted = formatLogLine(rawText);
+            lineDiv.dataset.level = formatted.level || "ALL";
+            lineDiv.dataset.method = formatted.method || extractLogMethod(rawText);
+            lineDiv.dataset.searchText = stripAnsi(rawText).toLowerCase();
 
             const topDiv = document.createElement('div');
             topDiv.style.display = 'flex';
@@ -933,16 +974,9 @@
 
             // Apply search & level filters
             const selectedLevel = document.getElementById('level-filter').value;
-            let lineLevel = "ALL";
-            if (rawText.includes('[FATAL]')) lineLevel = "FATAL";
-            else if (rawText.includes('[INFO]')) lineLevel = "INFO";
-            else if (rawText.includes('[WARN]')) lineLevel = "WARN";
-            else if (rawText.includes('[ERROR]')) lineLevel = "ERROR";
+            const selectedMethod = document.getElementById('method-filter').value;
 
-            const matchesSearch = !filterText || rawText.toLowerCase().includes(filterText.toLowerCase());
-            const matchesLevel = (selectedLevel === "ALL" || lineLevel === selectedLevel);
-
-            if (matchesSearch && matchesLevel) {
+            if (shouldDisplayLogLine(lineDiv, selectedLevel, selectedMethod)) {
                 lineDiv.style.display = 'flex';
             } else {
                 lineDiv.style.display = 'none';
@@ -966,21 +1000,11 @@
         function applyFilter() {
             filterText = document.getElementById('search-input').value;
             const selectedLevel = document.getElementById('level-filter').value;
+            const selectedMethod = document.getElementById('method-filter').value;
             const lines = document.querySelectorAll('.log-line');
 
             lines.forEach(line => {
-                const text = line.innerText;
-
-                let lineLevel = "ALL";
-                if (text.includes('FATAL')) lineLevel = "FATAL";
-                else if (text.includes('INFO')) lineLevel = "INFO";
-                else if (text.includes('WARN')) lineLevel = "WARN";
-                else if (text.includes('ERROR')) lineLevel = "ERROR";
-
-                const matchesSearch = !filterText || text.toLowerCase().includes(filterText.toLowerCase());
-                const matchesLevel = (selectedLevel === "ALL" || lineLevel === selectedLevel);
-
-                if (matchesSearch && matchesLevel) {
+                if (shouldDisplayLogLine(line, selectedLevel, selectedMethod)) {
                     line.style.display = 'flex';
                 } else {
                     line.style.display = 'none';

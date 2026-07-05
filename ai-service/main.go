@@ -61,6 +61,7 @@ func (s *AIService) ExtractKeywords(ctx context.Context, content string) []strin
 	if s.GeminiKey != "" {
 		keywords, err := s.callGeminiAPI(ctx, content)
 		if err == nil && len(keywords) > 0 {
+			logger.WithContext(ctx).Field("content", content).JsonField("keywords", keywords).Info("AI keyword extraction completed")
 			return keywords
 		}
 		logGeminiFallback(ctx, err, "keyword_extraction", "", "")
