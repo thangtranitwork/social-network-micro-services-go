@@ -41,7 +41,7 @@ type UserRepository interface {
 	Block(ctx context.Context, currentUserID string, targetUsername string) error
 	Unblock(ctx context.Context, currentUserID string, targetUsername string) error
 	GetBlockedUsers(ctx context.Context, currentUserID string) ([]*model.User, error)
-	SendFriendRequest(ctx context.Context, currentUserID string, targetID string, requestReceivedCount int) error
+	SendFriendRequest(ctx context.Context, currentUserID string, targetID string, requestReceivedCount int, maxReceivedRequestCount int) error
 	AcceptFriendRequest(ctx context.Context, currentUserID string, targetUsername string) error
 	DeleteFriendRequest(ctx context.Context, currentUserID string, targetUsername string) error
 	GetSentRequests(ctx context.Context, currentUserID string) ([]*model.User, error)
@@ -767,7 +767,7 @@ func (r *Neo4jUserRepository) GetBlockedUsers(ctx context.Context, currentUserID
 	return list, nil
 }
 
-func (r *Neo4jUserRepository) SendFriendRequest(ctx context.Context, currentUserID string, targetID string, requestReceivedCount int) error {
+func (r *Neo4jUserRepository) SendFriendRequest(ctx context.Context, currentUserID string, targetID string, requestReceivedCount int, maxReceivedRequestCount int) error {
 	if db.Neo4jDriver != nil {
 		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 		defer session.Close(ctx)
@@ -787,7 +787,7 @@ func (r *Neo4jUserRepository) SendFriendRequest(ctx context.Context, currentUser
 				}
 			}
 
-			if requestReceivedCount+1 > model.MaxReceivedRequestCount {
+			if requestReceivedCount+1 > maxReceivedRequestCount {
 				return nil, ErrAddFriendRequestReceivedLimit
 			}
 
@@ -803,6 +803,10 @@ func (r *Neo4jUserRepository) SendFriendRequest(ctx context.Context, currentUser
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if requestReceivedCount+1 > maxReceivedRequestCount {
+		return ErrAddFriendRequestReceivedLimit
+	}
 
 	r.fallbackReqs[currentUserID] = append(r.fallbackReqs[currentUserID], targetID)
 	return nil

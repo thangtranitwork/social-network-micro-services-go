@@ -14,7 +14,7 @@ import (
 
 func (s *PostService) Comment(ctx context.Context, authorID, postID, content string, fileID *string) (*model.Comment, error) {
 	content = strings.TrimSpace(content)
-	if err := validateCommentContent(content, fileID); err != nil {
+	if err := s.validateCommentContent(ctx, content, fileID); err != nil {
 		return nil, err
 	}
 
@@ -54,7 +54,7 @@ func (s *PostService) Comment(ctx context.Context, authorID, postID, content str
 
 func (s *PostService) ReplyComment(ctx context.Context, authorID, originalCommentID, content string, fileID *string) (*model.Comment, error) {
 	content = strings.TrimSpace(content)
-	if err := validateCommentContent(content, fileID); err != nil {
+	if err := s.validateCommentContent(ctx, content, fileID); err != nil {
 		return nil, err
 	}
 
@@ -167,7 +167,7 @@ func (s *PostService) GetComments(ctx context.Context, postID, currentUserID str
 		return nil, err
 	}
 
-	comments, err := s.Repo.GetComments(ctx, postID, currentUserID, pageable.Type, pageable.Skip, normalizeLimit(pageable.Limit))
+	comments, err := s.Repo.GetComments(ctx, postID, currentUserID, pageable.Type, pageable.Skip, s.normalizeLimit(ctx, pageable.Limit))
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func (s *PostService) GetComments(ctx context.Context, postID, currentUserID str
 }
 
 func (s *PostService) GetRepliedComments(ctx context.Context, originalCommentID, currentUserID string, pageable Pageable) ([]*model.Comment, error) {
-	comments, err := s.Repo.GetRepliedComments(ctx, originalCommentID, currentUserID, pageable.Skip, normalizeLimit(pageable.Limit))
+	comments, err := s.Repo.GetRepliedComments(ctx, originalCommentID, currentUserID, pageable.Skip, s.normalizeLimit(ctx, pageable.Limit))
 	if err != nil {
 		return nil, err
 	}

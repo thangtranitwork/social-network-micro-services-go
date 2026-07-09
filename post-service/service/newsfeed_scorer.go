@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"sort"
 	"time"
 
@@ -8,14 +9,14 @@ import (
 )
 
 type newsfeedScoreWeights struct {
-	FriendRelationship      int
-	SecondDegreeOrRequested int
-	ViewForward             int
-	ViewBackward            int
-	Like                    int
-	Comment                 int
-	Share                   int
-	LoadedPenalty           int
+	FriendRelationship      int `json:"friendRelationship"`
+	SecondDegreeOrRequested int `json:"secondDegreeOrRequested"`
+	ViewForward             int `json:"viewForward"`
+	ViewBackward            int `json:"viewBackward"`
+	Like                    int `json:"like"`
+	Comment                 int `json:"comment"`
+	Share                   int `json:"share"`
+	LoadedPenalty           int `json:"loadedPenalty"`
 }
 
 type NewsfeedScoreBreakdown struct {
@@ -39,9 +40,13 @@ var defaultNewsfeedScoreWeights = newsfeedScoreWeights{
 }
 
 func rankNewsfeedCandidates(candidates []*model.NewsfeedCandidate, now time.Time) []*model.NewsfeedCandidate {
+	return rankNewsfeedCandidatesWithWeights(candidates, now, defaultNewsfeedScoreWeights)
+}
+
+func rankNewsfeedCandidatesWithWeights(candidates []*model.NewsfeedCandidate, now time.Time, weights newsfeedScoreWeights) []*model.NewsfeedCandidate {
 	scores := make(map[*model.NewsfeedCandidate]NewsfeedScoreBreakdown, len(candidates))
 	for _, candidate := range candidates {
-		scores[candidate] = ScoreNewsfeedCandidate(candidate, now)
+		scores[candidate] = scoreNewsfeedCandidate(candidate, now, weights)
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -61,6 +66,15 @@ func rankNewsfeedCandidates(candidates []*model.NewsfeedCandidate, now time.Time
 
 func ScoreNewsfeedCandidate(candidate *model.NewsfeedCandidate, now time.Time) NewsfeedScoreBreakdown {
 	return scoreNewsfeedCandidate(candidate, now, defaultNewsfeedScoreWeights)
+}
+
+func (s *PostService) newsfeedScoreWeights(ctx context.Context) newsfeedScoreWeights {
+	weights := defaultNewsfeedScoreWeights
+	if s == nil || s.RuntimeCfg == nil {
+		return weights
+	}
+	_ = s.RuntimeCfg.JSON(ctx, "newsfeed.score_weights", &weights)
+	return weights
 }
 
 func scoreNewsfeedCandidate(candidate *model.NewsfeedCandidate, now time.Time, weights newsfeedScoreWeights) NewsfeedScoreBreakdown {

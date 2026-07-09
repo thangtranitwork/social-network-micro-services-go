@@ -68,7 +68,7 @@ func (m *MockUserRepository) GetBlockedUsers(ctx context.Context, currentUserID 
 	return m.Users, m.Err
 }
 
-func (m *MockUserRepository) SendFriendRequest(ctx context.Context, currentUserID string, targetID string, requestReceivedCount int) error {
+func (m *MockUserRepository) SendFriendRequest(ctx context.Context, currentUserID string, targetID string, requestReceivedCount int, maxReceivedRequestCount int) error {
 	return m.Err
 }
 

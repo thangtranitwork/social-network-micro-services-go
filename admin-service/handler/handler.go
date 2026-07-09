@@ -117,6 +117,13 @@ func (h *AdminHandler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/v1/admin/users/:id/suspend", h.SuspendUser)
 	r.POST("/v1/admin/users/:id/unsuspend", h.UnsuspendUser)
 
+	// Runtime Configuration Routes
+	r.GET("/v1/admin/runtime-configs", h.GetRuntimeConfigs)
+	r.POST("/v1/admin/runtime-configs", h.CreateRuntimeConfig)
+	r.PATCH("/v1/admin/runtime-configs/:key", h.UpdateRuntimeConfig)
+	r.POST("/v1/admin/runtime-configs/:key/reset", h.ResetRuntimeConfig)
+	r.POST("/v1/admin/runtime-configs/sync", h.SyncRuntimeConfigs)
+
 	// Announcement Routes
 	r.GET("/v1/announcement", h.GetAnnouncement)
 	r.POST("/v1/admin/announcement", h.SetAnnouncement)

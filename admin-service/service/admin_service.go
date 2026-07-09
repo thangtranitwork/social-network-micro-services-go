@@ -11,15 +11,17 @@ import (
 )
 
 type AdminService struct {
-	repo           repository.AdminRepository
-	moderationRepo repository.ModerationRepository
-	moderation     moderationStore
+	repo              repository.AdminRepository
+	moderationRepo    repository.ModerationRepository
+	runtimeConfigRepo repository.RuntimeConfigRepository
+	moderation        moderationStore
 }
 
 func NewAdminService(repo repository.AdminRepository) *AdminService {
 	return &AdminService{
-		repo:           repo,
-		moderationRepo: repository.NewModerationRepository(db.PostgresDB),
+		repo:              repo,
+		moderationRepo:    repository.NewModerationRepository(db.PostgresDB),
+		runtimeConfigRepo: repository.NewRuntimeConfigRepository(db.PostgresDB),
 		moderation: moderationStore{
 			items:   make(map[string]*model.ModerationQueueItem),
 			audits:  make([]model.ModerationAuditLog, 0),

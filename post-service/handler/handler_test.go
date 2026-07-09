@@ -76,7 +76,7 @@ func (m *MockPostRepository) UpdatePrivacy(ctx context.Context, currentUserID, p
 	return m.Err
 }
 
-func (m *MockPostRepository) UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int) ([]string, string, error) {
+func (m *MockPostRepository) UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int, maxPostContentLength int) ([]string, string, error) {
 	var c string
 	if content != nil {
 		c = *content

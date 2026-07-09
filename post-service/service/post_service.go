@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"social-network-go/internal/runtimeconfig"
 	"social-network-go/logger"
 	"social-network-go/pb"
 	"social-network-go/post-service/config"
@@ -62,6 +63,7 @@ type PostService struct {
 	Redis      *redis.Client
 	UserClient pb.UserServiceClient
 	Repo       repository.PostRepository
+	RuntimeCfg *runtimeconfig.Provider
 
 	FileClient        FileClient
 	Notification      NotificationPublisher
@@ -93,6 +95,7 @@ func NewPostService(cfg *config.Config, repo repository.PostRepository) *PostSer
 		Redis:      rdb,
 		UserClient: userClient,
 		Repo:       repo,
+		RuntimeCfg: runtimeconfig.NewProvider(rdb),
 	}
 }
 
@@ -268,25 +271,25 @@ func (s *PostService) ResolveAuthors(ctx context.Context, posts []*model.Post) {
 	}
 }
 
-func validatePostRequest(content string, files []string) error {
+func (s *PostService) validatePostRequest(ctx context.Context, content string, files []string) error {
 	if strings.TrimSpace(content) == "" && len(files) == 0 {
 		return errors.New("POST_CONTENT_AND_ATTACH_FILES_BOTH_EMPTY")
 	}
-	if len(content) > MaxPostContentLength {
+	if len(content) > s.maxPostContentLength(ctx) {
 		return errors.New("INVALID_POST_CONTENT_LENGTH")
 	}
-	if len(files) > MaxPostAttachFiles {
+	if len(files) > s.maxPostAttachFiles(ctx) {
 		return errors.New("INVALID_NUMBER_OF_POST_ATTACHMENTS")
 	}
 	return nil
 }
 
-func validateCommentContent(content string, fileID *string) error {
+func (s *PostService) validateCommentContent(ctx context.Context, content string, fileID *string) error {
 	hasNoAttachment := fileID == nil || strings.TrimSpace(*fileID) == ""
 	if strings.TrimSpace(content) == "" && hasNoAttachment {
 		return errors.New("COMMENT_CONTENT_AND_ATTACH_FILE_BOTH_EMPTY")
 	}
-	if len(content) > MaxCommentContentLength {
+	if len(content) > s.maxCommentContentLength(ctx) {
 		return errors.New("INVALID_COMMENT_CONTENT_LENGTH")
 	}
 	return nil
@@ -296,11 +299,38 @@ func isValidPostPrivacy(privacy string) bool {
 	return privacy == PostPrivacyPublic || privacy == PostPrivacyFriend || privacy == PostPrivacyPrivate
 }
 
-func normalizeLimit(limit int64) int64 {
-	if limit <= 0 || limit > 100 {
-		return 20
+func (s *PostService) normalizeLimit(ctx context.Context, limit int64) int64 {
+	defaultLimit := int64(s.runtimeInt(ctx, "post.default_page_limit", 20))
+	maxLimit := int64(s.runtimeInt(ctx, "post.max_page_limit", 100))
+	if defaultLimit <= 0 {
+		defaultLimit = 20
+	}
+	if maxLimit <= 0 {
+		maxLimit = 100
+	}
+	if limit <= 0 || limit > maxLimit {
+		return defaultLimit
 	}
 	return limit
+}
+
+func (s *PostService) maxPostContentLength(ctx context.Context) int {
+	return s.runtimeInt(ctx, "post.max_content_length", MaxPostContentLength)
+}
+
+func (s *PostService) maxPostAttachFiles(ctx context.Context) int {
+	return s.runtimeInt(ctx, "post.max_attach_files", MaxPostAttachFiles)
+}
+
+func (s *PostService) maxCommentContentLength(ctx context.Context) int {
+	return s.runtimeInt(ctx, "post.max_comment_content_length", MaxCommentContentLength)
+}
+
+func (s *PostService) runtimeInt(ctx context.Context, key string, fallback int) int {
+	if s == nil || s.RuntimeCfg == nil {
+		return fallback
+	}
+	return s.RuntimeCfg.Int(ctx, key, fallback)
 }
 
 func truncateByWord(s string) string {

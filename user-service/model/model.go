@@ -95,13 +95,13 @@ type UpdateBioRequest struct {
 
 // UpdateNameRequest
 type UpdateNameRequest struct {
-	GivenName  string `json:"givenName" binding:"required,max=64"`
-	FamilyName string `json:"familyName" binding:"required,max=64"`
+	GivenName  string `json:"givenName" binding:"required"`
+	FamilyName string `json:"familyName" binding:"required"`
 }
 
 // UpdateUsernameRequest
 type UpdateUsernameRequest struct {
-	Username string `json:"username" binding:"required,max=32"`
+	Username string `json:"username" binding:"required"`
 }
 
 // UpdateBirthdateRequest

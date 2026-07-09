@@ -32,7 +32,7 @@ func (s *PostService) CreatePost(ctx context.Context, authorID, content, privacy
 	}
 	fileIDs = cleanFileIDs
 
-	if err := validatePostRequest(content, fileIDs); err != nil {
+	if err := s.validatePostRequest(ctx, content, fileIDs); err != nil {
 		return nil, err
 	}
 	if privacy == "" {
@@ -90,7 +90,7 @@ func (s *PostService) CreatePost(ctx context.Context, authorID, content, privacy
 
 func (s *PostService) SharePost(ctx context.Context, authorID, originalPostID, content, privacy string) (*model.Post, error) {
 	content = strings.TrimSpace(content)
-	if content != "" && len(content) > MaxPostContentLength {
+	if content != "" && len(content) > s.maxPostContentLength(ctx) {
 		return nil, errors.New("INVALID_POST_CONTENT_LENGTH")
 	}
 	if privacy == "" {
@@ -159,7 +159,7 @@ func (s *PostService) GetPostsOfUser(ctx context.Context, authorUsername string,
 		return nil, err
 	}
 
-	posts, err := s.Repo.GetPostsOfUser(ctx, authorUsername, currentUserID, pageable.Skip, normalizeLimit(pageable.Limit))
+	posts, err := s.Repo.GetPostsOfUser(ctx, authorUsername, currentUserID, pageable.Skip, s.normalizeLimit(ctx, pageable.Limit))
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ func (s *PostService) GetPostsOfUser(ctx context.Context, authorUsername string,
 }
 
 func (s *PostService) GetAllPosts(ctx context.Context, pageable Pageable) ([]*model.Post, error) {
-	posts, err := s.Repo.GetAllPosts(ctx, pageable.Skip, normalizeLimit(pageable.Limit))
+	posts, err := s.Repo.GetAllPosts(ctx, pageable.Skip, s.normalizeLimit(ctx, pageable.Limit))
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		pageType = PageTypeRelevant
 	}
 
-	limit := normalizeLimit(pageable.Limit)
+	limit := s.normalizeLimit(ctx, pageable.Limit)
 	var posts []*model.Post
 	if pageType == PageTypeRelevant {
 		candidates, err := profiler.TrackResult("post-service:query newsfeed.repositoryCandidates", func() ([]*model.NewsfeedCandidate, error) {
@@ -279,7 +279,7 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 			"scorer":         "go_rule_based",
 		}).Info("Newsfeed candidates fetched")
 		profiler.TrackExecution("post-service:code newsfeed.rankCandidates", func() {
-			posts = postsFromRankedCandidates(candidates, pageable.Skip, limit, time.Now())
+			posts = s.postsFromRankedCandidates(ctx, candidates, pageable.Skip, limit, time.Now())
 		})
 	} else {
 		var err error
@@ -386,7 +386,7 @@ func (s *PostService) GetNewsfeedScoreBreakdown(ctx context.Context, currentUser
 		return nil, errors.New("USER_REQUIRED")
 	}
 
-	limit := normalizeLimit(pageable.Limit)
+	limit := s.normalizeLimit(ctx, pageable.Limit)
 	candidates, err := profiler.TrackResult("post-service:query newsfeed.debugCandidates", func() ([]*model.NewsfeedCandidate, error) {
 		return s.Repo.GetRelevantNewsfeedCandidates(ctx, currentUserID)
 	})
@@ -395,7 +395,7 @@ func (s *PostService) GetNewsfeedScoreBreakdown(ctx context.Context, currentUser
 	}
 
 	now := time.Now()
-	ranked := rankNewsfeedCandidates(candidates, now)
+	ranked := rankNewsfeedCandidatesWithWeights(candidates, now, s.newsfeedScoreWeights(ctx))
 	ranked = uniqueNewsfeedCandidatesByPostID(ranked)
 	if pageable.Skip < 0 {
 		pageable.Skip = 0
@@ -426,7 +426,7 @@ func (s *PostService) GetNewsfeedScoreBreakdown(ctx context.Context, currentUser
 			ViewBackward:              candidate.ViewBackward,
 			LoadedTimes:               candidate.LoadedTimes,
 			KeywordScore:              candidate.KeywordScore,
-			Score:                     ScoreNewsfeedCandidate(candidate, now),
+			Score:                     scoreNewsfeedCandidate(candidate, now, s.newsfeedScoreWeights(ctx)),
 			OriginalPostID:            post.OriginalPostID,
 			OriginalAuthorID:          post.OriginalAuthorID,
 			OriginalPostCanView:       post.OriginalPostCanView,
@@ -436,8 +436,17 @@ func (s *PostService) GetNewsfeedScoreBreakdown(ctx context.Context, currentUser
 	return items, nil
 }
 
+func (s *PostService) postsFromRankedCandidates(ctx context.Context, candidates []*model.NewsfeedCandidate, skip, limit int64, now time.Time) []*model.Post {
+	ranked := rankNewsfeedCandidatesWithWeights(candidates, now, s.newsfeedScoreWeights(ctx))
+	return postsFromRankedCandidatesSlice(ranked, skip, limit)
+}
+
 func postsFromRankedCandidates(candidates []*model.NewsfeedCandidate, skip, limit int64, now time.Time) []*model.Post {
 	ranked := rankNewsfeedCandidates(candidates, now)
+	return postsFromRankedCandidatesSlice(ranked, skip, limit)
+}
+
+func postsFromRankedCandidatesSlice(ranked []*model.NewsfeedCandidate, skip, limit int64) []*model.Post {
 	ranked = uniqueNewsfeedCandidatesByPostID(ranked)
 	if skip < 0 {
 		skip = 0
@@ -504,7 +513,7 @@ func (s *PostService) UpdatePrivacy(ctx context.Context, currentUserID, postID, 
 }
 
 func (s *PostService) UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string) error {
-	deletedFiles, finalContent, err := s.Repo.UpdateContent(ctx, currentUserID, postID, content, newFileIDs, deleteOldFileIDs, MaxPostAttachFiles)
+	deletedFiles, finalContent, err := s.Repo.UpdateContent(ctx, currentUserID, postID, content, newFileIDs, deleteOldFileIDs, s.maxPostAttachFiles(ctx), s.maxPostContentLength(ctx))
 	if err != nil {
 		return err
 	}
@@ -626,7 +635,7 @@ func (s *PostService) GetFilesInPostsOfUser(ctx context.Context, username, curre
 		return nil, err
 	}
 
-	files, err := s.Repo.GetFilesInPostsOfUser(ctx, username, pageable.Skip, normalizeLimit(pageable.Limit))
+	files, err := s.Repo.GetFilesInPostsOfUser(ctx, username, pageable.Skip, s.normalizeLimit(ctx, pageable.Limit))
 	if err != nil {
 		return nil, err
 	}

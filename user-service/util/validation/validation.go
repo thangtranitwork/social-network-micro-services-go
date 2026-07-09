@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,36}$`)
+	usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 )
 
 func IsValidUsername(username string) bool {

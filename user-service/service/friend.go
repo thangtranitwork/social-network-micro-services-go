@@ -93,7 +93,15 @@ func (s *UserService) Unfriend(ctx context.Context, currentUserID string, target
 }
 
 func (s *UserService) Block(ctx context.Context, currentUserID string, targetUsername string) error {
-	err := s.UserRepo.Block(ctx, currentUserID, targetUsername)
+	currentUser, err := s.GetUserProfile(ctx, currentUserID, currentUserID)
+	if err != nil {
+		return err
+	}
+	if currentUser.BlockCount+1 > s.maxBlockCount(ctx) {
+		return ErrBlockLimit
+	}
+
+	err = s.UserRepo.Block(ctx, currentUserID, targetUsername)
 	if err != nil {
 		return err
 	}
@@ -122,6 +130,14 @@ func (s *UserService) GetBlockedUsers(ctx context.Context, currentUserID string)
 }
 
 func (s *UserService) SendFriendRequest(ctx context.Context, currentUserID string, targetUsername string) error {
+	currentUser, err := s.GetUserProfile(ctx, currentUserID, currentUserID)
+	if err != nil {
+		return err
+	}
+	if currentUser.RequestSentCount+1 > s.maxSentRequestCount(ctx) {
+		return ErrSentRequestLimit
+	}
+
 	target, err := s.GetUserProfile(ctx, targetUsername, currentUserID)
 	if err != nil {
 		return err
@@ -130,7 +146,7 @@ func (s *UserService) SendFriendRequest(ctx context.Context, currentUserID strin
 		return ErrCannotMakeSelfRequest
 	}
 
-	err = s.UserRepo.SendFriendRequest(ctx, currentUserID, target.ID, target.RequestReceivedCount)
+	err = s.UserRepo.SendFriendRequest(ctx, currentUserID, target.ID, target.RequestReceivedCount, s.maxReceivedRequestCount(ctx))
 	if err != nil {
 		return err
 	}
@@ -140,7 +156,19 @@ func (s *UserService) SendFriendRequest(ctx context.Context, currentUserID strin
 }
 
 func (s *UserService) AcceptFriendRequest(ctx context.Context, currentUserID string, targetUsername string) error {
-	err := s.UserRepo.AcceptFriendRequest(ctx, currentUserID, targetUsername)
+	currentUser, err := s.GetUserProfile(ctx, currentUserID, currentUserID)
+	if err != nil {
+		return err
+	}
+	target, err := s.GetUserProfile(ctx, targetUsername, currentUserID)
+	if err != nil {
+		return err
+	}
+	if currentUser.FriendCount+1 > s.maxFriendCount(ctx) || target.FriendCount+1 > s.maxFriendCount(ctx) {
+		return ErrFriendCountLimit
+	}
+
+	err = s.UserRepo.AcceptFriendRequest(ctx, currentUserID, targetUsername)
 	if err != nil {
 		return err
 	}

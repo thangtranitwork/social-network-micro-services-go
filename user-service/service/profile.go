@@ -42,7 +42,7 @@ func (s *UserService) UpdateBio(ctx context.Context, currentUserID string, bio s
 
 func (s *UserService) UpdateBirthdate(ctx context.Context, currentUserID string, birthdateStr string) error {
 	birthdate := parseTime(birthdateStr)
-	if !validation.IsValidAge(birthdate, model.MinAge) {
+	if !validation.IsValidAge(birthdate, s.minAge(ctx)) {
 		return ErrInvalidAge
 	}
 	nextDate := time.Now().AddDate(0, 0, model.ChangeBirthdateCooldownDay).Format(time.RFC3339)
@@ -56,6 +56,9 @@ func (s *UserService) UpdateBirthdate(ctx context.Context, currentUserID string,
 }
 
 func (s *UserService) UpdateName(ctx context.Context, currentUserID string, familyName, givenName string) error {
+	if len(givenName) > s.maxGivenNameLength(ctx) || len(familyName) > s.maxFamilyNameLength(ctx) {
+		return ErrInvalidName
+	}
 	if !validation.IsOnlyLettersAndSpaces(familyName) || !validation.IsOnlyLettersAndSpaces(givenName) {
 		return ErrInvalidName
 	}
@@ -70,6 +73,9 @@ func (s *UserService) UpdateName(ctx context.Context, currentUserID string, fami
 }
 
 func (s *UserService) UpdateUsername(ctx context.Context, currentUserID string, username string) error {
+	if len(username) > s.maxUsernameLength(ctx) {
+		return ErrInvalidUsername
+	}
 	if !validation.IsValidUsername(username) {
 		return ErrInvalidUsername
 	}

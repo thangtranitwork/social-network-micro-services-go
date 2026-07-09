@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -51,11 +52,24 @@ func InitDB(cfg *config.Config) {
 			&model.ModerationQueueRecord{},
 			&model.ModerationReportRecord{},
 			&model.ModerationAuditRecord{},
+			&model.RuntimeConfig{},
+			&model.RuntimeConfigAudit{},
 		)
 		if err != nil {
 			logger.Error("Failed to auto-migrate admin PostgreSQL tables: %v", err)
 		} else {
 			logger.Info("Successfully auto-migrated admin PostgreSQL tables")
+			if err := seedRuntimeConfigs(pgDB); err != nil {
+				logger.Error("Failed to seed runtime configs: %v", err)
+			}
 		}
 	}
+}
+
+func seedRuntimeConfigs(pgDB *gorm.DB) error {
+	configs := model.DefaultRuntimeConfigs()
+	return pgDB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoNothing: true,
+	}).Create(&configs).Error
 }

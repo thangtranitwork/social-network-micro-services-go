@@ -35,7 +35,7 @@ type PostRepository interface {
 	GetRelevantNewsfeedCandidates(ctx context.Context, currentUserID string) ([]*model.NewsfeedCandidate, error)
 	MarkPostsLoaded(ctx context.Context, currentUserID string, postIDs []string) error
 	UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error
-	UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int) ([]string, string, error)
+	UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int, maxPostContentLength int) ([]string, string, error)
 	LikePost(ctx context.Context, userID, postID string) (string, error)
 	UnlikePost(ctx context.Context, userID, postID string) (string, error)
 	DeletePost(ctx context.Context, postID, currentUserID string, isAdmin bool) (string, []string, error)
@@ -322,10 +322,10 @@ func getRelevantNewsfeedCandidateQuery() string {
 			         WHEN origin.privacy = 'PRIVATE' AND viewer.id = originAuthor.id THEN true
 			         ELSE false
 			       END,
-			       friendship IS NOT NULL,
+			       friendship IS NOT NULL AS isFriendPost,
 			       origin.content, origin.createdAt, origin.updatedAt, origin.privacy, origin.files,
 			       viewForward, viewBackward, coalesce(loaded.times, 0), keywordScore,
-			       friendship IS NOT NULL,
+			       friendship IS NOT NULL AS isFriendCandidate,
 			       EXISTS((viewer)-[:FRIEND]-()-[:FRIEND]-(author)) OR EXISTS((viewer)-[:REQUEST]-(author))
 	`
 }
@@ -561,7 +561,7 @@ func (r *Neo4jPostRepository) UpdatePrivacy(ctx context.Context, currentUserID, 
 	return err
 }
 
-func (r *Neo4jPostRepository) UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int) ([]string, string, error) {
+func (r *Neo4jPostRepository) UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string, maxPostAttachFiles int, maxPostContentLength int) ([]string, string, error) {
 	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
@@ -594,7 +594,7 @@ func (r *Neo4jPostRepository) UpdateContent(ctx context.Context, currentUserID, 
 		trimmed := ""
 		if content != nil {
 			trimmed = strings.TrimSpace(*content)
-			if len(trimmed) > 5000 { // MaxPostContentLength
+			if len(trimmed) > maxPostContentLength {
 				return nil, errors.New("INVALID_POST_CONTENT_LENGTH")
 			}
 		}

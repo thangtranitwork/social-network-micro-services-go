@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"social-network-go/exception"
+	"social-network-go/internal/runtimeconfig"
 	config "social-network-go/user-service/config"
 	"social-network-go/user-service/model"
 	red "social-network-go/user-service/redis"
@@ -20,6 +21,9 @@ var (
 	ErrInvalidName            = exception.NewAppException(exception.InvalidGivenNameLength)
 	ErrProfilePictureRequired = exception.NewAppException(exception.ProfilePictureRequired)
 	ErrCannotMakeSelfRequest  = exception.NewAppException(exception.CanNotMakeSelfRequest)
+	ErrFriendCountLimit       = exception.NewAppException(exception.AcceptRequestFailed)
+	ErrBlockLimit             = exception.NewAppException(exception.BlockLimitReached)
+	ErrSentRequestLimit       = exception.NewAppException(exception.AddFriendRequestSentLimitReached)
 )
 
 type FileClient interface {
@@ -32,13 +36,15 @@ type FileClient interface {
 type UserService struct {
 	FileClient FileClient
 	UserRepo   repository.UserRepository
+	RuntimeCfg *runtimeconfig.Provider
 	cfg        *config.Config
 }
 
 func NewUserService(cfg *config.Config) *UserService {
 	return &UserService{
-		UserRepo: repository.NewUserRepository(),
-		cfg:      cfg,
+		UserRepo:   repository.NewUserRepository(),
+		RuntimeCfg: runtimeconfig.NewProvider(red.RedisClient),
+		cfg:        cfg,
 	}
 }
 
