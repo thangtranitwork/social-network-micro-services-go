@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "social-network-go/pb";
+
+service FCMGrpcService {
+    rpc SendPushNotification (SendPushRequest) returns (SendPushResponse);
+}
+
+message SendPushRequest {
+    string receiver_id = 1;
+    string title = 2;
+    string body = 3;
+    map<string, string> data = 4;
+}
+
+message SendPushResponse {
+    bool success = 1;
+    string message = 2;
+    int32 success_count = 3;
+    int32 failure_count = 4;
+}

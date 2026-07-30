@@ -8,6 +8,8 @@ import (
 
 type Config struct {
 	HTTPPort       string
+	KafkaAddr      string
+	FCMGrpcAddr    string
 	MongoURI       string
 	RedisAddr      string
 	RedisPass      string
@@ -34,6 +36,8 @@ func LoadConfig() *Config {
 
 	return &Config{
 		HTTPPort:       getEnv("CHAT_HTTP_PORT", "10084"),
+		KafkaAddr:      getEnv("KAFKA_ADDR", "localhost:9092"),
+		FCMGrpcAddr:    getEnv("FCM_GRPC_ADDR", "localhost:10056"),
 		MongoURI:       getEnv("MONGO_URI", "mongodb://localhost:27017/chat_db"),
 		RedisAddr:      getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPass:      getEnv("REDIS_PASSWORD", ""),
@@ -42,7 +46,7 @@ func LoadConfig() *Config {
 		Neo4jUser:      getEnv("NEO4J_USER", "neo4j"),
 		Neo4jPass:      getEnv("NEO4J_PASS", "password"),
 		FileGrpcAddr:   getEnv("FILE_GRPC_ADDR", "localhost:10057"),
-		FileServiceURL: getEnv("FILE_SERVICE_URL", "http://localhost:11111/v1/files"),
+		FileServiceURL: getEnv("FILE_SERVICE_URL", "http://localhost:10087"),
 		TurnURL:        getEnv("TURN_URL", ""),
 		TurnUser:       getEnv("TURN_USER", ""),
 		TurnPass:       getEnv("TURN_PASS", ""),

@@ -50,6 +50,7 @@ func CheckHealth(cfg *config.Config) gin.HandlerFunc {
 			{"admin-service", "service", cfg.AdminHttpAddr, ""},
 			{"search-service", "service", cfg.SearchHttpAddr, ""},
 			{"story-service", "service", cfg.StoryHttpAddr, ""},
+			{"fcm-service", "service", cfg.FCMHttpAddr, cfg.FCMGrpcAddr},
 			{"ai-service", "service", "http://localhost:10091", ""},
 			{"PostgreSQL", "db", "localhost:5432", ""},
 			{"Redis", "db", cfg.RedisAddr, ""},

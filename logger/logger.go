@@ -249,15 +249,20 @@ func RedactJSON(jsonStr string) string {
 
 func redactValue(val interface{}) {
 	sensitiveKeys := map[string]bool{
-		"password":      true,
-		"token":         true,
-		"accesstoken":   true,
-		"refreshtoken":  true,
-		"authorization": true,
-		"cookie":        true,
-		"otp":           true,
-		"secret":        true,
-		"credential":    true,
+		"password":        true,
+		"token":           true,
+		"accesstoken":     true,
+		"refreshtoken":    true,
+		"authorization":   true,
+		"cookie":          true,
+		"otp":             true,
+		"secret":          true,
+		"credential":      true,
+		"key":             true,
+		"apikey":          true,
+		"api_key":         true,
+		"gemini_key":      true,
+		"gemini_api_key":  true,
 	}
 
 	switch m := val.(type) {
@@ -283,15 +288,20 @@ func RedactQuery(query string) string {
 	}
 	parts := strings.Split(query, "&")
 	sensitiveKeys := map[string]bool{
-		"password":      true,
-		"token":         true,
-		"accesstoken":   true,
-		"refreshtoken":  true,
-		"authorization": true,
-		"cookie":        true,
-		"otp":           true,
-		"secret":        true,
-		"credential":    true,
+		"password":        true,
+		"token":           true,
+		"accesstoken":     true,
+		"refreshtoken":    true,
+		"authorization":   true,
+		"cookie":          true,
+		"otp":             true,
+		"secret":          true,
+		"credential":      true,
+		"key":             true,
+		"apikey":          true,
+		"api_key":         true,
+		"gemini_key":      true,
+		"gemini_api_key":  true,
 	}
 	for i, part := range parts {
 		pair := strings.SplitN(part, "=", 2)

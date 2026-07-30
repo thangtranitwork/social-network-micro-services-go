@@ -4,6 +4,11 @@
 !.env.example
 *.local
 
+# Firebase Credentials & Private Keys (NEVER push to Git)
+*-firebase-adminsdk-*.json
+firebase-credentials.json
+*.serviceaccount.json
+
 # Logs and runtime output
 logs/
 **/logs/

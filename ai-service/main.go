@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -38,6 +40,7 @@ type AIService struct {
 	KafkaAddr        string
 	Neo4jDriver      neo4j.DriverWithContext
 	moderationWriter *kafka.Writer
+	httpClient       *http.Client
 }
 
 func NewAIService(geminiKey, geminiModel, kafkaAddr string, neo4jDriver neo4j.DriverWithContext) *AIService {
@@ -53,7 +56,71 @@ func NewAIService(geminiKey, geminiModel, kafkaAddr string, neo4jDriver neo4j.Dr
 			BatchTimeout: 50 * time.Millisecond,
 			WriteTimeout: 1 * time.Second,
 		},
+		httpClient: &http.Client{
+			Timeout: 25 * time.Second,
+		},
 	}
+}
+
+// Helper to determine if an error is transient or retriable (such as 429, 503, or net timeouts)
+func isRetriableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var geminiErr *GeminiAPIError
+	if errors.As(err, &geminiErr) && geminiErr != nil {
+		return geminiErr.Code == http.StatusTooManyRequests || geminiErr.Code == http.StatusServiceUnavailable
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Temporary() || netErr.Timeout()
+	}
+	return false
+}
+
+// callWithRetry executes an HTTP request operation with exponential backoff and jitter
+func (s *AIService) callWithRetry(ctx context.Context, operation string, runReq func() (*http.Response, error)) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+	baseDelay := 500 * time.Millisecond
+	maxDelay := 4 * time.Second
+	maxRetries := 3
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		resp, err = runReq()
+		if err == nil {
+			if resp.StatusCode == http.StatusOK {
+				return resp, nil
+			}
+			err = geminiStatusError(resp)
+			resp.Body.Close()
+		}
+
+		if !isRetriableError(err) || attempt == maxRetries {
+			return nil, err
+		}
+
+		delay := baseDelay * time.Duration(1<<attempt)
+		if delay > maxDelay {
+			delay = maxDelay
+		}
+		// Jitter ±10%
+		jitter := time.Duration(rand.Intn(200)-100) * delay / 1000
+		delay = delay + jitter
+
+		logger.WithContext(ctx).Warn("Gemini %s attempt %d failed: %v. Retrying in %v...", operation, attempt+1, err, delay)
+
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, err
 }
 
 // ExtractKeywords calls Gemini API or falls back to rules
@@ -62,10 +129,13 @@ func (s *AIService) ExtractKeywords(ctx context.Context, content string) []strin
 		keywords, err := s.callGeminiAPI(ctx, content)
 		if err == nil && len(keywords) > 0 {
 			logger.WithContext(ctx).Field("content", content).JsonField("keywords", keywords).Info("AI keyword extraction completed")
+			profiler.TrackEvent("ai-service:gemini.keyword.success")
 			return keywords
 		}
 		logGeminiFallback(ctx, err, "keyword_extraction", "", "")
 	}
+
+	profiler.TrackEvent("ai-service:gemini.keyword.fallback")
 
 	// Rule-based heuristic fallback (extract words starting with #, or common tech terms)
 	var keywords []string
@@ -109,25 +179,19 @@ func (s *AIService) callGeminiAPI(ctx context.Context, content string) ([]string
 	}
 
 	payloadBytes, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBuffer(payloadBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-goog-api-key", s.GeminiKey)
-
-	client := &http.Client{
-		Timeout: 25 * time.Second,
-	}
-	resp, err := client.Do(req)
+	resp, err := s.callWithRetry(ctx, "keyword_extraction", func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBuffer(payloadBytes))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-goog-api-key", s.GeminiKey)
+		return s.httpClient.Do(req)
+	})
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, geminiStatusError(resp)
-	}
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	var geminiResp map[string]interface{}
@@ -282,10 +346,12 @@ func (s *AIService) ModerateContent(ctx context.Context, event moderation.Reques
 		result, err := s.callGeminiModeration(ctx, event.Content)
 		if err == nil && moderation.IsValidVerdict(result.Verdict) {
 			result.Categories = moderation.NormalizeCategories(result.Categories)
+			profiler.TrackEvent("ai-service:gemini.moderation.success")
 			return result
 		}
 		logGeminiFallback(ctx, err, "moderation", event.TargetType, event.TargetID)
 	}
+	profiler.TrackEvent("ai-service:gemini.moderation.fallback")
 	return ruleBasedModeration(event.Content)
 }
 
@@ -302,22 +368,19 @@ Content: %q`, content)
 	}
 
 	payloadBytes, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBuffer(payloadBytes))
-	if err != nil {
-		return ModerationResult{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-goog-api-key", s.GeminiKey)
-
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := s.callWithRetry(ctx, "moderation", func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewBuffer(payloadBytes))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-goog-api-key", s.GeminiKey)
+		return s.httpClient.Do(req)
+	})
 	if err != nil {
 		return ModerationResult{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ModerationResult{}, geminiStatusError(resp)
-	}
 
 	text, err := parseGeminiText(resp.Body)
 	if err != nil {
@@ -643,24 +706,28 @@ func (s *AIService) StartWorker() {
 				continue
 			}
 			event.TraceID, event.RequestID = traceIDsFromKafkaMessage(m, event.TraceID, event.RequestID)
-			ctx := contextWithTraceIDs(context.Background(), event.TraceID, event.RequestID)
 
-			logger.WithContext(ctx).Info("AI Worker processing post: %s from Author: %s", event.PostID, event.AuthorID)
+			func() {
+				ctx, cancel := context.WithTimeout(contextWithTraceIDs(context.Background(), event.TraceID, event.RequestID), 25*time.Second)
+				defer cancel()
 
-			// Call Gemini API to extract keywords
-			tags, _ := profiler.TrackResult("ai-service:worker keyword.extract", func() ([]string, error) {
-				return s.ExtractKeywords(ctx, event.Content), nil
-			})
-			logger.WithContext(ctx).Info("[GEMINI INSIGHTS] Extracted keywords for post %s: %v", event.PostID, tags)
+				logger.WithContext(ctx).Info("AI Worker processing post: %s from Author: %s", event.PostID, event.AuthorID)
 
-			_, err = profiler.TrackExecutionWithReturn("ai-service:worker keyword.neo4j.write", func() (any, error) {
-				return nil, s.SavePostKeywords(ctx, event.PostID, tags, event.IsUpdate || event.Event == "post_updated")
-			})
-			if err != nil {
-				logger.WithContext(ctx).Err(err).Error("AI worker failed to write Keyword relationships for post %s", event.PostID)
-				continue
-			}
-			logger.WithContext(ctx).Info("[DB WRITE] Neo4j graph updated with relationships: Post(%s) -[:HAS_KEYWORDS]-> Keyword%v", event.PostID, tags)
+				// Call Gemini API to extract keywords
+				tags, _ := profiler.TrackResult("ai-service:worker keyword.extract", func() ([]string, error) {
+					return s.ExtractKeywords(ctx, event.Content), nil
+				})
+				logger.WithContext(ctx).Info("[GEMINI INSIGHTS] Extracted keywords for post %s: %v", event.PostID, tags)
+
+				_, err = profiler.TrackExecutionWithReturn("ai-service:worker keyword.neo4j.write", func() (any, error) {
+					return nil, s.SavePostKeywords(ctx, event.PostID, tags, event.IsUpdate || event.Event == "post_updated")
+				})
+				if err != nil {
+					logger.WithContext(ctx).Err(err).Error("AI worker failed to write Keyword relationships for post %s", event.PostID)
+					return
+				}
+				logger.WithContext(ctx).Info("[DB WRITE] Neo4j graph updated with relationships: Post(%s) -[:HAS_KEYWORDS]-> Keyword%v", event.PostID, tags)
+			}()
 		}
 	}()
 }

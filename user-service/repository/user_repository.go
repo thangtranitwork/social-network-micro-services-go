@@ -12,6 +12,7 @@ import (
 	"social-network-go/user-service/db"
 	"social-network-go/user-service/model"
 
+	"github.com/google/uuid"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 )
@@ -817,15 +818,23 @@ func (r *Neo4jUserRepository) AcceptFriendRequest(ctx context.Context, currentUs
 		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 		defer session.Close(ctx)
 
+		newChatID := uuid.NewString()
 		_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 			query := `
 				MATCH (u1:User {id: $id})<-[req:REQUEST]-(u2:User {username: $username})
 				DELETE req
 				WITH u1, u2
 				MERGE (u1)-[:FRIEND]-(u2)
+				WITH u1, u2
+				OPTIONAL MATCH (u1)-[:IS_MEMBER_OF]->(existingChat:Chat)<-[:IS_MEMBER_OF]-(u2)
+				FOREACH (_ IN CASE WHEN existingChat IS NULL THEN [1] ELSE [] END |
+					CREATE (c:Chat {id: $chatId})
+					CREATE (u1)-[:IS_MEMBER_OF]->(c)
+					CREATE (u2)-[:IS_MEMBER_OF]->(c)
+				)
 				RETURN u1.id
 			`
-			res, err := tx.Run(ctx, query, map[string]interface{}{"id": currentUserID, "username": targetUsername})
+			res, err := tx.Run(ctx, query, map[string]interface{}{"id": currentUserID, "username": targetUsername, "chatId": newChatID})
 			if err == nil && !res.Next(ctx) {
 				return nil, ErrRequestNotFound
 			}

@@ -62,6 +62,7 @@ dev:
 	go build -o bin/admin-service admin-service/main.go
 	go build -o bin/search-service search-service/main.go
 	go build -o bin/story-service story-service/main.go
+	go build -o bin/fcm-service fcm-service/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
 	@echo "====== Stopping Go Microservices ======"
 	-@pkill -f "bin/api-gateway" || true
@@ -75,6 +76,7 @@ dev:
 	-@pkill -f "bin/admin-service" || true
 	-@pkill -f "bin/search-service" || true
 	-@pkill -f "bin/story-service" || true
+	-@pkill -f "bin/fcm-service" || true
 	@echo "====== All Services Stopped! ======"
 	@echo "====== Starting Go Microservices ======"
 	@mkdir -p logs
@@ -83,6 +85,7 @@ dev:
 	@nohup ./bin/user-service > /dev/null 2> logs/user-service.log &
 	@nohup ./bin/post-service > /dev/null 2> logs/post-service.log &
 	@nohup ./bin/chat-service > /dev/null 2> logs/chat-service.log &
+	@nohup ./bin/fcm-service > /dev/null 2> logs/fcm-service.log &
 	@nohup ./bin/notification-service > /dev/null 2> logs/notification-service.log &
 	@nohup ./bin/ai-service > /dev/null 2> logs/ai-service.log &
 	@nohup ./bin/file-service > /dev/null 2> logs/file-service.log &

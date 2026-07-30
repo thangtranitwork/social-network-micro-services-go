@@ -17,6 +17,7 @@ import (
 	"social-network-go/chat-service/db"
 	"social-network-go/chat-service/model"
 	"social-network-go/exception"
+	"social-network-go/fcm-service/fcm"
 	"social-network-go/logger"
 	"social-network-go/pb"
 	"social-network-go/profiler"
@@ -41,13 +42,15 @@ type FileClient interface {
 
 type ChatService struct {
 	// Active connections: userID -> Connection
-	connections  map[string]*websocket.Conn
-	writeMutexes map[string]*sync.Mutex
-	activeChats  map[string]string // userID -> chatID
-	mu           sync.RWMutex
-	UserClient   pb.UserServiceClient
-	FileClient   FileClient
-	cfg          *config.Config
+	connections    map[string]*websocket.Conn
+	writeMutexes   map[string]*sync.Mutex
+	activeChats    map[string]string // userID -> chatID
+	mu             sync.RWMutex
+	UserClient     pb.UserServiceClient
+	FCMClient      pb.FCMGrpcServiceClient
+	FileClient     FileClient
+	NotifPublisher *fcm.NotificationPublisher
+	cfg            *config.Config
 }
 
 func NewChatService(cfg *config.Config) *ChatService {
@@ -60,12 +63,25 @@ func NewChatService(cfg *config.Config) *ChatService {
 		logger.Info("Chat Service connected to User gRPC Service at %s", cfg.UserGrpcAddr)
 	}
 
+	var fcmGrpcClient pb.FCMGrpcServiceClient
+	fcmConn, err := grpc.NewClient(cfg.FCMGrpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		logger.Err(err).Warn("Failed to connect to FCM gRPC Service at %s", cfg.FCMGrpcAddr)
+	} else {
+		fcmGrpcClient = pb.NewFCMGrpcServiceClient(fcmConn)
+		logger.Info("Chat Service connected to FCM gRPC Service at %s", cfg.FCMGrpcAddr)
+	}
+
+	notifPublisher := fcm.NewNotificationPublisher(cfg.KafkaAddr)
+
 	return &ChatService{
-		connections:  make(map[string]*websocket.Conn),
-		writeMutexes: make(map[string]*sync.Mutex),
-		activeChats:  make(map[string]string),
-		UserClient:   userClient,
-		cfg:          cfg,
+		connections:    make(map[string]*websocket.Conn),
+		writeMutexes:   make(map[string]*sync.Mutex),
+		activeChats:    make(map[string]string),
+		UserClient:     userClient,
+		FCMClient:      fcmGrpcClient,
+		NotifPublisher: notifPublisher,
+		cfg:            cfg,
 	}
 }
 
@@ -1614,6 +1630,24 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
 
 	s.BroadcastToChat(chatID, enriched)
+
+	if s.NotifPublisher != nil && receiverResp.UserId != "" {
+		go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, receiverResp.UserId, chatID, "CHAT", text)
+	}
+
+	if s.FCMClient != nil && receiverResp.UserId != "" {
+		go func() {
+			_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
+				ReceiverId: receiverResp.UserId,
+				Title:      "PocPoc",
+				Body:       text,
+				Data: map[string]string{
+					"action":   "NEW_MESSAGE",
+					"targetId": chatID,
+				},
+			})
+		}()
+	}
 
 	return enriched, nil
 }

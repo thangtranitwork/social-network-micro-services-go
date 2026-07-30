@@ -41,6 +41,7 @@ func StreamLogs(c *gin.Context) {
 		"admin-service":        true,
 		"search-service":       true,
 		"story-service":        true,
+		"fcm-service":          true,
 	}
 	if !validServices[service] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid service name"})
@@ -157,6 +158,7 @@ func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 			"ai-service":           cfg.AIHttpAddr,
 			"search-service":       cfg.SearchHttpAddr,
 			"story-service":        cfg.StoryHttpAddr,
+			"fcm-service":          cfg.FCMHttpAddr,
 		}
 
 		type ServiceData struct {
@@ -281,6 +283,7 @@ func SearchLogs(c *gin.Context) {
 		"admin-service",
 		"search-service",
 		"story-service",
+		"fcm-service",
 	}
 
 	searchServices := []string{}

@@ -18,6 +18,7 @@ Luon xem day la repo gom nhieu service doc lap:
 - Admin/statistics/moderation/ads: `admin-service/`
 - Search: `search-service/`
 - Stories: `story-service/`
+- FCM Web Push & gRPC service: `fcm-service/`
 - AI/Kafka content processing: `ai-service/`
 - Shared protobuf contracts: `pb/`
 - Shared logging/profiling: `logger/`, `profiler/`
