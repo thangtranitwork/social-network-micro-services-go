@@ -1,18 +1,21 @@
 # Social Network Go Microservices
 
+![CI Pipeline](https://github.com/thangtranitwork/social-network-micro-services-go/actions/workflows/ci.yml/badge.svg)
+
 This repository contains a Go-based social network platform built as a set of independently deployable microservices. It includes the backend services, protobuf contracts, Docker development infrastructure, operational dashboards, and a Next.js web client.
 
-The system uses an API Gateway as the public entry point, then routes traffic to domain services over HTTP, WebSocket, and gRPC. PostgreSQL, Neo4j, Redis, MongoDB, Kafka, and MinIO provide the backing infrastructure.
+The system uses an API Gateway as the public entry point, then routes traffic to domain services over HTTP, WebSocket, and gRPC. PostgreSQL (Database-per-Service pattern), Neo4j (Graph Recommendation Engine), Redis, MongoDB, Kafka, MinIO, and Firebase Cloud Messaging (FCM) provide the backing infrastructure.
 
 ## Current Capabilities
 
 - Account registration, login, refresh tokens, logout, password reset, Google OAuth, and two-factor authentication.
-- Profile, friend, block, and friend-request management.
-- Posts, comments, feeds, likes, file attachment resolution, and notification publishing.
+- Profile, friend, block, and friend-request management backed by PostgreSQL (`user_db`).
+- Posts, comments, feeds, likes, file attachment resolution, and notification publishing backed by PostgreSQL (`post_db`).
+- Web Push Notifications and FCM device token registration backed by Firebase Cloud Messaging (`fcm-service`).
 - Real-time chat, group chat, voice messages, WebRTC call signaling, and call history.
 - File upload/download through MinIO, including presigned access.
 - Admin statistics, user/post moderation, ads, announcements, and operational controls.
-- Search and story services backed by Neo4j and Redis.
+- Graph recommendation algorithms ("People You May Know", "Personalized Newsfeed Ranking") backed by Neo4j.
 - API Gateway rate limiting, CORS, JWT validation through gRPC, and admin-only observability APIs.
 - Log, container, profiler, and service health dashboards exposed by the gateway.
 - Next.js UI with home feed, chats, profile, admin dashboard, settings, ads, and localization.
@@ -32,28 +35,33 @@ graph TD
     Gateway -->|HTTP proxy| Admin[Admin Service :10088]
     Gateway -->|HTTP proxy| Search[Search Service :10089]
     Gateway -->|HTTP proxy| Story[Story Service :10090]
+    Gateway -->|HTTP proxy| FCM[FCM Service :10091]
 
-    Auth --> Postgres[(PostgreSQL)]
+    Auth --> AuthDB[(PostgreSQL auth_db)]
     Auth --> Redis[(Redis)]
-    User --> Neo4j[(Neo4j)]
+    User --> UserDB[(PostgreSQL user_db)]
+    User --> Neo4j[(Neo4j Recommendation Engine)]
     User --> Redis
+    Post --> PostDB[(PostgreSQL post_db)]
     Post --> Neo4j
     Post --> Redis
     Post -->|gRPC user lookup| User
-    Chat --> Mongo[(MongoDB)]
+    Story --> StoryDB[(PostgreSQL story_db)]
+    Story --> Redis
+    Chat --> Mongo[(MongoDB chat_db)]
     Chat --> Redis
     Chat --> Neo4j
     File --> MinIO[(MinIO)]
-    Admin --> Postgres
+    Admin --> AuthDB
     Admin --> Neo4j
     Admin --> Redis
     Search --> Neo4j
     Search --> Redis
-    Story --> Neo4j
-    Story --> Redis
+    FCM --> Firebase[(Firebase Cloud Messaging)]
     Auth --> Kafka[(Kafka)]
     Post --> Kafka
     Kafka --> Notification
+    Kafka --> FCM
     Kafka --> AI[AI Service]
 ```
 
@@ -117,12 +125,14 @@ Common environment variables:
 | `ADMIN_HTTP_PORT` | `10088` | Admin service HTTP port |
 | `SEARCH_HTTP_PORT` | `10089` | Search service HTTP port |
 | `STORY_HTTP_PORT` | `10090` | Story service HTTP port |
-| `POSTGRES_DSN` | local PostgreSQL DSN | Auth/admin account database |
-| `NEO4J_URI` | `neo4j://localhost:7687` | Neo4j connection |
+| `FCM_HTTP_PORT` | `10091` | FCM service HTTP port |
+| `POSTGRES_DSN` | local PostgreSQL DSN | PostgreSQL connection (Database-per-Service) |
+| `NEO4J_URI` | `neo4j://localhost:7687` | Neo4j Graph Recommendation Engine |
 | `REDIS_ADDR` | `localhost:6379` | Redis connection |
 | `MONGO_URI` | service default | MongoDB chat history |
 | `KAFKA_ADDR` | `localhost:9092` | Kafka broker |
 | `MINIO_ENDPOINT` | `localhost:9000` | MinIO API endpoint |
+| `NEXT_PUBLIC_FIREBASE_*` | project configs | Web Push Notification config for Next.js UI |
 | `FRONTEND_URL` | `http://localhost:10000` | Frontend URL used in auth flows |
 
 See service-specific `config/config.go` files for the full set of supported variables.

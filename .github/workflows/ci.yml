@@ -1,0 +1,82 @@
+name: Continuous Integration (CI)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+
+jobs:
+  # ========================================================
+  # JOB 1: Backend Go Services CI (Lint, Test, Build)
+  # ========================================================
+  go-ci:
+    name: Build & Test Go Services
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install Dependencies
+        run: go mod download
+
+      - name: Run Go Vet & Format Check
+        run: |
+          go vet ./...
+
+      - name: Run Unit Tests
+        run: |
+          go test -v -short ./...
+
+      - name: Verify Build of All Go Microservices
+        run: |
+          mkdir -p bin
+          services=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "file-service" "admin-service" "search-service" "story-service" "fcm-service")
+          for svc in "${services[@]}"; do
+            echo "🔨 Building $svc..."
+            go build -o "bin/$svc" "./$svc"
+          done
+          echo "✅ All Go microservices built successfully!"
+
+  # ========================================================
+  # JOB 2: Frontend Next.js UI CI (Lint & Build)
+  # ========================================================
+  ui-ci:
+    name: Build & Lint Next.js UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: social-network-ui
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: social-network-ui/package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Next.js Application
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          NEXT_PUBLIC_API_URL: http://localhost:11111
+        run: npm run build
