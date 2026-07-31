@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
