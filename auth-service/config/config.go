@@ -31,6 +31,8 @@ type Config struct {
 	GoogleClientID        string
 	GoogleClientSecret    string
 	GoogleRedirectURL     string
+	CaptchaSecretKey      string
+	CaptchaEnabled        bool
 }
 
 func LoadConfig() *Config {
@@ -66,6 +68,9 @@ func LoadConfig() *Config {
 		emailLimitWindow = time.Hour
 	}
 
+	captchaEnabledStr := getEnv("CAPTCHA_ENABLED", "true")
+	captchaEnabled := captchaEnabledStr == "true" || captchaEnabledStr == "1"
+
 	return &Config{
 		GRPCPort:              getEnv("AUTH_GRPC_PORT", "10051"),
 		HTTPPort:              getEnv("AUTH_HTTP_PORT", "10081"),
@@ -88,5 +93,7 @@ func LoadConfig() *Config {
 		GoogleClientID:        getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret:    getEnv("GOOGLE_CLIENT_SECRET", ""),
 		GoogleRedirectURL:     getEnv("GOOGLE_REDIRECT_URL", "http://localhost:11111/v1/auth/google/callback"),
+		CaptchaSecretKey:      getEnv("CAPTCHA_SECRET_KEY", ""),
+		CaptchaEnabled:        captchaEnabled,
 	}
 }

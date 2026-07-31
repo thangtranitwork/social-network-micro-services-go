@@ -65,11 +65,12 @@ type LoginReq struct {
 }
 
 type RegisterReq struct {
-	Email      string `json:"email" binding:"required,email"`
-	Password   string `json:"password" binding:"required"`
-	GivenName  string `json:"givenName" binding:"required"`
-	FamilyName string `json:"familyName" binding:"required"`
-	Birthdate  string `json:"birthdate" binding:"required"` // format: YYYY-MM-DD
+	Email        string `json:"email" binding:"required,email"`
+	Password     string `json:"password" binding:"required"`
+	GivenName    string `json:"givenName" binding:"required"`
+	FamilyName   string `json:"familyName" binding:"required"`
+	Birthdate    string `json:"birthdate" binding:"required"` // format: YYYY-MM-DD
+	CaptchaToken string `json:"captchaToken"`
 }
 
 type VerifyReq struct {

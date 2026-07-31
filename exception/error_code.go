@@ -121,6 +121,12 @@ var (
 		Error:   "ACCOUNT_VERIFIED",
 		Status:  http.StatusConflict,
 	}
+	InvalidCaptcha = ErrorCode{
+		Code:    1040,
+		Message: "Invalid or expired CAPTCHA",
+		Error:   "INVALID_CAPTCHA",
+		Status:  http.StatusBadRequest,
+	}
 
 	LoginFailed = ErrorCode{
 		Code:    1020,

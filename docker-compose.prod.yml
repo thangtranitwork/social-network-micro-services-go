@@ -96,6 +96,8 @@ services:
       - REDIS_ADDR=redis:6379
       - JWT_ACCESS_TOKEN_KEY=${JWT_ACCESS_TOKEN_KEY:?JWT_ACCESS_TOKEN_KEY is required}
       - JWT_REFRESH_TOKEN_KEY=${JWT_REFRESH_TOKEN_KEY:?JWT_REFRESH_TOKEN_KEY is required}
+      - CAPTCHA_SECRET_KEY=${CAPTCHA_SECRET_KEY:-}
+      - CAPTCHA_ENABLED=${CAPTCHA_ENABLED:-true}
     volumes:
       - logs_prod_data:/app/logs
     networks:

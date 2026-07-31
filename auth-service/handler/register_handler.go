@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"social-network-go/auth-service/service"
 	"social-network-go/exception"
 	"social-network-go/logger"
 
@@ -12,6 +13,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	var req RegisterReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	if !service.VerifyCaptchaToken(req.CaptchaToken, c.ClientIP()) {
+		exception.SendError(c, exception.InvalidCaptcha)
 		return
 	}
 
@@ -74,8 +80,18 @@ func (h *AuthHandler) Verify(c *gin.Context) {
 
 func (h *AuthHandler) ResendEmail(c *gin.Context) {
 	email := c.Query("email")
+	captchaToken := c.Query("captcha_token")
+	if captchaToken == "" {
+		captchaToken = c.Query("captchaToken")
+	}
+
 	if email == "" {
 		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	if !service.VerifyCaptchaToken(captchaToken, c.ClientIP()) {
+		exception.SendError(c, exception.InvalidCaptcha)
 		return
 	}
 

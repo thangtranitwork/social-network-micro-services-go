@@ -8,7 +8,7 @@ The system uses an API Gateway as the public entry point, then routes traffic to
 
 ## Current Capabilities
 
-- Account registration, login, refresh tokens, logout, password reset, Google OAuth, and two-factor authentication.
+- Account registration with Cloudflare Turnstile CAPTCHA protection, login, refresh tokens, logout, password reset, email resend verification, Google OAuth, and two-factor authentication.
 - Profile, friend, block, and friend-request management backed by PostgreSQL (`user_db`).
 - Posts, comments, feeds, likes, file attachment resolution, and notification publishing backed by PostgreSQL (`post_db`).
 - Web Push Notifications and FCM device token registration backed by Firebase Cloud Messaging (`fcm-service`).
@@ -18,7 +18,7 @@ The system uses an API Gateway as the public entry point, then routes traffic to
 - Graph recommendation algorithms ("People You May Know", "Personalized Newsfeed Ranking") backed by Neo4j.
 - API Gateway rate limiting, CORS, JWT validation through gRPC, and admin-only observability APIs.
 - Log, container, profiler, and service health dashboards exposed by the gateway.
-- Next.js UI with home feed, chats, profile, admin dashboard, settings, ads, and localization.
+- Next.js UI with home feed, chats, profile, admin dashboard, settings, ads, localization, and CAPTCHA bot protection.
 
 ## Architecture
 
@@ -70,7 +70,7 @@ graph TD
 ├── admin-service/         # Admin stats, moderation, ads, announcements
 ├── ai-service/            # Kafka consumer for AI-assisted content processing
 ├── api-gateway/           # Public gateway, auth middleware, rate limits, dashboards
-├── auth-service/          # Accounts, JWT, OAuth, 2FA, password reset, email flows
+├── auth-service/          # Accounts, JWT, OAuth, 2FA, CAPTCHA, password reset, email flows
 ├── chat-service/          # Chat, group chat, WebSocket transport, WebRTC signaling
 ├── file-service/          # MinIO-backed file storage and presigned URLs
 ├── notification-service/  # Notification delivery worker
@@ -85,6 +85,59 @@ graph TD
 ├── logger/                # Shared logging utilities
 ├── scripts/               # Nginx, migration, deploy, and test helper scripts
 ├── docs/                  # Feature and architecture notes
+├── plans/                 # Implementation plans and feature notes
+├── social-network-ui/     # Next.js web frontend
+├── Dockerfile             # Multi-service Go image build
+├── docker-compose.yml     # Local infrastructure only
+├── docker-compose.dev.yml # Full local stack with services and Nginx gateway LB
+├── docker-compose.prod.yml
+├── Makefile
+├── start-dev.sh
+└── stop-dev.sh
+```
+
+## Prerequisites
+
+- Go 1.22 or newer
+- Docker and Docker Compose
+- Node.js 20 or newer for `social-network-ui`
+- npm or pnpm for frontend dependencies
+- Access to required external providers if enabled: SMTP, Google OAuth, Cloudflare Turnstile, Gemini, and Stringee/WebRTC configuration
+
+## Configuration
+
+Local secrets belong in `.env` files and are ignored by git. Do not commit real credentials.
+
+Common environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GATEWAY_PORT` | `11111` | API Gateway HTTP port |
+| `AUTH_HTTP_PORT` | `10081` | Auth service HTTP port |
+| `AUTH_GRPC_PORT` | `10051` | Auth service gRPC port |
+| `USER_HTTP_PORT` | `10082` | User service HTTP port |
+| `USER_GRPC_PORT` | `10052` | User service gRPC port |
+| `POST_HTTP_PORT` | `10083` | Post service HTTP port |
+| `CHAT_HTTP_PORT` | `10084` | Chat service HTTP/WebSocket port |
+| `NOTIFICATION_HTTP_PORT` | `10085` | Notification service HTTP port |
+| `FILE_HTTP_PORT` | `10087` | File service HTTP port |
+| `FILE_GRPC_PORT` | `10057` | File service gRPC port |
+| `ADMIN_HTTP_PORT` | `10088` | Admin service HTTP port |
+| `SEARCH_HTTP_PORT` | `10089` | Search service HTTP port |
+| `STORY_HTTP_PORT` | `10090` | Story service HTTP port |
+| `FCM_HTTP_PORT` | `10091` | FCM service HTTP port |
+| `RECOMMENDATION_HTTP_PORT` | `10092` | Recommendation service HTTP port |
+| `POSTGRES_DSN` | local PostgreSQL DSN | PostgreSQL connection (Database-per-Service) |
+| `NEO4J_URI` | `neo4j://localhost:7687` | Neo4j Graph Recommendation Engine |
+| `REDIS_ADDR` | `localhost:6379` | Redis connection |
+| `MONGO_URI` | service default | MongoDB chat history |
+| `KAFKA_ADDR` | `localhost:9092` | Kafka broker |
+| `MINIO_ENDPOINT` | `localhost:9000` | MinIO API endpoint |
+| `CAPTCHA_SECRET_KEY` | empty string | Cloudflare Turnstile Secret Key for backend validation (`auth-service`) |
+| `CAPTCHA_ENABLED` | `true` | Enable or disable CAPTCHA verification in auth service |
+| `NEXT_PUBLIC_CAPTCHA_SITE_KEY` | empty string | Cloudflare Turnstile Site Key for frontend widget (`social-network-ui`) |
+| `NEXT_PUBLIC_FIREBASE_*` | project configs | Web Push Notification config for Next.js UI |
+| `FRONTEND_URL` | `http://localhost:10000` | Frontend URL used in auth flows |                  # Feature and architecture notes
 ├── plans/                 # Implementation plans and feature notes
 ├── social-network-ui/     # Next.js web frontend
 ├── Dockerfile             # Multi-service Go image build
