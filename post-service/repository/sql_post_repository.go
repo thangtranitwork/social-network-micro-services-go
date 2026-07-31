@@ -158,16 +158,14 @@ func (r *SQLPostRepository) GetSuggestedPosts(ctx context.Context, currentUserID
 
 func (r *SQLPostRepository) GetRelevantNewsfeedCandidates(ctx context.Context, currentUserID string) ([]*model.NewsfeedCandidate, error) {
 	var posts []model.PostEntity
-	r.db.WithContext(ctx).Select("id, user_id, created_at").
+	r.db.WithContext(ctx).Preload("MediaFiles").
 		Where("created_at >= ?", time.Now().AddDate(0, 0, -7)).
 		Order("created_at DESC").Limit(50).Find(&posts)
 
 	res := make([]*model.NewsfeedCandidate, len(posts))
 	for i, p := range posts {
 		res[i] = &model.NewsfeedCandidate{
-			PostID:    p.ID,
-			AuthorID:  p.UserID,
-			CreatedAt: p.CreatedAt.Format(time.RFC3339),
+			Post: r.entityToModel(ctx, &p, currentUserID),
 		}
 	}
 	return res, nil
@@ -427,47 +425,48 @@ func (r *SQLPostRepository) GetFilesInPostsOfUser(ctx context.Context, username 
 
 // Helpers
 func (r *SQLPostRepository) entityToModel(ctx context.Context, p *model.PostEntity, currentUserID string) *model.Post {
+	updatedAt := p.UpdatedAt
 	m := &model.Post{
 		ID:           p.ID,
-		AuthorId:     p.UserID,
+		AuthorID:     p.UserID,
 		Content:      p.Content,
 		LikeCount:    p.LikeCount,
 		CommentCount: p.CommentCount,
 		ShareCount:   p.ShareCount,
-		CreatedAt:    p.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:    p.UpdatedAt.Format(time.RFC3339),
+		CreatedAt:    p.CreatedAt,
+		UpdatedAt:    &updatedAt,
 		Privacy:      p.Privacy,
 	}
 
 	for _, mf := range p.MediaFiles {
-		m.AttachFiles = append(m.AttachFiles, model.File{
-			ID:          mf.FileID,
-			Name:        mf.FileID,
-			ContentType: mf.MediaType,
-		})
+		m.Files = append(m.Files, mf.FileID)
 	}
 
 	if currentUserID != "" {
 		var likeCount int64
 		r.db.WithContext(ctx).Model(&model.PostLikeEntity{}).Where("post_id = ? AND user_id = ?", p.ID, currentUserID).Count(&likeCount)
-		m.IsLiked = likeCount > 0
+		m.Liked = likeCount > 0
 	}
 
 	return m
 }
 
 func (r *SQLPostRepository) commentEntityToModel(ctx context.Context, c *model.CommentEntity, currentUserID string) *model.Comment {
+	updatedAt := c.UpdatedAt
 	m := &model.Comment{
 		ID:        c.ID,
+		PostID:    c.PostID,
+		AuthorID:  c.UserID,
 		Content:   c.Content,
 		LikeCount: c.LikeCount,
-		CreatedAt: c.CreatedAt.Format(time.RFC3339),
+		CreatedAt: c.CreatedAt,
+		UpdatedAt: &updatedAt,
 	}
 
 	if currentUserID != "" {
 		var likeCount int64
 		r.db.WithContext(ctx).Model(&model.CommentLikeEntity{}).Where("comment_id = ? AND user_id = ?", c.ID, currentUserID).Count(&likeCount)
-		m.IsLiked = likeCount > 0
+		m.Liked = likeCount > 0
 	}
 
 	return m
