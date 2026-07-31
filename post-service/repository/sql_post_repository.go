@@ -517,75 +517,95 @@ func (r *SQLPostRepository) syncPostNodeToNeo4j(ctx context.Context, postID, aut
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (u:User {id: $authorID})
-			MERGE (p:Post {id: $postID})
-			ON CREATE SET p.createdAt = datetime()
-			MERGE (u)-[:POSTED]->(p)
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"postID": postID, "authorID": authorID})
-	})
+	go func(postID, authorID string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $authorID})
+				MERGE (p:Post {id: $postID})
+				ON CREATE SET p.createdAt = datetime()
+				MERGE (u)-[:POSTED]->(p)
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"postID": postID, "authorID": authorID})
+		})
+	}(postID, authorID)
 }
 
 func (r *SQLPostRepository) addLikeEdgeNeo4j(ctx context.Context, userID, postID string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (u:User {id: $userID}), (p:Post {id: $postID})
-			MERGE (u)-[:LIKED]->(p)
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"userID": userID, "postID": postID})
-	})
+	go func(userID, postID string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $userID}), (p:Post {id: $postID})
+				MERGE (u)-[:LIKED]->(p)
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"userID": userID, "postID": postID})
+		})
+	}(userID, postID)
 }
 
 func (r *SQLPostRepository) removeLikeEdgeNeo4j(ctx context.Context, userID, postID string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (u:User {id: $userID})-[r:LIKED]->(p:Post {id: $postID})
-			DELETE r
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"userID": userID, "postID": postID})
-	})
+	go func(userID, postID string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $userID})-[r:LIKED]->(p:Post {id: $postID})
+				DELETE r
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"userID": userID, "postID": postID})
+		})
+	}(userID, postID)
 }
 
 func (r *SQLPostRepository) addCommentEdgeNeo4j(ctx context.Context, userID, postID string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (u:User {id: $userID}), (p:Post {id: $postID})
-			MERGE (u)-[:COMMENTED]->(p)
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"userID": userID, "postID": postID})
-	})
+	go func(userID, postID string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $userID}), (p:Post {id: $postID})
+				MERGE (u)-[:COMMENTED]->(p)
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"userID": userID, "postID": postID})
+		})
+	}(userID, postID)
 }
 
 func (r *SQLPostRepository) addShareEdgeNeo4j(ctx context.Context, userID, postID string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (u:User {id: $userID}), (p:Post {id: $postID})
-			MERGE (u)-[:SHARED]->(p)
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"userID": userID, "postID": postID})
-	})
+	go func(userID, postID string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (u:User {id: $userID}), (p:Post {id: $postID})
+				MERGE (u)-[:SHARED]->(p)
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"userID": userID, "postID": postID})
+		})
+	}(userID, postID)
 }

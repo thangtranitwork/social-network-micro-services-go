@@ -551,104 +551,132 @@ func intersectStrings(a, b []string) []string {
 	return res
 }
 
-// Graph sync helper functions for Neo4j recommendation engine
+// Graph sync helper functions for Neo4j recommendation engine (Async Non-Blocking)
 func (r *SQLUserRepository) syncUserNodeToNeo4j(ctx context.Context, id, username string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		return tx.Run(ctx, "MERGE (u:User {id: $id}) SET u.username = $username", map[string]interface{}{"id": id, "username": username})
-	})
+	go func(id, username string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			return tx.Run(bgCtx, "MERGE (u:User {id: $id}) SET u.username = $username", map[string]interface{}{"id": id, "username": username})
+		})
+	}(id, username)
 }
 
 func (r *SQLUserRepository) addFriendEdgeNeo4j(ctx context.Context, u1, u2 string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (a:User {id: $u1}), (b:User {id: $u2})
-			MERGE (a)-[:FRIEND]-(b)
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"u1": u1, "u2": u2})
-	})
+	go func(u1, u2 string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (a:User {id: $u1}), (b:User {id: $u2})
+				MERGE (a)-[:FRIEND]-(b)
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"u1": u1, "u2": u2})
+		})
+	}(u1, u2)
 }
 
 func (r *SQLUserRepository) removeFriendEdgeNeo4j(ctx context.Context, u1, u2 string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (a:User {id: $u1})-[r:FRIEND]-(b:User {id: $u2})
-			DELETE r
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"u1": u1, "u2": u2})
-	})
+	go func(u1, u2 string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (a:User {id: $u1})-[r:FRIEND]-(b:User {id: $u2})
+				DELETE r
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"u1": u1, "u2": u2})
+		})
+	}(u1, u2)
 }
 
 func (r *SQLUserRepository) addRequestEdgeNeo4j(ctx context.Context, u1, u2 string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (a:User {id: $u1}), (b:User {id: $u2})
-			MERGE (a)-[:SENT_REQUEST]->(b)
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"u1": u1, "u2": u2})
-	})
+	go func(u1, u2 string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (a:User {id: $u1}), (b:User {id: $u2})
+				MERGE (a)-[:SENT_REQUEST]->(b)
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"u1": u1, "u2": u2})
+		})
+	}(u1, u2)
 }
 
 func (r *SQLUserRepository) removeRequestEdgeNeo4j(ctx context.Context, u1, u2 string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (a:User {id: $u1})-[r:SENT_REQUEST]-(b:User {id: $u2})
-			DELETE r
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"u1": u1, "u2": u2})
-	})
+	go func(u1, u2 string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (a:User {id: $u1})-[r:SENT_REQUEST]-(b:User {id: $u2})
+				DELETE r
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"u1": u1, "u2": u2})
+		})
+	}(u1, u2)
 }
 
 func (r *SQLUserRepository) addBlockEdgeNeo4j(ctx context.Context, u1, u2 string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (a:User {id: $u1}), (b:User {id: $u2})
-			MERGE (a)-[:BLOCK]->(b)
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"u1": u1, "u2": u2})
-	})
+	go func(u1, u2 string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (a:User {id: $u1}), (b:User {id: $u2})
+				MERGE (a)-[:BLOCK]->(b)
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"u1": u1, "u2": u2})
+		})
+	}(u1, u2)
 }
 
 func (r *SQLUserRepository) removeBlockEdgeNeo4j(ctx context.Context, u1, u2 string) {
 	if r.neo4jDriver == nil {
 		return
 	}
-	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
-	defer session.Close(ctx)
-	_, _ = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (a:User {id: $u1})-[r:BLOCK]-(b:User {id: $u2})
-			DELETE r
-		`
-		return tx.Run(ctx, query, map[string]interface{}{"u1": u1, "u2": u2})
-	})
+	go func(u1, u2 string) {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		session := r.neo4jDriver.NewSession(bgCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+		defer session.Close(bgCtx)
+		_, _ = session.ExecuteWrite(bgCtx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (a:User {id: $u1})-[r:BLOCK]-(b:User {id: $u2})
+				DELETE r
+			`
+			return tx.Run(bgCtx, query, map[string]interface{}{"u1": u1, "u2": u2})
+		})
+	}(u1, u2)
 }
