@@ -15,7 +15,6 @@ import (
 func main() {
 	cfg := config.LoadConfig()
 
-	logger.InitLogger("recommendation-service")
 	logger.Info("Starting recommendation-service on port %s...", cfg.Port)
 
 	// Initialize Neo4j Graph Database
