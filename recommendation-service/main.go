@@ -58,6 +58,7 @@ func main() {
 	r.GET("/recommendations/posts", recHandler.GetSuggestedPosts)
 	r.GET("/v1/recommendations/friends", recHandler.GetSuggestedFriends)
 	r.GET("/v1/recommendations/posts", recHandler.GetSuggestedPosts)
+	r.GET("/v1/friends/suggested", recHandler.GetSuggestedFriends)
 
 	serverAddr := fmt.Sprintf(":%s", cfg.Port)
 	if err := r.Run(serverAddr); err != nil {

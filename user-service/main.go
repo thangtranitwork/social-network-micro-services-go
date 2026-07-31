@@ -123,7 +123,6 @@ func main() {
 	r.PATCH("/v1/users/update-notification-preferences", userHandler.UpdateNotificationPreferences)
 
 	// Friend Graph REST APIs
-	r.GET("/v1/friends/suggested", userHandler.GetSuggestedFriends)
 	r.GET("/v1/friends/mutual-friends/:username", userHandler.GetMutualFriends)
 	r.GET("/v1/friends/:username", userHandler.GetFriends)
 	r.DELETE("/v1/friends/:username", userHandler.Unfriend)
