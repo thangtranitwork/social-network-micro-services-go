@@ -92,7 +92,7 @@ jobs:
           echo "$CHANGED_FILES"
           echo "====================="
 
-          if echo "$CHANGED_FILES" | grep -qE "^(internal/|go\.mod|go\.sum|pb/|logger/|exception/|scripts/|deploy-vps\.sh|\.github/)"; then
+          if echo "$CHANGED_FILES" | grep -qE "^(internal/|go\.mod|go\.sum|pb/|logger/|exception/|scripts/|deploy-vps\.sh)"; then
             echo "Shared backend code or core config changed. Deploying ALL microservices."
             echo "DEPLOY_SERVICES=all" >> $GITHUB_ENV
           else
