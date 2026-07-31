@@ -1,20 +1,44 @@
 #!/bin/bash
 
-# ========================================================
-# VPS DEPLOYMENT CONFIGURATION (Adjust to your host setup)
-# ========================================================
-SERVER_IP="127.0.0.1"    # Default IP matching your dev reference
-SSH_USER="ubuntu"             # Target SSH User
-SSH_PORT="22"                 # SSH port (default 22, matching your reference port if needed)
-SERVICE_DIR="social-network"  # Subdirectory on remote host
-SSH_TARGET="$SSH_USER@$SERVER_IP"
-
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_PATH="$PROJECT_ROOT/scripts/deploy.sh.template"
 
-# List of valid microservices
-VALID_SERVICES=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "ai-service" "file-service" "admin-service")
+# Load local environment if present (Git-ignored)
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 
+# ========================================================
+# VPS DEPLOYMENT CONFIGURATION (Adjust to your host setup)
+# ========================================================
+SERVER_IP="${SERVER_IP:-127.0.0.1}"    # Target VPS IP
+SSH_USER="${SSH_USER:-ubuntu}"        # Target SSH User
+SSH_PORT="${SSH_PORT:-22}"            # SSH port
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}" # SSH Identity file
+SERVICE_DIR="social-network"           # Subdirectory on remote host
+SSH_TARGET="$SSH_USER@$SERVER_IP"
+
+SSH_CMD="ssh -i $SSH_KEY -p $SSH_PORT -o StrictHostKeyChecking=no"
+SCP_CMD="scp -i $SSH_KEY -P $SSH_PORT -o StrictHostKeyChecking=no"
+
+# List of valid microservices
+VALID_SERVICES=(
+    "api-gateway"
+    "auth-service"
+    "user-service"
+    "post-service"
+    "chat-service"
+    "notification-service"
+    "ai-service"
+    "file-service"
+    "admin-service"
+    "search-service"
+    "story-service"
+    "fcm-service"
+    "recommendation-service"
+)
 
 usage() {
     echo "Usage: $0 {service_name|all} [deploy_message]"
@@ -27,20 +51,20 @@ if [ -z "$1" ]; then
     usage
 fi
 
-TARGET_SERVICE="$1"
-DEPLOY_MESSAGE="${2:-"Manual deploy via deploy-vps.sh"}"
+TARGET_SERVICE="${1%/}"
+DEPLOY_MESSAGE="${2:-Manual deploy via deploy-vps.sh}"
 
 # Verify service name
 is_valid=0
-if [ "$TARGET_SERVICE" == "all" ]; then
+if [ "$TARGET_SERVICE" = "all" ]; then
     is_valid=1
 else
     for s in "${VALID_SERVICES[@]}"; do
-        if [ "$s" == "$TARGET_SERVICE" ]; then
+        if [ "$s" = "$TARGET_SERVICE" ]; then
             is_valid=1
             break
         fi
-    fi
+    done
 fi
 
 if [ $is_valid -eq 0 ]; then
@@ -50,7 +74,11 @@ fi
 
 deploy_single_service() {
     local name=$1
-    local remote_path="/home/$SSH_USER/$SERVICE_DIR/$name"
+    local remote_base="/root"
+    if [ "$SSH_USER" != "root" ]; then
+        remote_base="/home/$SSH_USER"
+    fi
+    local remote_path="$remote_base/$SERVICE_DIR/$name"
     
     echo "=========================================================="
     echo "🚀 DEPLOYING MICROSERVICE: $name"
@@ -60,34 +88,43 @@ deploy_single_service() {
     
     # 1. Ensure remote directory exists
     echo "Creating remote directory..."
-    ssh -p $SSH_PORT $SSH_TARGET "mkdir -p $remote_path"
+    $SSH_CMD $SSH_TARGET "mkdir -p $remote_path"
     
-    # 2. Copy and set up the dynamic deploy.sh script
+    # 2. Sync master .env to remote base directory
+    if [ -f "$PROJECT_ROOT/.env" ]; then
+        echo "Syncing .env configuration to VPS..."
+        $SCP_CMD "$PROJECT_ROOT/.env" $SSH_TARGET:$remote_base/$SERVICE_DIR/.env
+    fi
+
+    # 3. Copy and set up the dynamic deploy.sh script
     echo "Syncing deploy runner..."
-    scp -P $SSH_PORT "$TEMPLATE_PATH" $SSH_TARGET:$remote_path/deploy.sh
-    ssh -p $SSH_PORT $SSH_TARGET "chmod +x $remote_path/deploy.sh"
+    $SCP_CMD "$TEMPLATE_PATH" $SSH_TARGET:$remote_path/deploy.sh
+    $SSH_CMD $SSH_TARGET "chmod +x $remote_path/deploy.sh"
     
-    # 3. Stop running instance safely if exists
+    # 4. Stop running instance safely if exists
     echo "Stopping current process..."
-    ssh -p $SSH_PORT $SSH_TARGET "cd $remote_path && ./deploy.sh $name stop" || true
+    $SSH_CMD $SSH_TARGET "cd $remote_path && ./deploy.sh $name stop" || true
     
-    # 4. Compile Go binary locally for Linux Target OS
+    # 5. Compile Go binary locally for Linux Target OS
     echo "Compiling Go binary locally for Target OS (Linux/amd64)..."
-    GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o "bin/linux/$name" "$name/main.go"
+    if ! GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s" -o "bin/linux/$name" "$name/main.go"; then
+        echo "❌ Compilation failed for $name! Aborting deployment."
+        exit 1
+    fi
     
-    # 5. Push the compiled binary to the VPS
+    # 6. Push the compiled binary to the VPS
     echo "Uploading binary to VPS..."
-    scp -P $SSH_PORT "bin/linux/$name" $SSH_TARGET:$remote_path/
+    $SCP_CMD "bin/linux/$name" $SSH_TARGET:$remote_path/
     
-    # 6. Mark executable and start the process in background via PID tracker
+    # 7. Mark executable and start the process in background via PID tracker
     echo "Starting service on VPS..."
-    ssh -p $SSH_PORT $SSH_TARGET "chmod +x $remote_path/$name"
-    ssh -p $SSH_PORT $SSH_TARGET "cd $remote_path && ./deploy.sh $name start"
+    $SSH_CMD $SSH_TARGET "chmod +x $remote_path/$name"
+    $SSH_CMD $SSH_TARGET "cd $remote_path && ./deploy.sh $name start"
     
-    # 7. Print latest startup logs
+    # 8. Print latest startup logs
     echo "Polling logs..."
     sleep 1
-    ssh -p $SSH_PORT $SSH_TARGET "cd $remote_path && tail -n 10 service.log"
+    $SSH_CMD $SSH_TARGET "cd $remote_path && tail -n 10 service.log"
     echo "Done deploying $name!"
     echo ""
 }
@@ -95,7 +132,7 @@ deploy_single_service() {
 # Create output folder for compiled binaries
 mkdir -p bin/linux
 
-if [ "$TARGET_SERVICE" == "all" ]; then
+if [ "$TARGET_SERVICE" = "all" ]; then
     echo "Deploying ALL microservices sequentially..."
     for s in "${VALID_SERVICES[@]}"; do
         deploy_single_service "$s"

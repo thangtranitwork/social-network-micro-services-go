@@ -228,8 +228,13 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 				proxy.ProxyTo(cfg.UserHttpAddr)(c)
 			}
 		})
-		authGroup.Any("/v1/friends/suggested", proxy.ProxyTo(cfg.RecommendationHttpAddr))
-		authGroup.Any("/v1/friends/*any", proxy.ProxyTo(cfg.UserHttpAddr))
+		authGroup.Any("/v1/friends/*any", func(c *gin.Context) {
+			if c.Param("any") == "/suggested" || c.Param("any") == "suggested" {
+				proxy.ProxyTo(cfg.RecommendationHttpAddr)(c)
+			} else {
+				proxy.ProxyTo(cfg.UserHttpAddr)(c)
+			}
+		})
 		authGroup.Any("/v1/friends", proxy.ProxyTo(cfg.UserHttpAddr))
 		authGroup.Any("/v1/blocks/*any", proxy.ProxyTo(cfg.UserHttpAddr))
 		authGroup.Any("/v1/blocks", proxy.ProxyTo(cfg.UserHttpAddr))
