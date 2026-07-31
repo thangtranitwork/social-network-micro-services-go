@@ -366,17 +366,71 @@ npm run build
 
 Some integration paths require local infrastructure from `make infra-up` or `docker-compose.dev.yml`.
 
-## Deployment Notes
+## Service & Infrastructure Ports
 
-- `Dockerfile` builds a selected service using the `SERVICE` build arg.
-- `docker-compose.dev.yml` is optimized for local development with service containers and Nginx gateway load balancing.
-- `docker-compose.prod.yml`, `deploy-vps.sh`, and `scripts/deploy.sh.template` support VPS deployment workflows.
-- `scripts/nginx.conf` and `scripts/nginx-native.conf` contain gateway/load-balancing examples.
+| Service / Infrastructure | Protocol / Interface | Port | Host Address / Notes |
+| :--- | :--- | :--- | :--- |
+| **Next.js Web UI** | HTTP | `10000` | `http://<VPS_IP>:10000` (Docker Container) |
+| **API Gateway** | HTTP | `11111` | `http://<VPS_IP>:11111` (Entrypoint) |
+| **Auth Service** | HTTP / gRPC | `10081` / `10051` | Internal Microservice |
+| **User Service** | HTTP / gRPC | `10082` / `10052` | Internal Microservice |
+| **Post Service** | HTTP | `10083` | Internal Microservice |
+| **Chat Service** | HTTP / WS | `10084` | Internal Microservice |
+| **Notification Service** | HTTP / WS | `10085` | `http://<VPS_IP>:10085/v1/notifications/ws` |
+| **FCM Service** | HTTP / gRPC | `10086` / `10056` | Internal Microservice |
+| **File Service** | HTTP / gRPC | `10087` / `10057` | Internal Microservice |
+| **Admin Service** | HTTP | `10088` | Internal Microservice |
+| **Search Service** | HTTP | `10089` | Internal Microservice |
+| **Story Service** | HTTP | `10090` | Internal Microservice |
+| **AI Service** | HTTP | `10091` | Internal Microservice |
+| **Recommendation Service** | HTTP | `10092` | Internal Microservice |
+| **PostgreSQL (`auth_db`, etc.)** | PostgreSQL | `15432` | Custom Host Port (Container: `5432`) |
+| **Redis Cache** | Redis | `16379` | Custom Host Port (Container: `6379`) |
+| **Neo4j Graph Database** | HTTP / Bolt | `17474` / `17687` | Custom Host Ports (Container: `7474`/`7687`) |
+| **MongoDB Chat Database** | MongoDB | `27018` | Custom Host Port (Container: `27017`) |
+| **MinIO Storage** | API / Console | `19000` / `19001` | Custom Host Ports (Container: `9000`/`9001`) |
+| **Kafka Event Broker** | PLAINTEXT | `19092` | Custom Host Port (Container: `9092`) |
+
+## VPS Deployment & CI/CD Pipelines
+
+### 1. Manual VPS Deployment
+
+Deploy all Go microservices and infrastructure to a remote Linux host via SSH:
+
+```bash
+# 1. Start Infrastructure (PostgreSQL, Neo4j, Redis, MinIO, Kafka) on VPS
+ssh root@<VPS_IP> "mkdir -p /root/social-network"
+scp docker-compose.yml root@<VPS_IP>:/root/social-network/
+ssh root@<VPS_IP> "cd /root/social-network && docker compose up -d"
+
+# 2. Deploy Go Microservices
+./deploy-vps.sh auth-service   # Deploy a single service
+./deploy-vps.sh all            # Deploy all 13 microservices
+
+# 3. Deploy Next.js Web UI via Docker
+./deploy-ui-vps.sh
+```
+
+- Local host parameters (`SERVER_IP`, `SSH_USER`, `SSH_PORT`) are read dynamically from `.env` (git-ignored) or environment variables.
+- Service processes run natively on VPS with background PID tracking (`deploy.sh`), and the Next.js UI runs inside a standalone Docker container on port `10000`.
+
+### 2. GitHub Actions CI/CD Architecture
+
+- **Go Microservices CI (`.github/workflows/ci.yml`)**: Runs linting, unit tests, and verifies compilation of all 13 Go services on every push and pull request.
+- **Smart Continuous Deployment (`.github/workflows/cd.yml`)**:
+  - Triggers **only after CI successfully passes** on `main`/`master`.
+  - Uses `git diff` for **Smart Service Change Detection**:
+    - If code changes in `auth-service/`, only `auth-service` is compiled and deployed (takes ~10s).
+    - If shared code (`internal/`, `go.mod`, `pb/`) changes, all services are updated.
+    - If UI code changes, only the Next.js Docker container is rebuilt.
+  - Enforces `concurrency` locking to prevent parallel deployment conflicts on the VPS.
+- **UI Repository CI/CD (`social-network-ui/.github/workflows/deploy.yml`)**: Independent, self-contained CI/CD workflow for standalone UI repository deployments.
 
 ## Security Notes
 
-- Keep JWT, OAuth, SMTP, MinIO, Gemini, and provider credentials in local environment files or deployment secrets.
-- Do not commit service `.env` files.
+- Keep JWT, OAuth, SMTP, MinIO, Gemini, and provider credentials in local environment files (`.env`) or deployment secrets.
+- `.env` and `.env.*` are ignored by Git to prevent leaking VPS IPs or private credentials.
+- Set GitHub Action Repository Secrets (`VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PORT`) using a dedicated SSH Deployment Key (`ssh-keygen -t ed25519 -f ~/.ssh/github_deploy_key`).
 - Gateway CORS is configured for known local and production origins.
 - Gateway JWT validation calls the auth service over gRPC and forwards trusted user context headers downstream.
 - Admin operational APIs require both authentication and the `ADMIN` role.

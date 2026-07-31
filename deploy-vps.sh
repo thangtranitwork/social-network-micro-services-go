@@ -20,8 +20,21 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}" # SSH Identity file
 SERVICE_DIR="social-network"           # Subdirectory on remote host
 SSH_TARGET="$SSH_USER@$SERVER_IP"
 
-SSH_CMD="ssh -i $SSH_KEY -p $SSH_PORT -o StrictHostKeyChecking=no"
-SCP_CMD="scp -i $SSH_KEY -P $SSH_PORT -o StrictHostKeyChecking=no"
+ssh_exec() {
+    if [ -n "$SSH_KEY" ] && [ -f "$SSH_KEY" ]; then
+        ssh -i "$SSH_KEY" -p "$SSH_PORT" -o StrictHostKeyChecking=no "$SSH_TARGET" "$1"
+    else
+        ssh -p "$SSH_PORT" -o StrictHostKeyChecking=no "$SSH_TARGET" "$1"
+    fi
+}
+
+scp_exec() {
+    if [ -n "$SSH_KEY" ] && [ -f "$SSH_KEY" ]; then
+        scp -i "$SSH_KEY" -P "$SSH_PORT" -o StrictHostKeyChecking=no "$1" "$SSH_TARGET:$2"
+    else
+        scp -P "$SSH_PORT" -o StrictHostKeyChecking=no "$1" "$SSH_TARGET:$2"
+    fi
+}
 
 # List of valid microservices
 VALID_SERVICES=(
@@ -88,22 +101,22 @@ deploy_single_service() {
     
     # 1. Ensure remote directory exists
     echo "Creating remote directory..."
-    $SSH_CMD $SSH_TARGET "mkdir -p $remote_path"
+    ssh_exec "mkdir -p $remote_path"
     
     # 2. Sync master .env to remote base directory
     if [ -f "$PROJECT_ROOT/.env" ]; then
         echo "Syncing .env configuration to VPS..."
-        $SCP_CMD "$PROJECT_ROOT/.env" $SSH_TARGET:$remote_base/$SERVICE_DIR/.env
+        scp_exec "$PROJECT_ROOT/.env" "$remote_base/$SERVICE_DIR/.env"
     fi
 
     # 3. Copy and set up the dynamic deploy.sh script
     echo "Syncing deploy runner..."
-    $SCP_CMD "$TEMPLATE_PATH" $SSH_TARGET:$remote_path/deploy.sh
-    $SSH_CMD $SSH_TARGET "chmod +x $remote_path/deploy.sh"
+    scp_exec "$TEMPLATE_PATH" "$remote_path/deploy.sh"
+    ssh_exec "chmod +x $remote_path/deploy.sh"
     
     # 4. Stop running instance safely if exists
     echo "Stopping current process..."
-    $SSH_CMD $SSH_TARGET "cd $remote_path && ./deploy.sh $name stop" || true
+    ssh_exec "cd $remote_path && ./deploy.sh $name stop" || true
     
     # 5. Compile Go binary locally for Linux Target OS
     echo "Compiling Go binary locally for Target OS (Linux/amd64)..."
@@ -114,17 +127,17 @@ deploy_single_service() {
     
     # 6. Push the compiled binary to the VPS
     echo "Uploading binary to VPS..."
-    $SCP_CMD "bin/linux/$name" $SSH_TARGET:$remote_path/
+    scp_exec "bin/linux/$name" "$remote_path/"
     
     # 7. Mark executable and start the process in background via PID tracker
     echo "Starting service on VPS..."
-    $SSH_CMD $SSH_TARGET "chmod +x $remote_path/$name"
-    $SSH_CMD $SSH_TARGET "cd $remote_path && ./deploy.sh $name start"
+    ssh_exec "chmod +x $remote_path/$name"
+    ssh_exec "cd $remote_path && ./deploy.sh $name start"
     
     # 8. Print latest startup logs
     echo "Polling logs..."
     sleep 1
-    $SSH_CMD $SSH_TARGET "cd $remote_path && tail -n 10 service.log"
+    ssh_exec "cd $remote_path && tail -n 10 service.log"
     echo "Done deploying $name!"
     echo ""
 }

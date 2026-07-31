@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -39,16 +41,61 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p ${{ secrets.VPS_PORT || 22 }} ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy Infrastructure & Go Microservices
+      - name: Detect Changed Services
+        id: detect
+        run: |
+          # Detect changed files in latest commit
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+          echo "=== CHANGED FILES ==="
+          echo "$CHANGED_FILES"
+          echo "====================="
+
+          # Check if shared backend files changed (internal, go.mod, go.sum, pb, deploy-vps.sh)
+          if echo "$CHANGED_FILES" | grep -qE "^(internal/|go\.mod|go\.sum|pb/|logger/|exception/|scripts/|deploy-vps\.sh|\.github/)"; then
+            echo "Shared backend code or core config changed. Deploying ALL microservices."
+            echo "DEPLOY_SERVICES=all" >> $GITHUB_ENV
+          else
+            SERVICES_TO_DEPLOY=""
+            valid_services=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "ai-service" "file-service" "admin-service" "search-service" "story-service" "fcm-service" "recommendation-service")
+            for svc in "${valid_services[@]}"; do
+              if echo "$CHANGED_FILES" | grep -qE "^${svc}/"; then
+                SERVICES_TO_DEPLOY="$SERVICES_TO_DEPLOY $svc"
+              fi
+            done
+
+            if [ -z "$SERVICES_TO_DEPLOY" ]; then
+              echo "No backend services changed."
+              echo "DEPLOY_SERVICES=none" >> $GITHUB_ENV
+            else
+              echo "Deploying specific services:$SERVICES_TO_DEPLOY"
+              echo "DEPLOY_SERVICES=$SERVICES_TO_DEPLOY" >> $GITHUB_ENV
+            fi
+          fi
+
+          # Check if UI code changed
+          if echo "$CHANGED_FILES" | grep -qE "^(social-network-ui/|deploy-ui-vps\.sh)"; then
+            echo "UI code changed."
+            echo "DEPLOY_UI=true" >> $GITHUB_ENV
+          else
+            echo "UI code did not change."
+            echo "DEPLOY_UI=false" >> $GITHUB_ENV
+          fi
+
+      - name: Deploy Go Microservices
+        if: env.DEPLOY_SERVICES != 'none'
         env:
           SERVER_IP: ${{ secrets.VPS_HOST }}
           SSH_USER: ${{ secrets.VPS_USER }}
           SSH_PORT: ${{ secrets.VPS_PORT || 22 }}
         run: |
           chmod +x deploy-vps.sh scripts/deploy.sh.template
-          ./deploy-vps.sh all "Automated CD deployment from GitHub Actions (Commit: ${{ github.sha }})"
+          for svc in ${{ env.DEPLOY_SERVICES }}; do
+            echo "🚀 Deploying targeted service: $svc"
+            ./deploy-vps.sh "$svc" "Automated CD deployment (Commit: ${{ github.sha }})"
+          done
 
       - name: Deploy Next.js UI Container
+        if: env.DEPLOY_UI == 'true' && hashFiles('social-network-ui/**') != ''
         env:
           SERVER_IP: ${{ secrets.VPS_HOST }}
           SSH_USER: ${{ secrets.VPS_USER }}
