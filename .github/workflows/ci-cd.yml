@@ -1,23 +1,66 @@
-name: Continuous Deployment (CD) to VPS
+name: Go Microservices CI/CD Pipeline
 
 on:
-  workflow_run:
-    workflows: ["Go Microservices CI"]
-    types:
-      - completed
+  push:
     branches:
       - main
       - master
+      - develop
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
 
 concurrency:
-  group: cd-${{ github.ref }}
+  group: ci-cd-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    name: Deploy Microservices & UI to VPS
+  # ========================================================
+  # JOB 1: CI (Lint, Test, Verify Build)
+  # ========================================================
+  ci:
+    name: Build & Test Go Microservices
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Install Dependencies
+        run: go mod download
+
+      - name: Run Go Vet Check
+        run: go vet $(go list ./... | grep -v /scripts)
+
+      - name: Run Unit Tests
+        run: go test -v -short $(go list ./... | grep -v /scripts)
+
+      - name: Verify Build of All Go Microservices
+        run: |
+          mkdir -p bin
+          services=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "file-service" "admin-service" "search-service" "story-service" "fcm-service" "recommendation-service")
+          for svc in "${services[@]}"; do
+            echo "🔨 Building $svc..."
+            go build -o "bin/$svc" "./$svc"
+          done
+          echo "✅ All Go microservices built successfully!"
+
+  # ========================================================
+  # JOB 2: CD (Deploy to VPS - Runs ONLY after CI succeeds)
+  # ========================================================
+  cd:
+    name: Smart Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: ci
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && github.event_name == 'push'
 
     steps:
       - name: Checkout Code
@@ -29,7 +72,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache: true
+          cache: false
 
       - name: Setup SSH Key
         uses: webfactory/ssh-agent@v0.9.0
@@ -44,13 +87,11 @@ jobs:
       - name: Detect Changed Services
         id: detect
         run: |
-          # Detect changed files in latest commit
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
           echo "=== CHANGED FILES ==="
           echo "$CHANGED_FILES"
           echo "====================="
 
-          # Check if shared backend files changed (internal, go.mod, go.sum, pb, deploy-vps.sh)
           if echo "$CHANGED_FILES" | grep -qE "^(internal/|go\.mod|go\.sum|pb/|logger/|exception/|scripts/|deploy-vps\.sh|\.github/)"; then
             echo "Shared backend code or core config changed. Deploying ALL microservices."
             echo "DEPLOY_SERVICES=all" >> $GITHUB_ENV
@@ -72,7 +113,6 @@ jobs:
             fi
           fi
 
-          # Check if UI code changed
           if echo "$CHANGED_FILES" | grep -qE "^(social-network-ui/|deploy-ui-vps\.sh)"; then
             echo "UI code changed."
             echo "DEPLOY_UI=true" >> $GITHUB_ENV

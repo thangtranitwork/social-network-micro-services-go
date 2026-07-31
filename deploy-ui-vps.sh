@@ -13,9 +13,9 @@ fi
 # ========================================================
 # VPS UI DOCKER DEPLOYMENT CONFIGURATION (Next.js Frontend)
 # ========================================================
-SERVER_IP="${SERVER_IP:-127.0.0.1}"        # Target VPS IP
-SSH_USER="${SSH_USER:-ubuntu}"           # Target SSH User
-SSH_PORT="${SSH_PORT:-22}"               # SSH port
+SERVER_IP=$(echo "${SERVER_IP:-127.0.0.1}" | tr -d '\r\n ')        # Target VPS IP
+SSH_USER=$(echo "${SSH_USER:-ubuntu}" | tr -d '\r\n ')           # Target SSH User
+SSH_PORT=$(echo "${SSH_PORT:-22}" | tr -d '\r\n ')               # SSH port
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"  # SSH Identity file
 SERVICE_DIR="social-network"             # Subdirectory on remote host
 UI_PORT="${UI_PORT:-10000}"              # Host UI Port on VPS
