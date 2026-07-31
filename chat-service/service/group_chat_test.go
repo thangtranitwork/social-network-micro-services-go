@@ -11,6 +11,10 @@ import (
 )
 
 func TestGroupChat(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test requiring live Neo4j and MongoDB in short mode")
+	}
+
 	// 1. Load Configurations
 	cfg := config.LoadConfig()
 	cfg.Neo4jURI = "neo4j://localhost:7687"
