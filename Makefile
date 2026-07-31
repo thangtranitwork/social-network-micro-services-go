@@ -63,6 +63,7 @@ dev:
 	go build -o bin/search-service search-service/main.go
 	go build -o bin/story-service story-service/main.go
 	go build -o bin/fcm-service fcm-service/main.go
+	go build -o bin/recommendation-service recommendation-service/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
 	@echo "====== Stopping Go Microservices ======"
 	-@pkill -f "bin/api-gateway" || true
@@ -77,6 +78,7 @@ dev:
 	-@pkill -f "bin/search-service" || true
 	-@pkill -f "bin/story-service" || true
 	-@pkill -f "bin/fcm-service" || true
+	-@pkill -f "bin/recommendation-service" || true
 	@echo "====== All Services Stopped! ======"
 	@echo "====== Starting Go Microservices ======"
 	@mkdir -p logs
@@ -92,6 +94,7 @@ dev:
 	@nohup ./bin/admin-service > /dev/null 2> logs/admin-service.log &
 	@nohup ./bin/search-service > /dev/null 2> logs/search-service.log &
 	@nohup ./bin/story-service > /dev/null 2> logs/story-service.log &
+	@nohup ./bin/recommendation-service > /dev/null 2> logs/recommendation-service.log &
 	@echo "====== All Services Started in Background (check logs/ for output)! ======"
 
 # Infrastructure services
@@ -102,6 +105,53 @@ infra-up:
 infra-down:
 	@echo "====== Stopping Infrastructure ======"
 	docker compose down
+
+# Database SQL Migrations (Tracks state per DB via schema_migrations table)
+# Usage:
+#   make migrate-up                     (runs for all databases)
+#   make migrate-up db=user_db          (runs for user_db only)
+#   make migrate-down db=auth_db        (rolls back auth_db only)
+#   make migrate-version db=post_db     (shows current version of post_db)
+
+POSTGRES_HOST ?= localhost
+POSTGRES_USER ?= postgres
+POSTGRES_PASS ?= postgres
+POSTGRES_PORT ?= 5432
+
+DATABASES = auth_db user_db post_db story_db
+
+migrate-up:
+	@which migrate > /dev/null || (echo "golang-migrate not found. Install via: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest" && exit 1)
+	@if [ -n "$(db)" ]; then \
+		echo "====== Running SQL Migrations UP for $(db) ======"; \
+		migrate -path migrations/$(db) -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASS)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(db)?sslmode=disable" up; \
+	else \
+		for target_db in $(DATABASES); do \
+			echo "====== Running SQL Migrations UP for $$target_db ======"; \
+			migrate -path migrations/$$target_db -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASS)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$$target_db?sslmode=disable" up || true; \
+		done; \
+	fi
+	@echo "====== Migrations UP Complete! ======"
+
+migrate-down:
+	@which migrate > /dev/null || (echo "golang-migrate not found. Install via: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest" && exit 1)
+	@if [ -n "$(db)" ]; then \
+		echo "====== Running SQL Migrations DOWN for $(db) ======"; \
+		migrate -path migrations/$(db) -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASS)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(db)?sslmode=disable" down -all; \
+	else \
+		for target_db in $(DATABASES); do \
+			echo "====== Running SQL Migrations DOWN for $$target_db ======"; \
+			migrate -path migrations/$$target_db -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASS)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$$target_db?sslmode=disable" down -all || true; \
+		done; \
+	fi
+	@echo "====== Migrations DOWN Complete! ======"
+
+migrate-version:
+	@if [ -z "$(db)" ]; then \
+		echo "Error: Please specify target database using 'db=...', e.g. 'make migrate-version db=user_db'"; \
+		exit 1; \
+	fi
+	@migrate -path migrations/$(db) -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASS)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(db)?sslmode=disable" version
 
 # Run services locally
 run-gateway:
@@ -135,6 +185,10 @@ run-ai:
 run-admin:
 	@echo "====== Starting Admin Service ======"
 	go run admin-service/main.go
+
+run-recommendation:
+	@echo "====== Starting Recommendation Service ======"
+	go run recommendation-service/main.go
 
 clean:
 	@echo "====== Cleaning Binaries ======"

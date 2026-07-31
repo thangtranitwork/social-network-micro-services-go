@@ -362,6 +362,17 @@
                             </button>
                         </div>
 
+                        <!-- Recommendation Service -->
+                        <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-recommendation-service">
+                            <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('recommendation-service')">
+                                <span>Recommendation Service</span>
+                                <span class="mono text-[9px] bg-stone-100 px-1.5 py-0.5 rounded text-stone-500 font-bold mr-1">:10092</span>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center border border-stone-200 hover:bg-stone-50 text-xs rounded-lg text-stone-500 hover:text-stone-800 transition-all shadow-sm" onclick="toggleServiceStream('recommendation-service', event)" id="btn-recommendation-service" title="Pause/Resume Streaming">
+                                <span>⏸</span>
+                            </button>
+                        </div>
+
                         <!-- AI Service -->
                         <div class="service-row rounded-xl flex items-center justify-between p-1.5 pl-3" id="row-ai-service">
                             <button class="flex-1 text-left py-1 text-xs font-semibold text-stone-700 hover:text-stone-900 transition-all flex items-center justify-between" onclick="selectService('ai-service')">
@@ -1111,7 +1122,7 @@
                 // Parse service param from URL
                 const urlParams = new URLSearchParams(window.location.search);
                 const serviceParam = urlParams.get('service');
-                const validServices = ['api-gateway', 'auth-service', 'user-service', 'post-service', 'chat-service', 'notification-service', 'fcm-service', 'file-service', 'admin-service', 'search-service', 'story-service', 'ai-service'];
+                const validServices = ['api-gateway', 'auth-service', 'user-service', 'post-service', 'chat-service', 'notification-service', 'fcm-service', 'file-service', 'admin-service', 'search-service', 'story-service', 'recommendation-service', 'ai-service'];
                 if (serviceParam && validServices.includes(serviceParam)) {
                     currentService = serviceParam;
                     // Update Active Tab UI

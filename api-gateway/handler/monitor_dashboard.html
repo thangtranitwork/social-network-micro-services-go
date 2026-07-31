@@ -601,6 +601,7 @@
             "admin-service": { name: "admin-service", type: "service", x: 800, y: 320 },
             "search-service": { name: "search-service", type: "service", x: 320, y: 460 },
             "story-service": { name: "story-service", type: "service", x: 580, y: 460 },
+            "recommendation-service": { name: "recommendation-service", type: "service", x: 960, y: 460 },
             "ai-service": { name: "ai-service", type: "service", x: 820, y: 460 },
             "PostgreSQL": { name: "PostgreSQL", type: "db", x: 150, y: 600 },
             "Redis": { name: "Redis", type: "db", x: 380, y: 600 },
@@ -626,6 +627,8 @@
             { from: "api-gateway", to: "admin-service", protocol: "HTTP" },
             { from: "api-gateway", to: "search-service", protocol: "HTTP" },
             { from: "api-gateway", to: "story-service", protocol: "HTTP" },
+            { from: "api-gateway", to: "recommendation-service", protocol: "HTTP" },
+            { from: "recommendation-service", to: "Neo4j", protocol: "Bolt" },
             { from: "api-gateway", to: "Redis", protocol: "TCP" },
 
             { from: "auth-service", to: "PostgreSQL", protocol: "SQL" },
@@ -1184,7 +1187,7 @@
                 }
             } else {
                 console.log("No container matched for node:", id);
-                const isGoService = ["api-gateway", "auth-service", "user-service", "post-service", "chat-service", "notification-service", "fcm-service", "file-service", "admin-service", "search-service", "story-service", "ai-service"].includes(id);
+                const isGoService = ["api-gateway", "auth-service", "user-service", "post-service", "chat-service", "notification-service", "fcm-service", "file-service", "admin-service", "search-service", "story-service", "recommendation-service", "ai-service"].includes(id);
                 if (isGoService) {
                     containerSection.classList.remove("hidden");
                     document.getElementById("container-name").textContent = "Native Process";

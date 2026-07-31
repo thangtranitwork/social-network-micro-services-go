@@ -107,6 +107,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 				"search-service":       cfg.SearchHttpAddr,
 				"story-service":        cfg.StoryHttpAddr,
 				"fcm-service":          cfg.FCMHttpAddr,
+				"recommendation-service": cfg.RecommendationHttpAddr,
 			}
 
 			client := &http.Client{Timeout: 500 * time.Millisecond}
@@ -266,6 +267,10 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 		// Proxy to Story Service
 		authGroup.Any("/v1/stories/*any", proxy.ProxyTo(cfg.StoryHttpAddr))
 		authGroup.Any("/v1/stories", proxy.ProxyTo(cfg.StoryHttpAddr))
+
+		// Proxy to Recommendation Service
+		authGroup.Any("/v1/recommendations/*any", proxy.ProxyTo(cfg.RecommendationHttpAddr))
+		authGroup.Any("/v1/recommendations", proxy.ProxyTo(cfg.RecommendationHttpAddr))
 
 		// Proxy to FCM Service
 		authGroup.Any("/v1/fcm/*any", proxy.ProxyTo(cfg.FCMHttpAddr))

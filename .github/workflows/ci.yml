@@ -42,7 +42,7 @@ jobs:
       - name: Verify Build of All Go Microservices
         run: |
           mkdir -p bin
-          services=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "file-service" "admin-service" "search-service" "story-service" "fcm-service")
+          services=("api-gateway" "auth-service" "user-service" "post-service" "chat-service" "notification-service" "file-service" "admin-service" "search-service" "story-service" "fcm-service" "recommendation-service")
           for svc in "${services[@]}"; do
             echo "🔨 Building $svc..."
             go build -o "bin/$svc" "./$svc"

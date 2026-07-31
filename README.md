@@ -36,26 +36,24 @@ graph TD
     Gateway -->|HTTP proxy| Search[Search Service :10089]
     Gateway -->|HTTP proxy| Story[Story Service :10090]
     Gateway -->|HTTP proxy| FCM[FCM Service :10091]
+    Gateway -->|HTTP proxy| Rec[Recommendation Service :10092]
 
     Auth --> AuthDB[(PostgreSQL auth_db)]
     Auth --> Redis[(Redis)]
     User --> UserDB[(PostgreSQL user_db)]
-    User --> Neo4j[(Neo4j Recommendation Engine)]
     User --> Redis
     Post --> PostDB[(PostgreSQL post_db)]
-    Post --> Neo4j
     Post --> Redis
     Post -->|gRPC user lookup| User
+    Rec --> Neo4j[(Neo4j Graph Database)]
+    Rec --> Redis
     Story --> StoryDB[(PostgreSQL story_db)]
     Story --> Redis
     Chat --> Mongo[(MongoDB chat_db)]
     Chat --> Redis
-    Chat --> Neo4j
     File --> MinIO[(MinIO)]
     Admin --> AuthDB
-    Admin --> Neo4j
     Admin --> Redis
-    Search --> Neo4j
     Search --> Redis
     FCM --> Firebase[(Firebase Cloud Messaging)]
     Auth --> Kafka[(Kafka)]
@@ -77,9 +75,11 @@ graph TD
 ├── file-service/          # MinIO-backed file storage and presigned URLs
 ├── notification-service/  # Notification delivery worker
 ├── post-service/          # Posts, comments, feeds, notification publisher
+├── recommendation-service/# Neo4j Graph Recommendations & candidate ranking
 ├── search-service/        # User/content search
 ├── story-service/         # Story publishing and retrieval
 ├── user-service/          # Profiles, social graph, friendship, blocks
+├── migrations/            # Versioned SQL DDL migration files (auth_db, user_db, post_db, story_db)
 ├── pb/                    # Protobuf contracts and generated Go stubs
 ├── profiler/              # Shared in-process profiler helpers
 ├── logger/                # Shared logging utilities
@@ -126,6 +126,7 @@ Common environment variables:
 | `SEARCH_HTTP_PORT` | `10089` | Search service HTTP port |
 | `STORY_HTTP_PORT` | `10090` | Story service HTTP port |
 | `FCM_HTTP_PORT` | `10091` | FCM service HTTP port |
+| `RECOMMENDATION_HTTP_PORT` | `10092` | Recommendation service HTTP port |
 | `POSTGRES_DSN` | local PostgreSQL DSN | PostgreSQL connection (Database-per-Service) |
 | `NEO4J_URI` | `neo4j://localhost:7687` | Neo4j Graph Recommendation Engine |
 | `REDIS_ADDR` | `localhost:6379` | Redis connection |

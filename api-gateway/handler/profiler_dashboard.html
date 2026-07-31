@@ -355,6 +355,11 @@
                             Story
                             <span class="w-2 h-2 rounded-full bg-stone-300" id="status-story-service"></span>
                         </button>
+
+                        <button class="filter-btn bg-stone-50 border border-stone-200/60 hover:bg-stone-100 text-stone-600 hover:text-stone-900 text-xs px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-all" data-filter="recommendation-service">
+                            Recommendation
+                            <span class="w-2 h-2 rounded-full bg-stone-300" id="status-recommendation-service"></span>
+                        </button>
                     </div>
                 </div>
 
@@ -693,6 +698,7 @@
                 case 'ai-service': return 'text-violet-700 bg-violet-50 border border-violet-200/50';
                 case 'search-service': return 'text-lime-700 bg-lime-50 border border-lime-200/50';
                 case 'story-service': return 'text-rose-700 bg-rose-50 border border-rose-200/50';
+                case 'recommendation-service': return 'text-teal-700 bg-teal-50 border border-teal-200/50';
                 default: return 'text-stone-700 bg-stone-50 border border-stone-200/50';
             }
         }

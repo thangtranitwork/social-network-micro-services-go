@@ -21,6 +21,7 @@ type Config struct {
 	RedisAddr            string
 	SearchHttpAddr       string
 	StoryHttpAddr        string
+	RecommendationHttpAddr string
 	FCMGrpcAddr          string
 	FCMHttpAddr          string
 }
@@ -49,6 +50,7 @@ func LoadConfig() *Config {
 		RedisAddr:            getEnv("REDIS_ADDR", "localhost:6379"),
 		SearchHttpAddr:       getEnv("SEARCH_HTTP_ADDR", "http://localhost:10089"),
 		StoryHttpAddr:        getEnv("STORY_HTTP_ADDR", "http://localhost:10090"),
+		RecommendationHttpAddr: getEnv("RECOMMENDATION_HTTP_ADDR", "http://localhost:10092"),
 		FCMGrpcAddr:          getEnv("FCM_GRPC_ADDR", "localhost:10056"),
 		FCMHttpAddr:          getEnv("FCM_HTTP_ADDR", "http://localhost:10086"),
 	}
