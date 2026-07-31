@@ -1,15 +1,23 @@
 name: Continuous Deployment (CD) to VPS
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Go Microservices CI"]
+    types:
+      - completed
     branches:
       - main
       - master
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
     name: Deploy Microservices & UI to VPS
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout Code
