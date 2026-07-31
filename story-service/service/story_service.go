@@ -62,6 +62,27 @@ func (s *StoryService) CreateStory(ctx context.Context, authorID, mediaUrl, medi
 
 	storyID := uuid.New().String()
 
+	if db.SQLDB != nil {
+		storyEntity := model.StoryEntity{
+			ID:        storyID,
+			UserID:    authorID,
+			MediaURL:  mediaUrl,
+			MediaType: mediaType,
+			CreatedAt: time.Now(),
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+		}
+		if err := db.SQLDB.WithContext(ctx).Create(&storyEntity).Error; err != nil {
+			return nil, fmt.Errorf("failed to create story in SQL: %w", err)
+		}
+		return &model.Story{
+			ID:        storyID,
+			MediaUrl:  s.resolveMediaURL(mediaUrl),
+			MediaType: mediaType,
+			CreatedAt: storyEntity.CreatedAt,
+			AuthorID:  authorID,
+		}, nil
+	}
+
 	if db.Neo4jDriver == nil {
 		return nil, fmt.Errorf("neo4j driver not initialized")
 	}
@@ -111,6 +132,41 @@ func (s *StoryService) CreateStory(ctx context.Context, authorID, mediaUrl, medi
 }
 
 func (s *StoryService) GetStoryFeed(ctx context.Context, userID string) ([]*model.UserStories, error) {
+	if db.SQLDB != nil {
+		var stories []model.StoryEntity
+		db.SQLDB.WithContext(ctx).
+			Where("expires_at > ?", time.Now()).
+			Order("created_at DESC").Find(&stories)
+
+		userStoriesMap := make(map[string]*model.UserStories)
+		var orderedUserIDs []string
+
+		for _, st := range stories {
+			mStory := &model.Story{
+				ID:        st.ID,
+				MediaUrl:  s.resolveMediaURL(st.MediaURL),
+				MediaType: st.MediaType,
+				CreatedAt: st.CreatedAt,
+				AuthorID:  st.UserID,
+			}
+			if _, exists := userStoriesMap[st.UserID]; !exists {
+				userStoriesMap[st.UserID] = &model.UserStories{
+					Stories: []*model.Story{},
+				}
+				orderedUserIDs = append(orderedUserIDs, st.UserID)
+			}
+			userStoriesMap[st.UserID].Stories = append(userStoriesMap[st.UserID].Stories, mStory)
+		}
+
+		s.resolveUserStoriesAuthors(ctx, userStoriesMap, orderedUserIDs)
+
+		var feed []*model.UserStories
+		for _, id := range orderedUserIDs {
+			feed = append(feed, userStoriesMap[id])
+		}
+		return feed, nil
+	}
+
 	if db.Neo4jDriver == nil {
 		return nil, fmt.Errorf("neo4j driver not initialized")
 	}

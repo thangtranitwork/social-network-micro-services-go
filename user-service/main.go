@@ -32,7 +32,10 @@ func main() {
 	// 3. Initialize Redis
 	redis.InitRedis(cfg)
 
-	// 4. Initialize Core Service & Handler
+	// 4. Initialize PostgreSQL Database
+	db.InitPostgres(cfg)
+
+	// 5. Initialize Core Service & Handler
 	userSvc := service.NewUserService(cfg)
 
 	// Initialize File Client

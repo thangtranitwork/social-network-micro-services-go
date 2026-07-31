@@ -24,7 +24,10 @@ func main() {
 	// 2. Initialize Neo4j
 	db.InitNeo4j(cfg)
 
-	// 3. Initialize Service & Handler
+	// 3. Initialize PostgreSQL
+	db.InitPostgres(cfg)
+
+	// 4. Initialize Service & Handler
 	storySvc := service.NewStoryService(cfg)
 	storyHandler := handler.NewStoryHandler(storySvc)
 

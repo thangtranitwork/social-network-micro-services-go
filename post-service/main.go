@@ -29,8 +29,16 @@ func main() {
 	// 2. Initialize Neo4j
 	db.InitNeo4j(cfg)
 
-	// 3. Initialize Service & Handler
-	postRepo := repository.NewPostRepository()
+	// 3. Initialize PostgreSQL
+	db.InitPostgres(cfg)
+
+	// 4. Initialize Service & Handler
+	var postRepo repository.PostRepository
+	if db.SQLDB != nil {
+		postRepo = repository.NewSQLPostRepository(db.SQLDB, db.Neo4jDriver)
+	} else {
+		postRepo = repository.NewPostRepository()
+	}
 	postSvc := service.NewPostService(cfg, postRepo)
 
 	// Initialize Notification Publisher

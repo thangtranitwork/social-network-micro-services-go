@@ -103,9 +103,11 @@ services:
         SERVICE: user-service
     container_name: dev-user-service
     depends_on:
+      - postgres
       - neo4j
       - redis
     environment:
+      - POSTGRES_DSN=host=postgres user=postgres password=postgres dbname=user_db port=5432 sslmode=disable
       - NEO4J_URI=neo4j://neo4j:7687
       - REDIS_ADDR=redis:6379
     networks:
@@ -119,10 +121,12 @@ services:
         SERVICE: post-service
     container_name: dev-post-service
     depends_on:
+      - postgres
       - neo4j
       - redis
       - user-service
     environment:
+      - POSTGRES_DSN=host=postgres user=postgres password=postgres dbname=post_db port=5432 sslmode=disable
       - NEO4J_URI=neo4j://neo4j:7687
       - REDIS_ADDR=redis:6379
       - USER_GRPC_ADDR=user-service:10052

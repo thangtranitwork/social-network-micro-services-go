@@ -16,6 +16,7 @@ type Config struct {
 	RedisPass      string
 	FileGrpcAddr   string
 	FileServiceURL string
+	PostgresDSN    string
 }
 
 func LoadConfig() *Config {
@@ -39,5 +40,6 @@ func LoadConfig() *Config {
 		RedisPass:      getEnv("REDIS_PASSWORD", ""),
 		FileGrpcAddr:   getEnv("FILE_GRPC_ADDR", "localhost:10057"),
 		FileServiceURL: getEnv("FILE_SERVICE_URL", "http://localhost:11111/v1/files"),
+		PostgresDSN:    getEnv("POSTGRES_DSN", "host=localhost user=postgres password=postgres dbname=user_db port=5432 sslmode=disable"),
 	}
 }

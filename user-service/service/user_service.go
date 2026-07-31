@@ -9,6 +9,7 @@ import (
 	"social-network-go/exception"
 	"social-network-go/internal/runtimeconfig"
 	config "social-network-go/user-service/config"
+	"social-network-go/user-service/db"
 	"social-network-go/user-service/model"
 	red "social-network-go/user-service/redis"
 	"social-network-go/user-service/repository"
@@ -41,8 +42,15 @@ type UserService struct {
 }
 
 func NewUserService(cfg *config.Config) *UserService {
+	var repo repository.UserRepository
+	if db.SQLDB != nil {
+		repo = repository.NewSQLUserRepository(db.SQLDB, db.Neo4jDriver)
+	} else {
+		repo = repository.NewUserRepository()
+	}
+
 	return &UserService{
-		UserRepo:   repository.NewUserRepository(),
+		UserRepo:   repo,
 		RuntimeCfg: runtimeconfig.NewProvider(red.RedisClient),
 		cfg:        cfg,
 	}

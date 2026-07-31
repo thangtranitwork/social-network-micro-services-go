@@ -19,6 +19,7 @@ type Config struct {
 	FileServiceURL  string
 	AdminServiceURL string
 	GRPCPort        string
+	PostgresDSN     string
 }
 
 func LoadConfig() *Config {
@@ -43,5 +44,6 @@ func LoadConfig() *Config {
 		FileServiceURL:  getEnv("FILE_SERVICE_URL", "http://localhost:11111/v1/files"),
 		AdminServiceURL: getEnv("ADMIN_SERVICE_URL", "http://localhost:10088"),
 		GRPCPort:        getEnv("POST_GRPC_PORT", "10053"),
+		PostgresDSN:     getEnv("POSTGRES_DSN", "host=localhost user=postgres password=postgres dbname=post_db port=5432 sslmode=disable"),
 	}
 }
