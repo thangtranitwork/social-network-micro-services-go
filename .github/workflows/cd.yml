@@ -1,0 +1,50 @@
+name: Continuous Deployment (CD) to VPS
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    name: Deploy Microservices & UI to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Setup SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Add VPS to Known Hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p ${{ secrets.VPS_PORT || 22 }} ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy Infrastructure & Go Microservices
+        env:
+          SERVER_IP: ${{ secrets.VPS_HOST }}
+          SSH_USER: ${{ secrets.VPS_USER }}
+          SSH_PORT: ${{ secrets.VPS_PORT || 22 }}
+        run: |
+          chmod +x deploy-vps.sh scripts/deploy.sh.template
+          ./deploy-vps.sh all "Automated CD deployment from GitHub Actions (Commit: ${{ github.sha }})"
+
+      - name: Deploy Next.js UI Container
+        env:
+          SERVER_IP: ${{ secrets.VPS_HOST }}
+          SSH_USER: ${{ secrets.VPS_USER }}
+          SSH_PORT: ${{ secrets.VPS_PORT || 22 }}
+        run: |
+          chmod +x deploy-ui-vps.sh
+          ./deploy-ui-vps.sh
