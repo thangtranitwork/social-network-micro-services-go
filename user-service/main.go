@@ -23,12 +23,6 @@ func main() {
 	// 1. Load Configurations
 	cfg := config.LoadConfig()
 
-	// 2. Initialize Neo4j Database
-	db.InitNeo4j(cfg)
-	if db.Neo4jDriver != nil {
-		defer db.Neo4jDriver.Close(nil)
-	}
-
 	// 3. Initialize Redis
 	redis.InitRedis(cfg)
 

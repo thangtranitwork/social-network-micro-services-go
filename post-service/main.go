@@ -26,16 +26,13 @@ func main() {
 	// 1. Load Configurations
 	cfg := config.LoadConfig()
 
-	// 2. Initialize Neo4j
-	db.InitNeo4j(cfg)
-
 	// 3. Initialize PostgreSQL
 	db.InitPostgres(cfg)
 
 	// 4. Initialize Service & Handler
 	var postRepo repository.PostRepository
 	if db.SQLDB != nil {
-		postRepo = repository.NewSQLPostRepository(db.SQLDB, db.Neo4jDriver)
+		postRepo = repository.NewSQLPostRepository(db.SQLDB)
 	} else {
 		postRepo = repository.NewPostRepository()
 	}
@@ -46,7 +43,7 @@ func main() {
 	defer notifPublisher.Close()
 	moderationPublisher := service.NewKafkaModerationPublisher(cfg.KafkaAddr)
 	defer moderationPublisher.Close()
-	keywordPublisher := service.NewKafkaKeywordPublisher(cfg.KafkaAddr, db.Neo4jDriver)
+	keywordPublisher := service.NewKafkaKeywordPublisher(cfg.KafkaAddr)
 	defer keywordPublisher.Close()
 
 	// Initialize File Client

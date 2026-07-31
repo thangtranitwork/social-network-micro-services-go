@@ -590,26 +590,30 @@
     <script>
         // Define topological nodes & default coordinates
         const initialNodes = {
-            "api-gateway": { name: "api-gateway", type: "gateway", x: 450, y: 50 },
-            "auth-service": { name: "auth-service", type: "service", x: 200, y: 180 },
-            "user-service": { name: "user-service", type: "service", x: 450, y: 180 },
-            "post-service": { name: "post-service", type: "service", x: 700, y: 180 },
-            "chat-service": { name: "chat-service", type: "service", x: 100, y: 320 },
-            "notification-service": { name: "notification-service", type: "service", x: 320, y: 320 },
-            "fcm-service": { name: "fcm-service", type: "service", x: 960, y: 320 },
-            "file-service": { name: "file-service", type: "service", x: 580, y: 320 },
-            "admin-service": { name: "admin-service", type: "service", x: 800, y: 320 },
-            "search-service": { name: "search-service", type: "service", x: 320, y: 460 },
-            "story-service": { name: "story-service", type: "service", x: 580, y: 460 },
-            "recommendation-service": { name: "recommendation-service", type: "service", x: 960, y: 460 },
-            "ai-service": { name: "ai-service", type: "service", x: 820, y: 460 },
-            "PostgreSQL": { name: "PostgreSQL", type: "db", x: 150, y: 600 },
-            "Redis": { name: "Redis", type: "db", x: 380, y: 600 },
-            "MongoDB": { name: "MongoDB", type: "db", x: 600, y: 600 },
-            "Neo4j": { name: "Neo4j", type: "db", x: 820, y: 600 },
-            "Firebase": { name: "Firebase Cloud", type: "cloud", x: 970, y: 600 },
-            "Kafka": { name: "Kafka", type: "mq", x: 50, y: 460 },
-            "Elasticsearch": { name: "Elasticsearch", type: "search", x: 970, y: 460 }
+            "api-gateway": { name: "api-gateway", type: "gateway", x: 520, y: 50 },
+
+            "auth-service": { name: "auth-service", type: "service", x: 140, y: 170 },
+            "user-service": { name: "user-service", type: "service", x: 390, y: 170 },
+            "post-service": { name: "post-service", type: "service", x: 640, y: 170 },
+            "chat-service": { name: "chat-service", type: "service", x: 890, y: 170 },
+
+            "notification-service": { name: "notification-service", type: "service", x: 80, y: 310 },
+            "fcm-service": { name: "fcm-service", type: "service", x: 290, y: 310 },
+            "file-service": { name: "file-service", type: "service", x: 490, y: 310 },
+            "admin-service": { name: "admin-service", type: "service", x: 690, y: 310 },
+            "search-service": { name: "search-service", type: "service", x: 890, y: 310 },
+
+            "story-service": { name: "story-service", type: "service", x: 200, y: 450 },
+            "recommendation-service": { name: "recommendation-service", type: "service", x: 490, y: 450 },
+            "ai-service": { name: "ai-service", type: "service", x: 780, y: 450 },
+
+            "Kafka": { name: "Kafka", type: "mq", x: 50, y: 590 },
+            "PostgreSQL": { name: "PostgreSQL", type: "db", x: 220, y: 590 },
+            "Redis": { name: "Redis", type: "db", x: 420, y: 590 },
+            "MongoDB": { name: "MongoDB", type: "db", x: 620, y: 590 },
+            "Neo4j": { name: "Neo4j", type: "db", x: 820, y: 590 },
+            "Firebase": { name: "Firebase Cloud", type: "cloud", x: 1010, y: 590 },
+            "Elasticsearch": { name: "Elasticsearch", type: "search", x: 1010, y: 450 }
         };
 
         // Deep copy coordinates
@@ -1118,6 +1122,7 @@
             "admin-service": ["admin-service", "prod-admin-service"],
             "search-service": ["search-service", "prod-search-service"],
             "story-service": ["story-service", "prod-story-service"],
+            "recommendation-service": ["recommendation-service", "prod-recommendation-service"],
             "ai-service": ["ai-service", "prod-ai-service"],
             "PostgreSQL": ["postgres-auth", "prod-postgres", "postgres"],
             "Redis": ["redis-cache", "prod-redis", "redis"],

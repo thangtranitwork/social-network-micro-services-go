@@ -23,13 +23,11 @@ type PostKeywordEvent struct {
 }
 
 type KafkaKeywordPublisher struct {
-	writer      *kafka.Writer
-	neo4jDriver neo4j.DriverWithContext
+	writer *kafka.Writer
 }
 
-func NewKafkaKeywordPublisher(kafkaAddr string, neo4jDriver neo4j.DriverWithContext) *KafkaKeywordPublisher {
+func NewKafkaKeywordPublisher(kafkaAddr string) *KafkaKeywordPublisher {
 	return &KafkaKeywordPublisher{
-		neo4jDriver: neo4jDriver,
 		writer: &kafka.Writer{
 			Addr:         kafka.TCP(kafkaAddr),
 			Topic:        "post-events",

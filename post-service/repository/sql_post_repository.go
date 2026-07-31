@@ -13,14 +13,12 @@ import (
 )
 
 type SQLPostRepository struct {
-	db          *gorm.DB
-	neo4jDriver neo4j.DriverWithContext
+	db *gorm.DB
 }
 
-func NewSQLPostRepository(db *gorm.DB, neo4jDriver neo4j.DriverWithContext) PostRepository {
+func NewSQLPostRepository(db *gorm.DB) PostRepository {
 	return &SQLPostRepository{
-		db:          db,
-		neo4jDriver: neo4jDriver,
+		db: db,
 	}
 }
 

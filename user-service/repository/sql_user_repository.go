@@ -16,14 +16,12 @@ import (
 )
 
 type SQLUserRepository struct {
-	db          *gorm.DB
-	neo4jDriver neo4j.DriverWithContext
+	db *gorm.DB
 }
 
-func NewSQLUserRepository(db *gorm.DB, neo4jDriver neo4j.DriverWithContext) UserRepository {
+func NewSQLUserRepository(db *gorm.DB) UserRepository {
 	return &SQLUserRepository{
-		db:          db,
-		neo4jDriver: neo4jDriver,
+		db: db,
 	}
 }
 

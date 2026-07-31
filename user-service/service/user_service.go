@@ -44,7 +44,7 @@ type UserService struct {
 func NewUserService(cfg *config.Config) *UserService {
 	var repo repository.UserRepository
 	if db.SQLDB != nil {
-		repo = repository.NewSQLUserRepository(db.SQLDB, db.Neo4jDriver)
+		repo = repository.NewSQLUserRepository(db.SQLDB)
 	} else {
 		repo = repository.NewUserRepository()
 	}

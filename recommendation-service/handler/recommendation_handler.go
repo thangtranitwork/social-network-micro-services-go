@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"social-network-go/recommendation-service/model"
 	"social-network-go/recommendation-service/service"
 )
@@ -16,59 +16,43 @@ func NewRecommendationHandler(svc *service.RecommendationService) *Recommendatio
 	return &RecommendationHandler{svc: svc}
 }
 
-func (h *RecommendationHandler) HandleGetSuggestedFriends(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	userID := r.Header.Get("X-User-ID")
+func (h *RecommendationHandler) GetSuggestedFriends(c *gin.Context) {
+	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		userID = r.URL.Query().Get("userId")
+		userID = c.Query("userId")
 	}
 
-	candidates, err := h.svc.GetSuggestedFriends(r.Context(), userID)
+	candidates, err := h.svc.GetSuggestedFriends(c.Request.Context(), userID)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(model.Response{
+		c.JSON(http.StatusInternalServerError, model.Response{
 			Success: false,
 			Message: err.Error(),
 		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(model.Response{
+	c.JSON(http.StatusOK, model.Response{
 		Success: true,
 		Data:    candidates,
 	})
 }
 
-func (h *RecommendationHandler) HandleGetSuggestedPosts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	userID := r.Header.Get("X-User-ID")
+func (h *RecommendationHandler) GetSuggestedPosts(c *gin.Context) {
+	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
-		userID = r.URL.Query().Get("userId")
+		userID = c.Query("userId")
 	}
 
-	candidates, err := h.svc.GetSuggestedPosts(r.Context(), userID)
+	candidates, err := h.svc.GetSuggestedPosts(c.Request.Context(), userID)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(model.Response{
+		c.JSON(http.StatusInternalServerError, model.Response{
 			Success: false,
 			Message: err.Error(),
 		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(model.Response{
+	c.JSON(http.StatusOK, model.Response{
 		Success: true,
 		Data:    candidates,
 	})
