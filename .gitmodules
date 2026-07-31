@@ -1,3 +1,4 @@
 [submodule "social-network-ui"]
 	path = social-network-ui
 	url = https://github.com/thangtranitwork/social-network-ui.git
+	branch = main
