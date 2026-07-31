@@ -7,11 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"social-network-go/logger"
 	"social-network-go/user-service/model"
 
 	"github.com/google/uuid"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"gorm.io/gorm"
 )
 

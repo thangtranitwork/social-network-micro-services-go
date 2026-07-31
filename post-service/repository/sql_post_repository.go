@@ -8,7 +8,6 @@ import (
 
 	"social-network-go/post-service/model"
 
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"gorm.io/gorm"
 )
 
