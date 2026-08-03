@@ -17,22 +17,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var allowedOrigins = map[string]bool{
-	"http://localhost:3000":     true,
-	"http://localhost:3001":     true,
-	"http://localhost:10000":    true,
-	"http://192.168.1.48:3000":  true,
-	"http://192.168.1.48:10000": true,
-	"https://pocpoc.online":     true,
-	"https://www.pocpoc.online": true,
-}
-
 // SetupRoutes registers all routing policies for API Gateway
 func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceClient, rdb *redis.Client) {
-	// CORS Setup - Must use explicit origin (not wildcard) when credentials: true
+	originMap := make(map[string]bool)
+	for _, o := range cfg.AllowedOrigins {
+		originMap[o] = true
+	}
+
+	// CORS Setup - Match explicit origin from configured allowed origins
 	r.Use(func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		if allowedOrigins[origin] {
+		if originMap[origin] {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		} else if origin == "" {
@@ -96,17 +91,17 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 			serviceQuery := c.Query("service")
 
 			services := map[string]string{
-				"auth-service":         cfg.AuthHttpAddr,
-				"user-service":         cfg.UserHttpAddr,
-				"post-service":         cfg.PostHttpAddr,
-				"chat-service":         cfg.ChatHttpAddr,
-				"notification-service": cfg.NotificationHttpAddr,
-				"file-service":         cfg.FileHttpAddr,
-				"admin-service":        cfg.AdminHttpAddr,
-				"ai-service":           cfg.AIHttpAddr,
-				"search-service":       cfg.SearchHttpAddr,
-				"story-service":        cfg.StoryHttpAddr,
-				"fcm-service":          cfg.FCMHttpAddr,
+				"auth-service":           cfg.AuthHttpAddr,
+				"user-service":           cfg.UserHttpAddr,
+				"post-service":           cfg.PostHttpAddr,
+				"chat-service":           cfg.ChatHttpAddr,
+				"notification-service":   cfg.NotificationHttpAddr,
+				"file-service":           cfg.FileHttpAddr,
+				"admin-service":          cfg.AdminHttpAddr,
+				"ai-service":             cfg.AIHttpAddr,
+				"search-service":         cfg.SearchHttpAddr,
+				"story-service":          cfg.StoryHttpAddr,
+				"fcm-service":            cfg.FCMHttpAddr,
 				"recommendation-service": cfg.RecommendationHttpAddr,
 			}
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +22,30 @@ import (
 	"sync"
 )
 
+// resolveLogFilePath resolves the log file path for a service across Local and VPS Production setups
+func resolveLogFilePath(service string) string {
+	candidates := []string{
+		// 1. VPS Production path: relative to current service dir (e.g., ../auth-service/service.log)
+		filepath.Join("..", service, "service.log"),
+		filepath.Join("..", service, "logs", service+".log"),
+
+		// 2. Local dev path: relative to project root (e.g., logs/auth-service.log)
+		filepath.Join("logs", service+".log"),
+		filepath.Join("..", "logs", service+".log"),
+
+		// 3. Current working directory fallback (e.g., for api-gateway itself)
+		"service.log",
+	}
+
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	return filepath.Join("logs", service+".log")
+}
+
 // StreamLogs handles Server-Sent Events for streaming service logs
 func StreamLogs(c *gin.Context) {
 	service := c.Query("service")
@@ -30,18 +55,18 @@ func StreamLogs(c *gin.Context) {
 	}
 
 	validServices := map[string]bool{
-		"api-gateway":          true,
-		"auth-service":         true,
-		"user-service":         true,
-		"post-service":         true,
-		"chat-service":         true,
-		"notification-service": true,
-		"file-service":         true,
-		"ai-service":           true,
-		"admin-service":        true,
-		"search-service":       true,
-		"story-service":        true,
-		"fcm-service":          true,
+		"api-gateway":            true,
+		"auth-service":           true,
+		"user-service":           true,
+		"post-service":           true,
+		"chat-service":           true,
+		"notification-service":   true,
+		"file-service":           true,
+		"ai-service":             true,
+		"admin-service":          true,
+		"search-service":         true,
+		"story-service":          true,
+		"fcm-service":            true,
 		"recommendation-service": true,
 	}
 	if !validServices[service] {
@@ -49,7 +74,7 @@ func StreamLogs(c *gin.Context) {
 		return
 	}
 
-	logFile := "logs/" + service + ".log"
+	logFile := resolveLogFilePath(service)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -149,17 +174,17 @@ var profilerDashboardHTML string
 func ProfilerAggregatorHandler(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		services := map[string]string{
-			"auth-service":         cfg.AuthHttpAddr,
-			"user-service":         cfg.UserHttpAddr,
-			"post-service":         cfg.PostHttpAddr,
-			"chat-service":         cfg.ChatHttpAddr,
-			"notification-service": cfg.NotificationHttpAddr,
-			"file-service":         cfg.FileHttpAddr,
-			"admin-service":        cfg.AdminHttpAddr,
-			"ai-service":           cfg.AIHttpAddr,
-			"search-service":       cfg.SearchHttpAddr,
-			"story-service":        cfg.StoryHttpAddr,
-			"fcm-service":          cfg.FCMHttpAddr,
+			"auth-service":           cfg.AuthHttpAddr,
+			"user-service":           cfg.UserHttpAddr,
+			"post-service":           cfg.PostHttpAddr,
+			"chat-service":           cfg.ChatHttpAddr,
+			"notification-service":   cfg.NotificationHttpAddr,
+			"file-service":           cfg.FileHttpAddr,
+			"admin-service":          cfg.AdminHttpAddr,
+			"ai-service":             cfg.AIHttpAddr,
+			"search-service":         cfg.SearchHttpAddr,
+			"story-service":          cfg.StoryHttpAddr,
+			"fcm-service":            cfg.FCMHttpAddr,
 			"recommendation-service": cfg.RecommendationHttpAddr,
 		}
 
@@ -318,7 +343,7 @@ func SearchLogs(c *gin.Context) {
 		wg.Add(1)
 		go func(srvName string) {
 			defer wg.Done()
-			logFile := "logs/" + srvName + ".log"
+			logFile := resolveLogFilePath(srvName)
 
 			if _, err := os.Stat(logFile); os.IsNotExist(err) {
 				return

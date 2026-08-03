@@ -120,14 +120,15 @@ deploy_single_service() {
     
     # 5. Compile Go binary locally for Linux Target OS
     echo "Compiling Go binary locally for Target OS (Linux/amd64)..."
-    if ! GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s" -o "bin/linux/$name" "$name/main.go"; then
+    mkdir -p "$PROJECT_ROOT/bin/linux"
+    if ! (cd "$PROJECT_ROOT" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-w -s" -o "$PROJECT_ROOT/bin/linux/$name" "./$name/main.go"); then
         echo "❌ Compilation failed for $name! Aborting deployment."
         exit 1
     fi
     
     # 6. Push the compiled binary to the VPS
     echo "Uploading binary to VPS..."
-    scp_exec "bin/linux/$name" "$remote_path/"
+    scp_exec "$PROJECT_ROOT/bin/linux/$name" "$remote_path/"
     
     # 7. Mark executable and start the process in background via PID tracker
     echo "Starting service on VPS..."

@@ -45,6 +45,8 @@ build:
 	go build -o bin/admin-service admin-service/main.go
 	go build -o bin/search-service search-service/main.go
 	go build -o bin/story-service story-service/main.go
+	go build -o bin/fcm-service fcm-service/main.go
+	go build -o bin/recommendation-service recommendation-service/main.go
 	go build -o bin/gen-test-data scripts/gen_test_data.go
 	go build -o bin/spam-api scripts/spammer/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
