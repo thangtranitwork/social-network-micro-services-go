@@ -54,6 +54,23 @@ func NewFileService(cfg *config.Config) *FileService {
 	}
 }
 
+// rewritePresignedURL replaces the host in a presigned URL with the public endpoint
+// to ensure clients can reach MinIO from outside the internal network.
+func (s *FileService) rewritePresignedURL(u *url.URL) string {
+	publicEndpoint := s.cfg.MinioPublicEndpoint
+	if publicEndpoint == "" {
+		return u.String()
+	}
+
+	scheme := "http"
+	if s.cfg.MinioUseSSL {
+		scheme = "https"
+	}
+	u.Scheme = scheme
+	u.Host = publicEndpoint
+	return u.String()
+}
+
 func (s *FileService) Upload(ctx context.Context, file io.Reader, filename string, contentType string, uploaderID string) (*model.File, error) {
 	ext := filepath.Ext(filename)
 	fileID := uuid.New().String() + ext
@@ -93,7 +110,7 @@ func (s *FileService) GetPresignedUploadURL(ctx context.Context, filename string
 		return "", "", fmt.Errorf("failed to generate presigned upload URL: %w", err)
 	}
 
-	return fileID, presignedURL.String(), nil
+	return fileID, s.rewritePresignedURL(presignedURL), nil
 }
 
 func (s *FileService) Load(ctx context.Context, id string) (io.ReadCloser, string, string, int64, error) {
@@ -126,7 +143,7 @@ func (s *FileService) GetPresignedURL(ctx context.Context, id string) (string, e
 		logger.Err(err).Error("Failed to generate presigned GET URL for %s", id)
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
-	return presignedURL.String(), nil
+	return s.rewritePresignedURL(presignedURL), nil
 }
 
 func (s *FileService) GetPresignedURLs(ctx context.Context, ids []string) (map[string]string, error) {
