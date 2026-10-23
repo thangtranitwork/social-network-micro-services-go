@@ -50,6 +50,7 @@ dependencies:
   intl: ^0.19.0
   uuid: ^4.4.0
   connectivity_plus: ^6.0.3
+  package_info_plus: ^10.2.1
 
 dev_dependencies:
   flutter_test:
@@ -57,6 +58,9 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   build_runner: ^2.4.9
   json_serializable: ^6.8.0
+
+dependency_overrides:
+  package_info_plus: ^10.2.1
 
 flutter:
   uses-material-design: true
