@@ -509,7 +509,15 @@ func (s *PostService) UpdatePrivacy(ctx context.Context, currentUserID, postID, 
 		return errors.New("INVALID_POST_PRIVACY")
 	}
 
-	return s.Repo.UpdatePrivacy(ctx, currentUserID, postID, privacy)
+	if err := s.Repo.UpdatePrivacy(ctx, currentUserID, postID, privacy); err != nil {
+		return err
+	}
+
+	if s.KeywordInteractor != nil {
+		_ = s.KeywordInteractor.PublishPostPrivacyUpdated(ctx, postID, currentUserID, privacy)
+	}
+
+	return nil
 }
 
 func (s *PostService) UpdateContent(ctx context.Context, currentUserID, postID string, content *string, newFileIDs []string, deleteOldFileIDs []string) error {

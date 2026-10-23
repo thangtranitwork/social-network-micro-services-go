@@ -75,6 +75,45 @@ func (p *KafkaKeywordPublisher) Interact(ctx context.Context, postID string, act
 	return nil
 }
 
+type PostPrivacyUpdatedEvent struct {
+	Event     string    `json:"event"`
+	PostID    string    `json:"postId"`
+	AuthorID  string    `json:"authorId"`
+	Privacy   string    `json:"privacy"`
+	TraceID   string    `json:"traceId,omitempty"`
+	RequestID string    `json:"requestId,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+func (p *KafkaKeywordPublisher) PublishPostPrivacyUpdated(ctx context.Context, postID string, authorID string, privacy string) error {
+	traceID, requestID := traceIDsFromContext(ctx)
+	event := PostPrivacyUpdatedEvent{
+		Event:     "post_privacy_updated",
+		PostID:    postID,
+		AuthorID:  authorID,
+		Privacy:   privacy,
+		TraceID:   traceID,
+		RequestID: requestID,
+		Timestamp: time.Now(),
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	publishCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	err = p.writer.WriteMessages(publishCtx, kafka.Message{
+		Key:     []byte(postID),
+		Value:   payload,
+		Headers: kafkaTraceHeaders(traceID, requestID),
+	})
+	if err != nil {
+		logger.WithContext(ctx).Err(err).Error("Failed to publish post_privacy_updated event")
+	}
+	return err
+}
+
 func (p *KafkaKeywordPublisher) Close() error {
 	if p.writer == nil {
 		return nil

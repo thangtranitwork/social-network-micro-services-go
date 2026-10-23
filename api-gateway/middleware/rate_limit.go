@@ -1,8 +1,12 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -11,6 +15,48 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
+
+// sendSlackRateLimitAlert sends a formatted Slack notification asynchronously when rate limit is hit
+func sendSlackRateLimitAlert(webhookURL, identifier, method, path string, count int64, limit int, isBan bool) {
+	if webhookURL == "" {
+		return
+	}
+
+	title := "⚠️ Rate Limit Exceeded (HTTP 429)"
+	color := "#FFC107" // Warning yellow
+	if isBan {
+		title = "🚨 Client Banned for API Spamming (HTTP 403)"
+		color = "#DC3545" // Danger red
+	}
+
+	payload := map[string]any{
+		"attachments": []map[string]any{
+			{
+				"color": color,
+				"title": title,
+				"fields": []map[string]any{
+					{"title": "Identifier (IP/User)", "value": identifier, "short": true},
+					{"title": "Endpoint", "value": method + " " + path, "short": true},
+					{"title": "Request Count", "value": fmt.Sprintf("%d / %d", count, limit), "short": true},
+					{"title": "Time", "value": time.Now().Format("2006-01-02 15:04:05 MST"), "short": true},
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		logger.Err(err).Error("[SLACK_ALERT] Failed to send Slack webhook")
+		return
+	}
+	defer resp.Body.Close()
+}
 
 func RateLimiter(rdb *redis.Client, limit int, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -71,10 +117,24 @@ func RateLimiter(rdb *redis.Client, limit int, window time.Duration) gin.Handler
 		c.Writer.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
 
 		if count > int64(limit) {
+			isBan := false
 			// If request count exceeds the limit by 150% (e.g. limit is 100, count > 150), trigger temporary ban
-			if count > int64(float64(limit)*1.5) {
+			// Do not ban loopback / localhost in development
+			if count > int64(float64(limit)*1.5) && identifier != "127.0.0.1" && identifier != "::1" && identifier != "localhost" {
 				rdb.Set(ctx, banKey, "1", 5*time.Minute)
 				logger.Warn("[RATE_LIMIT] Client %s temporarily banned for 5 minutes due to heavy API spamming (requests: %d, limit: %d)", identifier, count, limit)
+				isBan = true
+			}
+
+			// Send Slack notification with 3-minute cooldown per (path + identifier) to prevent Slack flooding
+			slackWebhookURL := os.Getenv("SLACK_WEBHOOK_URL")
+			if slackWebhookURL != "" {
+				cooldownKey := "slack_alert:rate_limit:" + c.FullPath() + ":" + identifier
+				if rdb.SetNX(ctx, cooldownKey, "1", 3*time.Minute).Val() {
+					method := c.Request.Method
+					path := c.FullPath()
+					go sendSlackRateLimitAlert(slackWebhookURL, identifier, method, path, count, limit, isBan)
+				}
 			}
 
 			c.JSON(http.StatusTooManyRequests, gin.H{
@@ -89,3 +149,4 @@ func RateLimiter(rdb *redis.Client, limit int, window time.Duration) gin.Handler
 		c.Next()
 	}
 }
+

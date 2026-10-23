@@ -33,7 +33,7 @@ func LoadConfig() *Config {
 	return &Config{
 		HTTPPort:            getEnv("FILE_HTTP_PORT", "10087"),
 		GRPCPort:            getEnv("FILE_GRPC_PORT", "10057"),
-		MinioEndpoint:       getEnv("MINIO_ENDPOINT", "localhost:9000"),
+		MinioEndpoint:       getEnv("MINIO_ENDPOINT", "localhost:19000"),
 		MinioPublicEndpoint: getEnv("MINIO_PUBLIC_ENDPOINT", ""), // empty = same as MinioEndpoint
 		MinioAccessKey:      getEnv("MINIO_ACCESS_KEY", "minioadmin"),
 		MinioSecretKey:      getEnv("MINIO_SECRET_KEY", "minioadmin"),

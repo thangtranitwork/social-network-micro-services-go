@@ -84,19 +84,19 @@ dev:
 	@echo "====== All Services Stopped! ======"
 	@echo "====== Starting Go Microservices ======"
 	@mkdir -p logs
-	@nohup ./bin/api-gateway > /dev/null 2> logs/api-gateway.log &
-	@nohup ./bin/auth-service > /dev/null 2> logs/auth-service.log &
-	@nohup ./bin/user-service > /dev/null 2> logs/user-service.log &
-	@nohup ./bin/post-service > /dev/null 2> logs/post-service.log &
-	@nohup ./bin/chat-service > /dev/null 2> logs/chat-service.log &
-	@nohup ./bin/fcm-service > /dev/null 2> logs/fcm-service.log &
-	@nohup ./bin/notification-service > /dev/null 2> logs/notification-service.log &
-	@nohup ./bin/ai-service > /dev/null 2> logs/ai-service.log &
-	@nohup ./bin/file-service > /dev/null 2> logs/file-service.log &
-	@nohup ./bin/admin-service > /dev/null 2> logs/admin-service.log &
-	@nohup ./bin/search-service > /dev/null 2> logs/search-service.log &
-	@nohup ./bin/story-service > /dev/null 2> logs/story-service.log &
-	@nohup ./bin/recommendation-service > /dev/null 2> logs/recommendation-service.log &
+	@setsid ./bin/api-gateway </dev/null >/dev/null 2>> logs/api-gateway.log &
+	@setsid ./bin/auth-service </dev/null >/dev/null 2>> logs/auth-service.log &
+	@setsid ./bin/user-service </dev/null >/dev/null 2>> logs/user-service.log &
+	@setsid ./bin/post-service </dev/null >/dev/null 2>> logs/post-service.log &
+	@setsid ./bin/chat-service </dev/null >/dev/null 2>> logs/chat-service.log &
+	@setsid ./bin/fcm-service </dev/null >/dev/null 2>> logs/fcm-service.log &
+	@setsid ./bin/notification-service </dev/null >/dev/null 2>> logs/notification-service.log &
+	@setsid ./bin/ai-service </dev/null >/dev/null 2>> logs/ai-service.log &
+	@setsid ./bin/file-service </dev/null >/dev/null 2>> logs/file-service.log &
+	@setsid ./bin/admin-service </dev/null >/dev/null 2>> logs/admin-service.log &
+	@setsid ./bin/search-service </dev/null >/dev/null 2>> logs/search-service.log &
+	@setsid ./bin/story-service </dev/null >/dev/null 2>> logs/story-service.log &
+	@setsid ./bin/recommendation-service </dev/null >/dev/null 2>> logs/recommendation-service.log &
 	@echo "====== All Services Started in Background (check logs/ for output)! ======"
 
 # Infrastructure services
@@ -118,7 +118,7 @@ infra-down:
 POSTGRES_HOST ?= localhost
 POSTGRES_USER ?= postgres
 POSTGRES_PASS ?= postgres
-POSTGRES_PORT ?= 5432
+POSTGRES_PORT ?= 15432
 
 DATABASES = auth_db user_db post_db story_db
 
@@ -205,9 +205,14 @@ dev-restart:
 	go build -o bin/$(svc) $(svc)/main.go
 	-@pkill -f "bin/$(svc)" || true
 	@mkdir -p logs
-	@nohup ./bin/$(svc) > /dev/null 2> logs/$(svc).log &
+	@setsid ./bin/$(svc) </dev/null >/dev/null 2>> logs/$(svc).log &
 	@echo "====== $(svc) rebuilt and started in background! ======"
 
 spam-api:
 	@echo "====== Running Scenario API Spammer ======"
 	go run scripts/spammer/main.go -url $(SPAM_URL) -c $(SPAM_C) -n $(SPAM_N) -delay $(SPAM_DELAY) -timeout $(SPAM_TIMEOUT)
+
+seed-data:
+	@echo "====== Generating Sample Test Data for PostgreSQL & Neo4j ======"
+	go run scripts/gen_test_data.go
+

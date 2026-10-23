@@ -18,6 +18,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/segmentio/kafka-go"
+	"social-network-go/ai-service/imaging"
+	"social-network-go/internal/events"
 	"social-network-go/internal/moderation"
 	"social-network-go/logger"
 	"social-network-go/profiler"
@@ -29,6 +31,8 @@ type PostCreatedEvent struct {
 	Content   string    `json:"content"`
 	IsUpdate  bool      `json:"isUpdate"`
 	AuthorID  string    `json:"authorId"`
+	Privacy   string    `json:"privacy,omitempty"`
+	Files     []string  `json:"files,omitempty"`
 	TraceID   string    `json:"traceId,omitempty"`
 	RequestID string    `json:"requestId,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
@@ -40,10 +44,13 @@ type AIService struct {
 	KafkaAddr        string
 	Neo4jDriver      neo4j.DriverWithContext
 	moderationWriter *kafka.Writer
+	imageWriter      *kafka.Writer
+	embedder         *imaging.GeminiEmbedder
+	minioReader      *imaging.MinIOReader
 	httpClient       *http.Client
 }
 
-func NewAIService(geminiKey, geminiModel, kafkaAddr string, neo4jDriver neo4j.DriverWithContext) *AIService {
+func NewAIService(geminiKey, geminiModel, kafkaAddr string, neo4jDriver neo4j.DriverWithContext, minioReader *imaging.MinIOReader, embedder *imaging.GeminiEmbedder) *AIService {
 	return &AIService{
 		GeminiKey:   geminiKey,
 		GeminiModel: geminiModel,
@@ -56,6 +63,15 @@ func NewAIService(geminiKey, geminiModel, kafkaAddr string, neo4jDriver neo4j.Dr
 			BatchTimeout: 50 * time.Millisecond,
 			WriteTimeout: 1 * time.Second,
 		},
+		imageWriter: &kafka.Writer{
+			Addr:         kafka.TCP(kafkaAddr),
+			Topic:        events.TopicPostImageEvents,
+			Balancer:     &kafka.LeastBytes{},
+			BatchTimeout: 50 * time.Millisecond,
+			WriteTimeout: 1 * time.Second,
+		},
+		embedder:    embedder,
+		minioReader: minioReader,
 		httpClient: &http.Client{
 			Timeout: 25 * time.Second,
 		},
@@ -732,6 +748,170 @@ func (s *AIService) StartWorker() {
 	}()
 }
 
+func (s *AIService) StartImageEmbeddingWorker() {
+	if s.minioReader == nil || s.embedder == nil {
+		logger.Warn("AI Service: Image Embedding Worker disabled (MinIO or Embedder not configured)")
+		return
+	}
+
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  []string{s.KafkaAddr},
+		GroupID:  "ai-image-embedding-worker-group",
+		Topic:    "post-events",
+		MinBytes: 10e3, // 10KB
+		MaxBytes: 10e6, // 10MB
+	})
+
+	logger.Info("AI Service: Image Embedding Worker listening on Kafka broker %s, topic: post-events", s.KafkaAddr)
+
+	go func() {
+		defer reader.Close()
+		for {
+			m, err := reader.ReadMessage(context.Background())
+			if err != nil {
+				logger.Error("AI image worker read error: %v", err)
+				time.Sleep(3 * time.Second)
+				continue
+			}
+
+			var event PostCreatedEvent
+			if err := json.Unmarshal(m.Value, &event); err != nil {
+				logger.Error("AI image worker: Error unmarshalling event: %v", err)
+				continue
+			}
+
+			postID := event.PostID
+			if postID == "" {
+				postID = string(m.Key)
+			}
+			if postID == "" {
+				continue
+			}
+
+			event.TraceID, event.RequestID = traceIDsFromKafkaMessage(m, event.TraceID, event.RequestID)
+			ctx, cancel := context.WithTimeout(contextWithTraceIDs(context.Background(), event.TraceID, event.RequestID), 60*time.Second)
+
+			s.processPostImageEmbedding(ctx, event, postID)
+			cancel()
+		}
+	}()
+}
+
+func (s *AIService) processPostImageEmbedding(ctx context.Context, event PostCreatedEvent, postID string) {
+	authorID := event.AuthorID
+	privacy := event.Privacy
+	files := event.Files
+
+	// If missing metadata (e.g. from legacy event), enrich from Neo4j
+	if (authorID == "" || privacy == "" || len(files) == 0) && s.Neo4jDriver != nil {
+		session := s.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+		defer session.Close(ctx)
+		resData, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			res, err := tx.Run(ctx, "MATCH (a:User)-[:POSTED]->(p:Post {id: $id}) RETURN a.id, p.privacy, p.files", map[string]interface{}{"id": postID})
+			if err != nil || !res.Next(ctx) {
+				return nil, err
+			}
+			return res.Record().Values, nil
+		})
+		if err == nil && resData != nil {
+			vals := resData.([]interface{})
+			if len(vals) > 0 && vals[0] != nil && authorID == "" {
+				authorID = vals[0].(string)
+			}
+			if len(vals) > 1 && vals[1] != nil && privacy == "" {
+				privacy = vals[1].(string)
+			}
+			if len(vals) > 2 && vals[2] != nil && len(files) == 0 {
+				if fList, ok := vals[2].([]interface{}); ok {
+					for _, f := range fList {
+						if fs, ok := f.(string); ok && fs != "" {
+							files = append(files, fs)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// PRIVACY RULE: Do not embed or store PRIVATE posts!
+	if strings.ToUpper(privacy) == "PRIVATE" {
+		logger.WithContext(ctx).Info("Post %s is PRIVATE: Skipping embedding or clearing any existing vectors", postID)
+		if event.IsUpdate || event.Event == "post_updated" || event.Event == "post_privacy_updated" {
+			_ = s.publishPostImageEvent(ctx, events.PostImageEmbeddedEvent{
+				EventType: events.EventTypePostImagesCleared,
+				PostID:    postID,
+				CreatedAt: time.Now(),
+			})
+		}
+		return
+	}
+
+	if len(files) == 0 {
+		return
+	}
+
+	logger.WithContext(ctx).Info("Processing image embedding for post %s with %d files (Privacy: %s)", postID, len(files), privacy)
+
+	for _, fileID := range files {
+		if fileID == "" {
+			continue
+		}
+
+		rawBytes, err := s.minioReader.FetchImage(ctx, fileID)
+		if err != nil {
+			logger.WithContext(ctx).Warn("Failed to fetch image %s from MinIO: %v", fileID, err)
+			continue
+		}
+
+		// Preprocess: EXIF auto-rotate + resize 512px + convert to JPEG
+		jpegBytes, _, err := imaging.PreprocessImage(rawBytes, 512)
+		if err != nil {
+			logger.WithContext(ctx).Warn("Skipping non-image or unprocessable file %s: %v", fileID, err)
+			continue
+		}
+
+		// Call Gemini API for embedding
+		vec, err := s.embedder.EmbedImage(ctx, jpegBytes)
+		if err != nil {
+			logger.WithContext(ctx).Err(err).Error("Failed to embed image %s for post %s", fileID, postID)
+			continue
+		}
+
+		// Publish event to Kafka
+		embeddedEvent := events.PostImageEmbeddedEvent{
+			EventType:      events.EventTypePostImageEmbedded,
+			PostID:         postID,
+			FileID:         fileID,
+			AuthorID:       authorID,
+			Privacy:        privacy,
+			EmbeddingModel: s.embedder.Model,
+			ModelVersion:   "v1",
+			Vector:         vec,
+			CreatedAt:      time.Now(),
+		}
+
+		if err := s.publishPostImageEvent(ctx, embeddedEvent); err != nil {
+			logger.WithContext(ctx).Err(err).Error("Failed to publish PostImageEmbeddedEvent for %s/%s", postID, fileID)
+		} else {
+			logger.WithContext(ctx).Info("Successfully embedded and published image vector for post %s, file %s", postID, fileID)
+		}
+	}
+}
+
+func (s *AIService) publishPostImageEvent(ctx context.Context, event events.PostImageEmbeddedEvent) error {
+	if s.imageWriter == nil {
+		return fmt.Errorf("imageWriter is nil")
+	}
+	body, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return s.imageWriter.WriteMessages(ctx, kafka.Message{
+		Key:   []byte(event.PostID),
+		Value: body,
+	})
+}
+
 func (s *AIService) StartModerationWorker() {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  []string{s.KafkaAddr},
@@ -809,9 +989,24 @@ func main() {
 		defer neo4jDriver.Close(context.Background())
 	}
 
-	worker := NewAIService(geminiKey, geminiModel, kafkaAddr, neo4jDriver)
+	minioEndpoint := getEnv("MINIO_ENDPOINT", "localhost:19000")
+	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
+	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin")
+	minioBucket := getEnv("MINIO_BUCKET", "social-network")
+	minioSSL := getEnv("MINIO_USE_SSL", "false") == "true"
+	embeddingModel := getEnv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2")
+
+	minioReader, err := imaging.NewMinIOReader(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioSSL)
+	if err != nil {
+		logger.Warn("Failed to init MinIO reader in AI service: %v", err)
+	}
+
+	embedder := imaging.NewGeminiEmbedder(geminiKey, embeddingModel, 768)
+
+	worker := NewAIService(geminiKey, geminiModel, kafkaAddr, neo4jDriver, minioReader, embedder)
 	worker.StartWorker()
 	worker.StartModerationWorker()
+	worker.StartImageEmbeddingWorker()
 
 	go func() {
 		r := gin.New()
@@ -822,6 +1017,69 @@ func main() {
 
 		r.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "UP", "service": "ai-service"})
+		})
+
+		// Internal AI Embedding endpoints for search-service
+		r.POST("/v1/ai/embed-text", func(c *gin.Context) {
+			var req struct {
+				Text string `json:"text" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Text) == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "text is required"})
+				return
+			}
+			vec, err := worker.embedder.EmbedText(c.Request.Context(), req.Text)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"vector":          vec,
+				"embedding_model": worker.embedder.Model,
+				"model_version":   "v1",
+			})
+		})
+
+		r.POST("/v1/ai/embed-image", func(c *gin.Context) {
+			fileHeader, err := c.FormFile("image")
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "image file is required"})
+				return
+			}
+			if fileHeader.Size > 5*1024*1024 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "image exceeds 5MB limit"})
+				return
+			}
+			f, err := fileHeader.Open()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to open uploaded file"})
+				return
+			}
+			defer f.Close()
+
+			data, err := io.ReadAll(f)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read file data"})
+				return
+			}
+
+			jpegBytes, _, err := imaging.PreprocessImage(data, 512)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid image: " + err.Error()})
+				return
+			}
+
+			vec, err := worker.embedder.EmbedImage(c.Request.Context(), jpegBytes)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"vector":          vec,
+				"embedding_model": worker.embedder.Model,
+				"model_version":   "v1",
+			})
 		})
 
 		debugGroup := r.Group("/debug/profiler")

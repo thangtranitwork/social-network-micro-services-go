@@ -8,6 +8,7 @@ import (
 	"social-network-go/logger"
 	"social-network-go/profiler"
 	"social-network-go/search-service/config"
+	"social-network-go/search-service/consumer"
 	"social-network-go/search-service/db"
 	"social-network-go/search-service/handler"
 	"social-network-go/search-service/service"
@@ -16,19 +17,33 @@ import (
 )
 
 func main() {
-	logger.Info("Starting Global Search Service...")
+	logger.Info("Starting Global Search Service (with Elasticsearch & Neo4j)...")
 
 	// 1. Load Configurations
 	cfg := config.LoadConfig()
 
-	// 2. Initialize Neo4j
+	// 2. Initialize Neo4j (Graph & Fallback Store)
 	db.InitNeo4j(cfg)
 
-	// 3. Initialize Service & Handler
+	// 3. Initialize Elasticsearch (Primary Full-Text Search Engine)
+	db.InitElasticsearch(cfg)
+
+	// 4. Initialize Service & Handler
 	searchSvc := service.NewSearchService(cfg)
 	searchHandler := handler.NewSearchHandler(searchSvc)
 
-	// 4. Setup REST Server (Gin)
+	// 5. Start Real-time Kafka Event Consumer for Syncing
+	if searchSvc.ESRepo != nil {
+		eventConsumer := consumer.NewSearchEventConsumer(cfg, searchSvc.ESRepo)
+		eventConsumer.Start(context.Background())
+		logger.Info("Elasticsearch Real-time Event Consumer initialized")
+
+		imageConsumer := consumer.NewPostImageConsumer(cfg, searchSvc.ESRepo)
+		imageConsumer.Start(context.Background())
+		logger.Info("Elasticsearch Real-time Post Image Consumer initialized")
+	}
+
+	// 6. Setup REST Server (Gin)
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(logger.TraceMiddleware())
@@ -42,17 +57,33 @@ func main() {
 
 		// Check Neo4j
 		if db.Neo4jDriver == nil {
-			status = "DOWN"
 			details["neo4j"] = "DOWN (driver not initialized)"
 		} else {
 			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 			if err := db.Neo4jDriver.VerifyConnectivity(ctx); err != nil {
-				status = "DOWN"
 				details["neo4j"] = "DOWN (" + err.Error() + ")"
 			} else {
 				details["neo4j"] = "UP"
 			}
 			cancel()
+		}
+
+		// Check Elasticsearch
+		if db.ESClient == nil {
+			details["elasticsearch"] = "DOWN (client not initialized)"
+		} else {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			if err := db.PingElasticsearch(ctx); err != nil {
+				details["elasticsearch"] = "DOWN (" + err.Error() + ")"
+			} else {
+				details["elasticsearch"] = "UP"
+			}
+			cancel()
+		}
+
+		// Overall status: if both are DOWN then DOWN, otherwise partially UP
+		if details["neo4j"] != "UP" && details["elasticsearch"] != "UP" {
+			status = "DOWN"
 		}
 
 		httpStatus := http.StatusOK
@@ -81,6 +112,13 @@ func main() {
 
 	// REST APIs (mapped under Gateway)
 	r.GET("/v1/search", searchHandler.Search)
+	r.POST("/v1/search/sync", searchHandler.SyncData)
+	r.POST("/v1/search/reindex", searchHandler.Reindex)
+
+	// Visual Search APIs
+	r.POST("/v1/search/image", searchHandler.SearchByImage)
+	r.GET("/v1/search/visual", searchHandler.SearchVisualText)
+	r.GET("/v1/search/similar", searchHandler.SearchSimilar)
 
 	logger.Info("Search HTTP Server starting on port %s", cfg.HTTPPort)
 	if err := r.Run(":" + cfg.HTTPPort); err != nil {

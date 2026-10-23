@@ -14,7 +14,7 @@ services:
       - POSTGRES_DB=auth_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
+    restart: "no"
 
   # 2. Neo4j (Social & Content Graph Database)
   neo4j:
@@ -27,7 +27,7 @@ services:
       - NEO4J_AUTH=neo4j/password
     volumes:
       - neo4j_data:/data
-    restart: unless-stopped
+    restart: "no"
 
   # 3. Redis (Cache, OTP & Token Blacklist)
   redis:
@@ -37,7 +37,7 @@ services:
       - "${REDIS_HOST_PORT:-16379}:6379"
     volumes:
       - redis_data:/data
-    restart: unless-stopped
+    restart: "no"
 
   # 4. MongoDB (Chat History Database)
   mongodb:
@@ -47,7 +47,7 @@ services:
       - "${MONGO_HOST_PORT:-27018}:27017"
     volumes:
       - mongodb_data:/data/db
-    restart: unless-stopped
+    restart: "no"
 
   # 5. Kafka Event Broker (with Zookeeper)
   zookeeper:
@@ -56,6 +56,7 @@ services:
     environment:
       - ZOOKEEPER_CLIENT_PORT=2181
       - ZOOKEEPER_TICK_TIME=2000
+    restart: "no"
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
@@ -70,10 +71,11 @@ services:
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:${KAFKA_HOST_PORT:-19092}
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+    restart: "no"
 
   # 6. MinIO (Object Storage for Images and Videos)
   minio:
-    image: minio/minio
+    image: cgr.dev/chainguard/minio:latest
     container_name: sn-minio-storage
     ports:
       - "${MINIO_API_PORT:-19000}:9000" # API
@@ -84,8 +86,32 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
-    restart: unless-stopped
+    restart: "no"
 
+  # 7. Elasticsearch & Kibana (Full-Text Search Engine & Web Console)
+  elasticsearch:
+    image: elasticsearch:8.13.4
+    container_name: sn-elasticsearch
+    ports:
+      - "127.0.0.1:${ELASTICSEARCH_HOST_PORT:-9200}:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    restart: "no"
+
+  kibana:
+    image: kibana:8.13.4
+    container_name: sn-kibana
+    ports:
+      - "${KIBANA_HOST_PORT:-5601}:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    restart: "no"
 
 volumes:
   postgres_data:
@@ -93,4 +119,5 @@ volumes:
   redis_data:
   mongodb_data:
   minio_data:
+  elasticsearch_data:
 

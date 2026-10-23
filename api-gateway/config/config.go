@@ -25,6 +25,7 @@ type Config struct {
 	RecommendationHttpAddr string
 	FCMGrpcAddr            string
 	FCMHttpAddr            string
+	SlackWebhookURL        string
 	AllowedOrigins         []string
 }
 
@@ -64,6 +65,7 @@ func LoadConfig() *Config {
 		RecommendationHttpAddr: getEnv("RECOMMENDATION_HTTP_ADDR", "http://localhost:10092"),
 		FCMGrpcAddr:            getEnv("FCM_GRPC_ADDR", "localhost:10056"),
 		FCMHttpAddr:            getEnv("FCM_HTTP_ADDR", "http://localhost:10086"),
+		SlackWebhookURL:        getEnv("SLACK_WEBHOOK_URL", ""),
 		AllowedOrigins:         origins,
 	}
 }
