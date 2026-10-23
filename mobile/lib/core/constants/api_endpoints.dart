@@ -24,11 +24,14 @@ class ApiEndpoints {
 
   // 3. Post & Feed Endpoints
   static const String newsfeed = '/v1/posts/newsfeed';
-  static const String userPosts = '/v1/posts/user';
-  static const String createPost = '/v1/posts';
-  static const String postDetails = '/v1/posts';
-  static const String postReactions = '/v1/posts/reactions';
-  static const String postComments = '/v1/comments';
+  static const String userPosts = '/v1/posts/of-user'; // append /:username
+  static const String createPost = '/v1/posts/post';
+  static const String postDetails = '/v1/posts'; // append /:id
+  static const String likePost = '/v1/posts/like'; // append /:postId
+  static const String unlikePost = '/v1/posts/unlike'; // append /:postId
+  static const String postComments = '/v1/posts/comments'; // append /:postId
+  static const String createComment = '/v1/posts/comment';
+  static const String replyComment = '/v1/posts/reply-comment';
 
   // 4. Stories Endpoints
   static const String stories = '/v1/stories';
