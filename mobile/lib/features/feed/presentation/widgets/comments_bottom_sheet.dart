@@ -77,6 +77,7 @@ class _CommentsBottomSheetState extends State<CommentsBottomSheet> {
         _isSending = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isSending = false;
       });

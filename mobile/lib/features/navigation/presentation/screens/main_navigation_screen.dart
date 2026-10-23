@@ -1,11 +1,11 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
-import '../../chat/presentation/screens/chat_list_screen.dart';
-import '../../feed/presentation/screens/feed_screen.dart';
-import '../../post/presentation/screens/create_post_screen.dart';
-import '../../profile/presentation/screens/profile_screen.dart';
-import '../../search/presentation/screens/explore_screen.dart';
+import '../../../chat/presentation/screens/chat_list_screen.dart';
+import '../../../feed/presentation/screens/feed_screen.dart';
+import '../../../post/presentation/screens/create_post_screen.dart';
+import '../../../profile/presentation/screens/profile_screen.dart';
+import '../../../search/presentation/screens/explore_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -126,49 +126,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           Icons.add_rounded,
           color: Colors.white,
           size: 26,
-        ),
-      ),
-    );
-  }
-}
-
-class _PlaceholderScreen extends StatelessWidget {
-  final String title;
-  final IconData icon;
-
-  const _PlaceholderScreen({required this.title, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Scaffold(
-      backgroundColor: isDark ? AppColors.darkBackground : AppColors.lightBackground,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: isDark ? AppColors.darkCard : AppColors.lightCard,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-                ),
-              ),
-              child: Icon(icon, size: 40, color: AppColors.primary),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: isDark ? AppColors.textPrimaryDark : AppColors.textPrimaryLight,
-              ),
-            ),
-          ],
         ),
       ),
     );

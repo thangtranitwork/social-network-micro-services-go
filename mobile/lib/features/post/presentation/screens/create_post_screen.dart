@@ -96,11 +96,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final authState = context.watch<AuthBloc>().state;
     String userName = 'You';
-    String? userEmail;
 
     if (authState is AuthenticatedState) {
       userName = authState.session.username;
-      userEmail = authState.session.email;
     }
 
     return Scaffold(

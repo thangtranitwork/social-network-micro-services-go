@@ -17,7 +17,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
   final _searchController = TextEditingController();
   List<Map<String, dynamic>> _searchResults = [];
   bool _isSearching = false;
-  String? _searchError;
 
   // Curated high quality explore images
   final List<String> _exploreImages = [
@@ -49,7 +48,6 @@ class _ExploreScreenState extends State<ExploreScreen> {
 
     setState(() {
       _isSearching = true;
-      _searchError = null;
     });
 
     try {
