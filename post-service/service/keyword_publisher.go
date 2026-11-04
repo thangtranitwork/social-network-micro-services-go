@@ -15,6 +15,8 @@ type PostKeywordEvent struct {
 	Content   string    `json:"content"`
 	IsUpdate  bool      `json:"isUpdate"`
 	AuthorID  string    `json:"authorId,omitempty"`
+	Privacy   string    `json:"privacy,omitempty"`
+	Files     []string  `json:"files,omitempty"`
 	TraceID   string    `json:"traceId,omitempty"`
 	RequestID string    `json:"requestId,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
@@ -36,6 +38,38 @@ func NewKafkaKeywordPublisher(kafkaAddr string) *KafkaKeywordPublisher {
 			WriteTimeout: 500 * time.Millisecond,
 		},
 	}
+}
+
+func (p *KafkaKeywordPublisher) PublishPostCreated(ctx context.Context, postID, authorID, content, privacy string, fileIDs []string) error {
+	traceID, requestID := traceIDsFromContext(ctx)
+	event := PostKeywordEvent{
+		Event:     "post_created",
+		PostID:    postID,
+		AuthorID:  authorID,
+		Content:   content,
+		Privacy:   privacy,
+		Files:     fileIDs,
+		IsUpdate:  false,
+		TraceID:   traceID,
+		RequestID: requestID,
+		Timestamp: time.Now(),
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	publishCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	err = p.writer.WriteMessages(publishCtx, kafka.Message{
+		Key:     []byte(postID),
+		Value:   payload,
+		Headers: kafkaTraceHeaders(traceID, requestID),
+	})
+	if err != nil {
+		logger.WithContext(ctx).Err(err).Error("Failed to publish post_created event")
+	}
+	return err
 }
 
 func (p *KafkaKeywordPublisher) ExtractPostKeywords(ctx context.Context, postID string, content string, isUpdate bool) error {

@@ -15,6 +15,7 @@ import (
 	"social-network-go/auth-service/handler"
 	"social-network-go/auth-service/redis"
 	"social-network-go/auth-service/service"
+	"social-network-go/internal/server"
 	"social-network-go/logger"
 	"social-network-go/pb"
 	"social-network-go/profiler"
@@ -176,9 +177,9 @@ func main() {
 		registerRoutes.PATCH("/verify", authHandler.Verify)
 	}
 
-	logger.Field("port", cfg.HTTPPort).Info("Auth HTTP Server starting")
-	if err := r.Run(":" + cfg.HTTPPort); err != nil {
-		logger.Field("error", err).Error("Failed to run HTTP server")
-		os.Exit(1)
+	srv := &http.Server{
+		Addr:    ":" + cfg.HTTPPort,
+		Handler: r,
 	}
+	server.RunWithGracefulShutdown(srv, 10*time.Second)
 }

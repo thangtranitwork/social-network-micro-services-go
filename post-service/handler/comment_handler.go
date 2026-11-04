@@ -15,7 +15,7 @@ type CommentRequest struct {
 
 type ReplyCommentRequest struct {
 	OriginalCommentID string  `json:"originalCommentId" binding:"required"`
-	Content           string  `json:"content" binding:"required"`
+	Content           string  `json:"content"`
 	FileID            *string `json:"fileId"`
 }
 

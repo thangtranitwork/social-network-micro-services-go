@@ -227,13 +227,13 @@ func (s *AuthService) RefreshTokenForRole(tokenStr, expectedRole string) (string
 	return s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTSecret, s.Cfg.AccessTokenDuration)
 }
 
-func (s *AuthService) Logout(refreshToken string) error {
-	if refreshToken == "" || red.RedisClient == nil {
+func (s *AuthService) BlacklistToken(tokenStr string) error {
+	if tokenStr == "" || red.RedisClient == nil {
 		return nil
 	}
 
 	claims := &TokenClaims{}
-	token, _, _ := new(jwt.Parser).ParseUnverified(refreshToken, claims)
+	token, _, _ := new(jwt.Parser).ParseUnverified(tokenStr, claims)
 	if token == nil || claims.ExpiresAt == nil {
 		return nil
 	}
@@ -245,7 +245,32 @@ func (s *AuthService) Logout(refreshToken string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return red.RedisClient.Set(ctx, refreshToken, "blacklisted", ttl).Err()
+	key := fmt.Sprintf("auth:blacklist:%s", tokenStr)
+	return red.RedisClient.Set(ctx, key, "revoked", ttl).Err()
+}
+
+func (s *AuthService) IsTokenBlacklisted(ctx context.Context, tokenStr string) bool {
+	if tokenStr == "" || red.RedisClient == nil {
+		return false
+	}
+	key := fmt.Sprintf("auth:blacklist:%s", tokenStr)
+	exists, err := red.RedisClient.Exists(ctx, key).Result()
+	return err == nil && exists > 0
+}
+
+func (s *AuthService) Logout(refreshToken, accessToken string) error {
+	if refreshToken != "" {
+		_ = s.BlacklistToken(refreshToken)
+		if red.RedisClient != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = red.RedisClient.Set(ctx, refreshToken, "blacklisted", 7*24*time.Hour).Err()
+			cancel()
+		}
+	}
+	if accessToken != "" {
+		_ = s.BlacklistToken(accessToken)
+	}
+	return nil
 }
 
 // ParseAuthError is optional: use this in controller if you want to convert error string

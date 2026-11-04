@@ -1271,9 +1271,14 @@ func (r *Neo4jPostRepository) queryNewsfeedCandidates(ctx context.Context, query
 		if err != nil {
 			return nil, err
 		}
+		currentUserID, _ := params["currentUserID"].(string)
 		candidates := make([]*model.NewsfeedCandidate, 0)
 		for result.Next(ctx) {
-			candidates = append(candidates, newsfeedCandidateFromRecord(result.Record().Values))
+			c := newsfeedCandidateFromRecord(result.Record().Values)
+			if c != nil && c.Post != nil && currentUserID != "" && c.Post.AuthorID == currentUserID {
+				c.IsOwnPost = true
+			}
+			candidates = append(candidates, c)
 		}
 		return candidates, result.Err()
 	})

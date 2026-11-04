@@ -6,6 +6,7 @@ import (
 
 	"social-network-go/api-gateway/config"
 	"social-network-go/api-gateway/router"
+	"social-network-go/internal/server"
 	"social-network-go/logger"
 	"social-network-go/pb"
 	"social-network-go/profiler"
@@ -74,9 +75,14 @@ func main() {
 	// 4. Setup Routes & Middlewares
 	router.SetupRoutes(r, cfg, authClient, rdb)
 
-	// 5. Start HTTP server
-	logger.Info("API Gateway listening on port %s", cfg.Port)
-	if err := r.Run(":" + cfg.Port); err != nil {
-		logger.Error("Failed to run API Gateway: %v", err)
+	// 5. Start HTTP server with graceful shutdown
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: r,
 	}
+	server.RunWithGracefulShutdown(srv, 10*time.Second, func() {
+		if rdb != nil {
+			_ = rdb.Close()
+		}
+	})
 }

@@ -9,6 +9,7 @@ import (
 	"social-network-go/chat-service/db"
 	"social-network-go/chat-service/handler"
 	"social-network-go/chat-service/service"
+	"social-network-go/internal/server"
 
 	"github.com/gin-gonic/gin"
 	"social-network-go/logger"
@@ -159,8 +160,9 @@ func main() {
 	r.PUT("/v1/chat/groups/:chatId", chatHandler.UpdateGroupChat)
 	r.GET("/v1/chat/groups/:chatId/members", chatHandler.GetGroupMembers)
 
-	logger.Info("Chat HTTP & WS Server starting on port %s", cfg.HTTPPort)
-	if err := r.Run(":" + cfg.HTTPPort); err != nil {
-		logger.Error("Failed to run HTTP server: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + cfg.HTTPPort,
+		Handler: r,
 	}
+	server.RunWithGracefulShutdown(srv, 10*time.Second)
 }

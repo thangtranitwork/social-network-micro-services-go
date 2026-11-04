@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"strings"
+
 	"social-network-go/exception"
 	"social-network-go/logger"
 
@@ -99,28 +101,41 @@ func (h *AuthHandler) RefreshAdmin(c *gin.Context) {
 	sendSuccess(c, TokenResp{Token: newAccessToken})
 }
 
+func extractBearerToken(authHeader string) string {
+	if authHeader == "" {
+		return ""
+	}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1]
+	}
+	return ""
+}
+
 func (h *AuthHandler) Logout(c *gin.Context) {
-	h.logoutCookie(c, "admin_token")
-	h.logoutCookie(c, "token")
+	accessToken := extractBearerToken(c.GetHeader("Authorization"))
+	h.logoutCookie(c, "admin_token", accessToken)
+	h.logoutCookie(c, "token", accessToken)
 
 	sendSuccess(c, gin.H{"message": "LOGGED_OUT_SUCCESSFULLY"})
 }
 
 func (h *AuthHandler) LogoutUser(c *gin.Context) {
-	h.logoutCookie(c, "token")
+	accessToken := extractBearerToken(c.GetHeader("Authorization"))
+	h.logoutCookie(c, "token", accessToken)
 
 	sendSuccess(c, gin.H{"message": "USER_LOGGED_OUT_SUCCESSFULLY"})
 }
 
 func (h *AuthHandler) LogoutAdmin(c *gin.Context) {
-	h.logoutCookie(c, "admin_token")
+	accessToken := extractBearerToken(c.GetHeader("Authorization"))
+	h.logoutCookie(c, "admin_token", accessToken)
 
 	sendSuccess(c, gin.H{"message": "ADMIN_LOGGED_OUT_SUCCESSFULLY"})
 }
 
-func (h *AuthHandler) logoutCookie(c *gin.Context, name string) {
-	if cookieToken, err := c.Cookie(name); err == nil && cookieToken != "" {
-		_ = h.AuthSvc.Logout(cookieToken)
-	}
+func (h *AuthHandler) logoutCookie(c *gin.Context, name string, accessToken string) {
+	cookieToken, _ := c.Cookie(name)
+	_ = h.AuthSvc.Logout(cookieToken, accessToken)
 	setRefreshCookie(c, name, "", -1)
 }

@@ -890,6 +890,28 @@
             }
         });
 
+        function isTokenAdminAndValid(token) {
+            if (!token || typeof token !== 'string') return false;
+            try {
+                const parts = token.split('.');
+                if (parts.length !== 3) return false;
+                let base64Url = parts[1];
+                let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                while (base64.length % 4) {
+                    base64 += '=';
+                }
+                const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+                    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+                }).join(''));
+                const payload = JSON.parse(jsonPayload);
+                if (payload.role !== 'ADMIN') return false;
+                if (payload.exp && payload.exp * 1000 <= Date.now()) return false;
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
         let isRefreshing = false;
         let refreshPromise = null;
 
@@ -903,7 +925,7 @@
                     });
                     if (response.ok) {
                         const data = await response.json();
-                        if (data.code === 200 && data.body && data.body.token) {
+                        if (data.code === 200 && data.body && data.body.token && isTokenAdminAndValid(data.body.token)) {
                             localStorage.setItem('admin_token', data.body.token);
                             updateAuthIndicator();
                             return data.body.token;
@@ -916,6 +938,7 @@
                     refreshPromise = null;
                 }
                 localStorage.removeItem('admin_token');
+                updateAuthIndicator();
                 checkAuth();
                 return null;
             })();
@@ -923,7 +946,13 @@
         }
 
         function getAuthToken() {
-            return localStorage.getItem('admin_token') || '';
+            const token = localStorage.getItem('admin_token') || '';
+            if (!token) return '';
+            if (!isTokenAdminAndValid(token)) {
+                localStorage.removeItem('admin_token');
+                return '';
+            }
+            return token;
         }
 
         function updateAuthIndicator() {
@@ -1007,8 +1036,13 @@
 
                 const data = await response.json();
                 if (response.ok && data.code === 200 && data.body && data.body.token) {
-                    localStorage.setItem('admin_token', data.body.token);
-                    checkAuth();
+                    if (isTokenAdminAndValid(data.body.token)) {
+                        localStorage.setItem('admin_token', data.body.token);
+                        checkAuth();
+                    } else {
+                        alertBox.textContent = 'Account does not have administrator privileges.';
+                        alertBox.classList.remove('hidden');
+                    }
                 } else {
                     alertBox.textContent = data.message || 'Login failed. Please verify credentials.';
                     alertBox.classList.remove('hidden');
@@ -1021,6 +1055,13 @@
                 btn.disabled = false;
                 btn.innerHTML = originalText;
             }
+        }
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const queryToken = urlParams.get('token');
+        if (queryToken && isTokenAdminAndValid(queryToken)) {
+            localStorage.setItem('admin_token', queryToken);
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
 
         checkAuth();

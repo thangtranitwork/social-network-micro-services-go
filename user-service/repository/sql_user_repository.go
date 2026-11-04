@@ -97,10 +97,12 @@ func (r *SQLUserRepository) GetUserProfile(ctx context.Context, usernameOrID str
 			First(&req).Error
 		if errReq == nil {
 			if req.SenderID == currentUserID {
-				m.Request = "SENT"
+				m.Request = "OUT"
 			} else {
-				m.Request = "RECEIVED"
+				m.Request = "IN"
 			}
+		} else {
+			m.Request = "NONE"
 		}
 
 		// Check block status
@@ -367,7 +369,7 @@ func (r *SQLUserRepository) GetSentRequests(ctx context.Context, currentUserID s
 	res := make([]*model.User, len(users))
 	for i, u := range users {
 		res[i] = r.entityToModel(&u)
-		res[i].Request = "SENT"
+		res[i].Request = "OUT"
 	}
 
 	return res, nil
@@ -392,7 +394,7 @@ func (r *SQLUserRepository) GetReceivedRequests(ctx context.Context, currentUser
 	res := make([]*model.User, len(users))
 	for i, u := range users {
 		res[i] = r.entityToModel(&u)
-		res[i].Request = "RECEIVED"
+		res[i].Request = "IN"
 	}
 
 	return res, nil

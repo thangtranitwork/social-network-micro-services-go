@@ -29,9 +29,13 @@ type ChatServiceInterface interface {
 	MarkMessagesAsRead(chatID, userID string)
 	SearchChats(userID, searchQuery string) []service.ChatRoom
 	SendMessage(senderID, receiverUsername, text string) (*service.MessageResponse, error)
+	SendMessageToChat(senderID, chatID, text string) (*service.MessageResponse, error)
 	SendGif(senderID, receiverUsername, gifURL string) (*service.MessageResponse, error)
-	SendFile(senderID, receiverUsername, fileID string) (*service.MessageResponse, error)
+	SendGifToChat(senderID, chatID, gifURL string) (*service.MessageResponse, error)
+	SendFile(senderID, receiverUsername, fileID, fileName, text string) (*service.MessageResponse, error)
+	SendFileToChat(senderID, chatID, fileID, fileName, text string) (*service.MessageResponse, error)
 	SendVoice(senderID, receiverUsername, fileID string) (*service.MessageResponse, error)
+	SendVoiceToChat(senderID, chatID, fileID string) (*service.MessageResponse, error)
 	DeleteMessage(messageID, userID string) error
 	EditMessage(messageID, newContent, userID string) error
 	UpdateGroupChat(ctx context.Context, adminID string, chatID string, name string, avatar string) error
@@ -233,15 +237,22 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 	}
 
 	var req struct {
-		Username string `json:"username" binding:"required"`
+		ChatID   string `json:"chatId"`
+		Username string `json:"username"`
 		Text     string `json:"text" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || (req.ChatID == "" && req.Username == "") {
 		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
-	resp, err := h.ChatSvc.SendMessage(userID, req.Username, req.Text)
+	var resp *service.MessageResponse
+	var err error
+	if req.ChatID != "" {
+		resp, err = h.ChatSvc.SendMessageToChat(userID, req.ChatID, req.Text)
+	} else {
+		resp, err = h.ChatSvc.SendMessage(userID, req.Username, req.Text)
+	}
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("SendMessage failed")
 		if mapped, found := exception.MapAppError(err); found {
@@ -262,15 +273,22 @@ func (h *ChatHandler) SendGif(c *gin.Context) {
 	}
 
 	var req struct {
-		Username string `json:"username" binding:"required"`
+		ChatID   string `json:"chatId"`
+		Username string `json:"username"`
 		URL      string `json:"url" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || (req.ChatID == "" && req.Username == "") {
 		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
-	resp, err := h.ChatSvc.SendGif(userID, req.Username, req.URL)
+	var resp *service.MessageResponse
+	var err error
+	if req.ChatID != "" {
+		resp, err = h.ChatSvc.SendGifToChat(userID, req.ChatID, req.URL)
+	} else {
+		resp, err = h.ChatSvc.SendGif(userID, req.Username, req.URL)
+	}
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("SendGif failed")
 		if mapped, found := exception.MapAppError(err); found {
@@ -291,15 +309,29 @@ func (h *ChatHandler) SendFile(c *gin.Context) {
 	}
 
 	var req struct {
-		Username string `json:"username" binding:"required"`
+		ChatID   string `json:"chatId"`
+		Username string `json:"username"`
 		FileId   string `json:"fileId" binding:"required"`
+		FileName string `json:"fileName"`
+		Text     string `json:"text"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || (req.ChatID == "" && req.Username == "") {
 		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
-	resp, err := h.ChatSvc.SendFile(userID, req.Username, req.FileId)
+	fileName := req.FileName
+	if fileName == "" {
+		fileName = req.FileId
+	}
+
+	var resp *service.MessageResponse
+	var err error
+	if req.ChatID != "" {
+		resp, err = h.ChatSvc.SendFileToChat(userID, req.ChatID, req.FileId, fileName, req.Text)
+	} else {
+		resp, err = h.ChatSvc.SendFile(userID, req.Username, req.FileId, fileName, req.Text)
+	}
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("SendFile failed")
 		if mapped, found := exception.MapAppError(err); found {
@@ -320,15 +352,22 @@ func (h *ChatHandler) SendVoice(c *gin.Context) {
 	}
 
 	var req struct {
-		Username string `json:"username" binding:"required"`
+		ChatID   string `json:"chatId"`
+		Username string `json:"username"`
 		FileId   string `json:"fileId" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || (req.ChatID == "" && req.Username == "") {
 		exception.SendError(c, exception.InvalidInput)
 		return
 	}
 
-	resp, err := h.ChatSvc.SendVoice(userID, req.Username, req.FileId)
+	var resp *service.MessageResponse
+	var err error
+	if req.ChatID != "" {
+		resp, err = h.ChatSvc.SendVoiceToChat(userID, req.ChatID, req.FileId)
+	} else {
+		resp, err = h.ChatSvc.SendVoice(userID, req.Username, req.FileId)
+	}
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("SendVoice failed")
 		if mapped, found := exception.MapAppError(err); found {

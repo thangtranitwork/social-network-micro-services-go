@@ -22,6 +22,14 @@ func NewAuthGrpcServer(authSvc *service.AuthService) *AuthGrpcServer {
 }
 
 func (s *AuthGrpcServer) ValidateToken(ctx context.Context, req *pb.TokenRequest) (*pb.TokenResponse, error) {
+	if s.AuthSvc.IsTokenBlacklisted(ctx, req.Token) {
+		logger.WithContext(ctx).Warn("ValidateToken: Token is revoked/blacklisted")
+		return &pb.TokenResponse{
+			IsValid:      false,
+			ErrorMessage: "TOKEN_REVOKED",
+		}, nil
+	}
+
 	claims, err := s.AuthSvc.ValidateToken(req.Token)
 	logger.WithContext(ctx).Info("Validating token")
 	if err != nil {

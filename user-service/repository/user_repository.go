@@ -247,12 +247,6 @@ func (r *Neo4jUserRepository) GetUserProfile(ctx context.Context, usernameOrID s
 				MATCH (u:User)
 				WHERE u.username = $usernameOrID OR u.id = $usernameOrID
 				
-				// Target counters
-				OPTIONAL MATCH (u)-[:FRIEND]-(f)
-				OPTIONAL MATCH (u)-[:BLOCK]->(b)
-				OPTIONAL MATCH (u)-[:REQUEST]->(r)
-				OPTIONAL MATCH (u)<-[:REQUEST]-(rc)
-				
 				// Viewer relationships (relative to currentUserID)
 				OPTIONAL MATCH (cu:User {id: $currentUserID})
 				OPTIONAL MATCH (cu)-[friendship:FRIEND]-(u)
@@ -261,16 +255,12 @@ func (r *Neo4jUserRepository) GetUserProfile(ctx context.Context, usernameOrID s
 				OPTIONAL MATCH (cu)-[blockOut:BLOCK]->(u)
 				OPTIONAL MATCH (u)-[blockIn:BLOCK]->(cu)
 				
-				// Mutual friends
-				WITH u, count(DISTINCT f) as friendCount, count(DISTINCT b) as blockCount,
-				     count(DISTINCT r) as sentCount, count(DISTINCT rc) as recvCount,
-				     cu, friendship, requestOut, requestIn, blockOut, blockIn
-				
-				WITH u, friendCount, blockCount, sentCount, recvCount, cu, friendship, requestOut, requestIn, blockOut, blockIn,
-				     size([(cu)-[:FRIEND]-(mutual:User)-[:FRIEND]-(u) | mutual]) AS mutualFriendsCount
-				
-				// Count posts
-				OPTIONAL MATCH (u)-[:POSTED]->(post:Post)
+				WITH u, cu, friendship, requestOut, requestIn, blockOut, blockIn,
+				     COUNT { (u)-[:FRIEND]-() } AS friendCount,
+				     COUNT { (u)-[:BLOCK]->() } AS blockCount,
+				     COUNT { (u)-[:REQUEST]->() } AS sentCount,
+				     COUNT { (u)<-[:REQUEST]-() } AS recvCount,
+				     COUNT { (u)-[:POSTED]->(:Post) } AS postCount
 				
 				RETURN u.id, u.username, u.givenName, u.familyName, u.email, u.bio, u.birthdate, 
 				       friendCount, blockCount, sentCount, recvCount,
@@ -288,8 +278,11 @@ func (r *Neo4jUserRepository) GetUserProfile(ctx context.Context, usernameOrID s
 				           WHEN blockIn IS NOT NULL THEN 'HAS_BEEN_BLOCKED'
 				           ELSE 'NORMAL'
 				       END as blockStatus,
-				       mutualFriendsCount,
-				       count(DISTINCT post) as postCount
+				       CASE
+				           WHEN cu IS NOT NULL AND cu.id <> u.id THEN size([(cu)-[:FRIEND]-(mutual:User)-[:FRIEND]-(u) | mutual])
+				           ELSE 0
+				       END as mutualFriendsCount,
+				       postCount
 			`
 			result, err := tx.Run(ctx, query, map[string]interface{}{"usernameOrID": usernameOrID, "currentUserID": currentUserID})
 			if err != nil {

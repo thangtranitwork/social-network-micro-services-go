@@ -47,32 +47,32 @@ type User struct {
 
 // UserProfileResponse matches Java UserProfileResponse
 type UserProfileResponse struct {
-	EmailNotifications      bool      `json:"emailNotifications"`
-	PushNotifications       bool      `json:"pushNotifications"`
-	DigestFrequency         string    `json:"digestFrequency"`
-	ID                      string    `json:"id"`
-	GivenName               string    `json:"givenName"`
-	FamilyName              string    `json:"familyName"`
-	Username                string    `json:"username"`
-	Email                   string    `json:"email"`
-	Bio                     string    `json:"bio"`
-	Birthdate               time.Time `json:"birthdate"`
-	ProfilePictureUrl       string    `json:"profilePictureUrl"`
-	FriendCount             int       `json:"friendCount"`
-	BlockCount              int       `json:"blockCount"`
-	RequestSentCount        int       `json:"requestSentCount"`
-	RequestReceivedCount    int       `json:"requestReceivedCount"`
-	NextChangeNameDate      time.Time `json:"nextChangeNameDate"`
-	NextChangeBirthdateDate time.Time `json:"nextChangeBirthdateDate"`
-	NextChangeUsernameDate  time.Time `json:"nextChangeUsernameDate"`
-	CreatedAt               time.Time `json:"createdAt"`
+	ID                 string    `json:"id"`
+	GivenName          string    `json:"givenName"`
+	FamilyName         string    `json:"familyName"`
+	Username           string    `json:"username"`
+	Bio                string    `json:"bio"`
+	ProfilePictureUrl  string    `json:"profilePictureUrl"`
+	FriendCount        int       `json:"friendCount"`
+	CreatedAt          time.Time `json:"createdAt"`
+	IsFriend           bool      `json:"isFriend"`
+	MutualFriendsCount int       `json:"mutualFriendsCount"`
+	Request            string    `json:"request"`
+	BlockStatus        string    `json:"blockStatus"`
+	PostCount          int       `json:"postCount"`
 
-	// Relationship status fields relative to current viewer
-	IsFriend           bool   `json:"isFriend"`
-	MutualFriendsCount int    `json:"mutualFriendsCount"`
-	Request            string `json:"request"`
-	BlockStatus        string `json:"blockStatus"`
-	PostCount          int    `json:"postCount"`
+	// Private fields - only returned when viewing own profile (isSelf = true)
+	Email                   string     `json:"email,omitempty"`
+	Birthdate               *time.Time `json:"birthdate,omitempty"`
+	EmailNotifications      *bool      `json:"emailNotifications,omitempty"`
+	PushNotifications       *bool      `json:"pushNotifications,omitempty"`
+	DigestFrequency         string     `json:"digestFrequency,omitempty"`
+	BlockCount              *int       `json:"blockCount,omitempty"`
+	RequestSentCount        *int       `json:"requestSentCount,omitempty"`
+	RequestReceivedCount    *int       `json:"requestReceivedCount,omitempty"`
+	NextChangeNameDate      *time.Time `json:"nextChangeNameDate,omitempty"`
+	NextChangeBirthdateDate *time.Time `json:"nextChangeBirthdateDate,omitempty"`
+	NextChangeUsernameDate  *time.Time `json:"nextChangeUsernameDate,omitempty"`
 }
 
 // UserCommonInformationResponse matches Java UserCommonInformationResponse

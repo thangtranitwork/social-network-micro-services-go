@@ -1,4 +1,4 @@
-.PHONY: all tidy build test run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean dev-restart spam-api
+.PHONY: all tidy build test stop dev run-gateway run-auth run-user run-post run-chat run-notif run-ai infra-up infra-down clean dev-restart spam-api
 
 # Environment defaults
 export CGO_ENABLED ?= 0
@@ -47,9 +47,30 @@ build:
 	go build -o bin/story-service story-service/main.go
 	go build -o bin/fcm-service fcm-service/main.go
 	go build -o bin/recommendation-service recommendation-service/main.go
-	go build -o bin/gen-test-data scripts/gen_test_data.go
+	go build -o bin/gen-test-data scripts/gen_test_data/main.go
 	go build -o bin/spam-api scripts/spammer/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
+
+stop:
+	@echo "====== Stopping Go Microservices ======"
+	-@pkill -f "bin/api-gateway" || true
+	-@pkill -f "bin/auth-service" || true
+	-@pkill -f "bin/user-service" || true
+	-@pkill -f "bin/post-service" || true
+	-@pkill -f "bin/chat-service" || true
+	-@pkill -f "bin/notification-service" || true
+	-@pkill -f "bin/ai-service" || true
+	-@pkill -f "bin/file-service" || true
+	-@pkill -f "bin/admin-service" || true
+	-@pkill -f "bin/search-service" || true
+	-@pkill -f "bin/story-service" || true
+	-@pkill -f "bin/fcm-service" || true
+	-@pkill -f "bin/recommendation-service" || true
+	@echo "====== Stopping Web UI ======"
+	-@pkill -f "next dev" || true
+	-@pkill -f "pnpm.*dev" || true
+	-@fuser -k 10000/tcp 2>/dev/null || true
+	@echo "====== All Services and Web UI Stopped! ======"
 
 dev:
 	@echo "====== Building Microservices ======"
@@ -67,21 +88,7 @@ dev:
 	go build -o bin/fcm-service fcm-service/main.go
 	go build -o bin/recommendation-service recommendation-service/main.go
 	@echo "====== Build Complete! Binaries placed in bin/ ======"
-	@echo "====== Stopping Go Microservices ======"
-	-@pkill -f "bin/api-gateway" || true
-	-@pkill -f "bin/auth-service" || true
-	-@pkill -f "bin/user-service" || true
-	-@pkill -f "bin/post-service" || true
-	-@pkill -f "bin/chat-service" || true
-	-@pkill -f "bin/notification-service" || true
-	-@pkill -f "bin/ai-service" || true
-	-@pkill -f "bin/file-service" || true
-	-@pkill -f "bin/admin-service" || true
-	-@pkill -f "bin/search-service" || true
-	-@pkill -f "bin/story-service" || true
-	-@pkill -f "bin/fcm-service" || true
-	-@pkill -f "bin/recommendation-service" || true
-	@echo "====== All Services Stopped! ======"
+	@$(MAKE) stop
 	@echo "====== Starting Go Microservices ======"
 	@mkdir -p logs
 	@setsid ./bin/api-gateway </dev/null >/dev/null 2>> logs/api-gateway.log &
@@ -97,7 +104,11 @@ dev:
 	@setsid ./bin/search-service </dev/null >/dev/null 2>> logs/search-service.log &
 	@setsid ./bin/story-service </dev/null >/dev/null 2>> logs/story-service.log &
 	@setsid ./bin/recommendation-service </dev/null >/dev/null 2>> logs/recommendation-service.log &
-	@echo "====== All Services Started in Background (check logs/ for output)! ======"
+	@echo "====== Starting Web UI (Next.js) ======"
+	@cd social-network-ui && setsid pnpm run dev > ../logs/web-ui.log 2>&1 &
+	@echo "====== All Services and Web UI Started in Background! ======"
+	@echo "  API Gateway: http://localhost:11111 (logs: logs/api-gateway.log)"
+	@echo "  Web UI:      http://localhost:10000 (logs: logs/web-ui.log)"
 
 # Infrastructure services
 infra-up:
@@ -214,5 +225,5 @@ spam-api:
 
 seed-data:
 	@echo "====== Generating Sample Test Data for PostgreSQL & Neo4j ======"
-	go run scripts/gen_test_data.go
+	go run scripts/gen_test_data/main.go
 

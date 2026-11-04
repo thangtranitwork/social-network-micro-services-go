@@ -34,7 +34,7 @@ func (m *MockAuthService) RefreshTokenForRole(tokenStr, expectedRole string) (st
 	return m.MockAccessToken, m.Err
 }
 
-func (m *MockAuthService) Logout(refreshToken string) error {
+func (m *MockAuthService) Logout(refreshToken, accessToken string) error {
 	return m.Err
 }
 

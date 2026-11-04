@@ -334,6 +334,89 @@ func (r *ESRepository) SearchPostsWithFacets(ctx context.Context, query string, 
 	return posts, facets, nil
 }
 
+// GetPostsByIDs retrieves posts from Elasticsearch by their document IDs.
+func (r *ESRepository) GetPostsByIDs(ctx context.Context, postIDs []string) (map[string]*model.Post, error) {
+	if r.client == nil || len(postIDs) == 0 {
+		return make(map[string]*model.Post), nil
+	}
+
+	searchQuery := map[string]interface{}{
+		"size": len(postIDs),
+		"query": map[string]interface{}{
+			"ids": map[string]interface{}{
+				"values": postIDs,
+			},
+		},
+	}
+
+	body, err := json.Marshal(searchQuery)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal query: %w", err)
+	}
+
+	res, err := r.client.Search(
+		r.client.Search.WithContext(ctx),
+		r.client.Search.WithIndex("posts"),
+		r.client.Search.WithBody(bytes.NewReader(body)),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return nil, fmt.Errorf("search posts by ids failed with status: %s", res.Status())
+	}
+
+	var esRes struct {
+		Hits struct {
+			Hits []struct {
+				Source struct {
+					ID           string     `json:"id"`
+					AuthorID     string     `json:"author_id"`
+					Content      string     `json:"content"`
+					Privacy      string     `json:"privacy"`
+					Files        []string   `json:"files"`
+					LikeCount    int        `json:"like_count"`
+					CommentCount int        `json:"comment_count"`
+					ShareCount   int        `json:"share_count"`
+					CreatedAt    time.Time  `json:"created_at"`
+					UpdatedAt    *time.Time `json:"updated_at,omitempty"`
+					DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+				} `json:"_source"`
+			} `json:"hits"`
+		} `json:"hits"`
+	}
+
+	if err := json.NewDecoder(res.Body).Decode(&esRes); err != nil {
+		return nil, fmt.Errorf("failed to decode search posts response: %w", err)
+	}
+
+	postMap := make(map[string]*model.Post, len(esRes.Hits.Hits))
+	for _, hit := range esRes.Hits.Hits {
+		p := hit.Source
+		if p.DeletedAt != nil {
+			continue
+		}
+		postModel := &model.Post{
+			ID:           p.ID,
+			AuthorID:     p.AuthorID,
+			Content:      p.Content,
+			Privacy:      p.Privacy,
+			Files:        p.Files,
+			Images:       p.Files,
+			LikeCount:    p.LikeCount,
+			CommentCount: p.CommentCount,
+			ShareCount:   p.ShareCount,
+			CreatedAt:    p.CreatedAt,
+			UpdatedAt:    p.UpdatedAt,
+		}
+		postMap[postModel.ID] = postModel
+	}
+
+	return postMap, nil
+}
+
 func (r *ESRepository) SearchMessages(ctx context.Context, query string, currentUserID string, userConversationIDs []string, limit int) ([]*model.Message, error) {
 	// Security check: User must be a member of at least one conversation to search messages
 	if currentUserID == "" || len(userConversationIDs) == 0 {

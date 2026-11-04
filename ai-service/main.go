@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 	"social-network-go/ai-service/imaging"
 	"social-network-go/internal/events"
@@ -48,14 +50,16 @@ type AIService struct {
 	embedder         *imaging.GeminiEmbedder
 	minioReader      *imaging.MinIOReader
 	httpClient       *http.Client
+	rdb              *redis.Client
 }
 
-func NewAIService(geminiKey, geminiModel, kafkaAddr string, neo4jDriver neo4j.DriverWithContext, minioReader *imaging.MinIOReader, embedder *imaging.GeminiEmbedder) *AIService {
+func NewAIService(geminiKey, geminiModel, kafkaAddr string, neo4jDriver neo4j.DriverWithContext, minioReader *imaging.MinIOReader, embedder *imaging.GeminiEmbedder, rdb *redis.Client) *AIService {
 	return &AIService{
 		GeminiKey:   geminiKey,
 		GeminiModel: geminiModel,
 		KafkaAddr:   kafkaAddr,
 		Neo4jDriver: neo4jDriver,
+		rdb:         rdb,
 		moderationWriter: &kafka.Writer{
 			Addr:         kafka.TCP(kafkaAddr),
 			Topic:        moderation.TopicCompleted,
@@ -99,8 +103,8 @@ func (s *AIService) callWithRetry(ctx context.Context, operation string, runReq 
 	var resp *http.Response
 	var err error
 	baseDelay := 500 * time.Millisecond
-	maxDelay := 4 * time.Second
-	maxRetries := 3
+	maxDelay := 3 * time.Second
+	maxRetries := 2
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -141,11 +145,36 @@ func (s *AIService) callWithRetry(ctx context.Context, operation string, runReq 
 
 // ExtractKeywords calls Gemini API or falls back to rules
 func (s *AIService) ExtractKeywords(ctx context.Context, content string) []string {
+	content = strings.TrimSpace(content)
+	if content == "" || len(content) < 4 {
+		return nil
+	}
+
+	// 1. Check Redis Cache
+	if s.rdb != nil {
+		cacheKey := fmt.Sprintf("cache:ai:keywords:%x", sha256.Sum256([]byte(content)))
+		if val, err := s.rdb.Get(ctx, cacheKey).Result(); err == nil && val != "" {
+			var cachedTags []string
+			if err := json.Unmarshal([]byte(val), &cachedTags); err == nil && len(cachedTags) > 0 {
+				logger.WithContext(ctx).Info("Keywords cache hit for content: %s", content)
+				return cachedTags
+			}
+		}
+	}
+
 	if s.GeminiKey != "" {
 		keywords, err := s.callGeminiAPI(ctx, content)
 		if err == nil && len(keywords) > 0 {
 			logger.WithContext(ctx).Field("content", content).JsonField("keywords", keywords).Info("AI keyword extraction completed")
 			profiler.TrackEvent("ai-service:gemini.keyword.success")
+
+			// Save to Redis Cache (TTL: 24h)
+			if s.rdb != nil {
+				cacheKey := fmt.Sprintf("cache:ai:keywords:%x", sha256.Sum256([]byte(content)))
+				if b, err := json.Marshal(keywords); err == nil {
+					_ = s.rdb.Set(ctx, cacheKey, string(b), 24*time.Hour).Err()
+				}
+			}
 			return keywords
 		}
 		logGeminiFallback(ctx, err, "keyword_extraction", "", "")
@@ -309,7 +338,7 @@ func (s *AIService) SavePostKeywords(ctx context.Context, postID string, keyword
 			"keywords": keywords,
 		}
 		query := `
-			MATCH (post:Post {id: $postID})
+			MERGE (post:Post {id: $postID})
 			WITH post
 			UNWIND $keywords AS keyword
 			MERGE (k:Keyword {text: keyword})
@@ -318,7 +347,7 @@ func (s *AIService) SavePostKeywords(ctx context.Context, postID string, keyword
 		`
 		if isUpdate {
 			query = `
-				MATCH (post:Post {id: $postID})
+				MERGE (post:Post {id: $postID})
 				OPTIONAL MATCH (post)-[rel:HAS_KEYWORDS]->(:Keyword)
 				DELETE rel
 
@@ -358,17 +387,47 @@ type ModerationResult struct {
 }
 
 func (s *AIService) ModerateContent(ctx context.Context, event moderation.RequestEvent) ModerationResult {
+	content := strings.TrimSpace(event.Content)
+	if content == "" || len(content) < 3 {
+		return ModerationResult{
+			Verdict:    moderation.VerdictSafe,
+			Categories: []string{},
+			Confidence: 1.0,
+			Reason:     "empty or short content",
+		}
+	}
+
+	// 1. Check Redis Cache
+	if s.rdb != nil {
+		cacheKey := fmt.Sprintf("cache:ai:moderation:%x", sha256.Sum256([]byte(content)))
+		if val, err := s.rdb.Get(ctx, cacheKey).Result(); err == nil && val != "" {
+			var cachedRes ModerationResult
+			if err := json.Unmarshal([]byte(val), &cachedRes); err == nil && moderation.IsValidVerdict(cachedRes.Verdict) {
+				logger.WithContext(ctx).Info("Moderation cache hit for content: %s", content)
+				return cachedRes
+			}
+		}
+	}
+
 	if s.GeminiKey != "" {
-		result, err := s.callGeminiModeration(ctx, event.Content)
+		result, err := s.callGeminiModeration(ctx, content)
 		if err == nil && moderation.IsValidVerdict(result.Verdict) {
 			result.Categories = moderation.NormalizeCategories(result.Categories)
 			profiler.TrackEvent("ai-service:gemini.moderation.success")
+
+			// Save to Redis Cache (TTL: 24h)
+			if s.rdb != nil {
+				cacheKey := fmt.Sprintf("cache:ai:moderation:%x", sha256.Sum256([]byte(content)))
+				if b, err := json.Marshal(result); err == nil {
+					_ = s.rdb.Set(ctx, cacheKey, string(b), 24*time.Hour).Err()
+				}
+			}
 			return result
 		}
 		logGeminiFallback(ctx, err, "moderation", event.TargetType, event.TargetID)
 	}
 	profiler.TrackEvent("ai-service:gemini.moderation.fallback")
-	return ruleBasedModeration(event.Content)
+	return ruleBasedModeration(content)
 }
 
 func (s *AIService) callGeminiModeration(ctx context.Context, content string) (ModerationResult, error) {
@@ -727,12 +786,21 @@ func (s *AIService) StartWorker() {
 				ctx, cancel := context.WithTimeout(contextWithTraceIDs(context.Background(), event.TraceID, event.RequestID), 25*time.Second)
 				defer cancel()
 
+				trimmedContent := strings.TrimSpace(event.Content)
+				if trimmedContent == "" || len(trimmedContent) < 4 {
+					logger.WithContext(ctx).Info("AI worker skipping keyword extraction for post %s: empty or short content", event.PostID)
+					return
+				}
+
 				logger.WithContext(ctx).Info("AI Worker processing post: %s from Author: %s", event.PostID, event.AuthorID)
 
 				// Call Gemini API to extract keywords
 				tags, _ := profiler.TrackResult("ai-service:worker keyword.extract", func() ([]string, error) {
-					return s.ExtractKeywords(ctx, event.Content), nil
+					return s.ExtractKeywords(ctx, trimmedContent), nil
 				})
+				if len(tags) == 0 {
+					return
+				}
 				logger.WithContext(ctx).Info("[GEMINI INSIGHTS] Extracted keywords for post %s: %v", event.PostID, tags)
 
 				_, err = profiler.TrackExecutionWithReturn("ai-service:worker keyword.neo4j.write", func() (any, error) {
@@ -870,11 +938,30 @@ func (s *AIService) processPostImageEmbedding(ctx context.Context, event PostCre
 			continue
 		}
 
-		// Call Gemini API for embedding
-		vec, err := s.embedder.EmbedImage(ctx, jpegBytes)
-		if err != nil {
-			logger.WithContext(ctx).Err(err).Error("Failed to embed image %s for post %s", fileID, postID)
-			continue
+		// Check Redis cache for image vector
+		imgHash := sha256.Sum256(jpegBytes)
+		var vec []float32
+		if s.rdb != nil {
+			cacheKey := fmt.Sprintf("cache:ai:embed-image:%s:%x", s.embedder.Model, imgHash)
+			if val, err := s.rdb.Get(ctx, cacheKey).Result(); err == nil && val != "" {
+				_ = json.Unmarshal([]byte(val), &vec)
+			}
+		}
+
+		if len(vec) == 0 {
+			// Call Gemini API for embedding
+			var err error
+			vec, err = s.embedder.EmbedImage(ctx, jpegBytes)
+			if err != nil {
+				logger.WithContext(ctx).Err(err).Error("Failed to embed image %s for post %s", fileID, postID)
+				continue
+			}
+			if s.rdb != nil {
+				cacheKey := fmt.Sprintf("cache:ai:embed-image:%s:%x", s.embedder.Model, imgHash)
+				if b, err := json.Marshal(vec); err == nil {
+					_ = s.rdb.Set(ctx, cacheKey, string(b), 72*time.Hour).Err()
+				}
+			}
 		}
 
 		// Publish event to Kafka
@@ -1003,7 +1090,27 @@ func main() {
 
 	embedder := imaging.NewGeminiEmbedder(geminiKey, embeddingModel, 768)
 
-	worker := NewAIService(geminiKey, geminiModel, kafkaAddr, neo4jDriver, minioReader, embedder)
+	redisAddr := getEnv("REDIS_ADDR", "localhost:16379")
+	var rdb *redis.Client
+	if redisAddr != "" {
+		rdb = redis.NewClient(&redis.Options{
+			Addr: redisAddr,
+		})
+		pingCtx, cancelPing := context.WithTimeout(context.Background(), 2*time.Second)
+		if err := rdb.Ping(pingCtx).Err(); err != nil {
+			logger.Warn("Failed to connect to Redis in AI service at %s: %v. Caching disabled.", redisAddr, err)
+			_ = rdb.Close()
+			rdb = nil
+		} else {
+			logger.Info("AI Service connected to Redis cache at %s", redisAddr)
+		}
+		cancelPing()
+	}
+	if rdb != nil {
+		defer rdb.Close()
+	}
+
+	worker := NewAIService(geminiKey, geminiModel, kafkaAddr, neo4jDriver, minioReader, embedder, rdb)
 	worker.StartWorker()
 	worker.StartModerationWorker()
 	worker.StartImageEmbeddingWorker()
@@ -1028,11 +1135,37 @@ func main() {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "text is required"})
 				return
 			}
-			vec, err := worker.embedder.EmbedText(c.Request.Context(), req.Text)
+			trimmedText := strings.TrimSpace(req.Text)
+
+			// 1. Check Redis Cache
+			if worker.rdb != nil {
+				cacheKey := fmt.Sprintf("cache:ai:embed-text:%s:%x", worker.embedder.Model, sha256.Sum256([]byte(trimmedText)))
+				if val, err := worker.rdb.Get(c.Request.Context(), cacheKey).Result(); err == nil && val != "" {
+					var cachedVec []float32
+					if err := json.Unmarshal([]byte(val), &cachedVec); err == nil && len(cachedVec) > 0 {
+						c.JSON(http.StatusOK, gin.H{
+							"vector":          cachedVec,
+							"embedding_model": worker.embedder.Model,
+							"model_version":   "v1",
+						})
+						return
+					}
+				}
+			}
+
+			vec, err := worker.embedder.EmbedText(c.Request.Context(), trimmedText)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+
+			if worker.rdb != nil {
+				cacheKey := fmt.Sprintf("cache:ai:embed-text:%s:%x", worker.embedder.Model, sha256.Sum256([]byte(trimmedText)))
+				if b, err := json.Marshal(vec); err == nil {
+					_ = worker.rdb.Set(c.Request.Context(), cacheKey, string(b), 48*time.Hour).Err()
+				}
+			}
+
 			c.JSON(http.StatusOK, gin.H{
 				"vector":          vec,
 				"embedding_model": worker.embedder.Model,
@@ -1069,10 +1202,34 @@ func main() {
 				return
 			}
 
+			// 1. Check Redis Cache
+			imgHash := sha256.Sum256(jpegBytes)
+			if worker.rdb != nil {
+				cacheKey := fmt.Sprintf("cache:ai:embed-image:%s:%x", worker.embedder.Model, imgHash)
+				if val, err := worker.rdb.Get(c.Request.Context(), cacheKey).Result(); err == nil && val != "" {
+					var cachedVec []float32
+					if err := json.Unmarshal([]byte(val), &cachedVec); err == nil && len(cachedVec) > 0 {
+						c.JSON(http.StatusOK, gin.H{
+							"vector":          cachedVec,
+							"embedding_model": worker.embedder.Model,
+							"model_version":   "v1",
+						})
+						return
+					}
+				}
+			}
+
 			vec, err := worker.embedder.EmbedImage(c.Request.Context(), jpegBytes)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
+			}
+
+			if worker.rdb != nil {
+				cacheKey := fmt.Sprintf("cache:ai:embed-image:%s:%x", worker.embedder.Model, imgHash)
+				if b, err := json.Marshal(vec); err == nil {
+					_ = worker.rdb.Set(c.Request.Context(), cacheKey, string(b), 72*time.Hour).Err()
+				}
 			}
 
 			c.JSON(http.StatusOK, gin.H{

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"social-network-go/internal/server"
 	"social-network-go/post-service/config"
 	"social-network-go/post-service/db"
 	"social-network-go/post-service/handler"
@@ -26,13 +27,20 @@ func main() {
 	// 1. Load Configurations
 	cfg := config.LoadConfig()
 
+	// 2. Initialize Neo4j Graph Driver
+	neoDriver := db.InitNeo4j(cfg)
+
 	// 3. Initialize PostgreSQL
 	db.InitPostgres(cfg)
 
 	// 4. Initialize Service & Handler
 	var postRepo repository.PostRepository
 	if db.SQLDB != nil {
-		postRepo = repository.NewSQLPostRepository(db.SQLDB)
+		sqlRepo := repository.NewSQLPostRepository(db.SQLDB, neoDriver)
+		postRepo = sqlRepo
+		if neoDriver != nil {
+			go sqlRepo.(*repository.SQLPostRepository).SyncAllPostsToNeo4j(context.Background())
+		}
 	} else {
 		postRepo = repository.NewPostRepository()
 	}
@@ -173,8 +181,9 @@ func main() {
 	// User report API
 	r.POST("/v1/reports", reportHandler.SubmitReport)
 
-	logger.Info("Post HTTP Server starting on port %s", cfg.HTTPPort)
-	if err := r.Run(":" + cfg.HTTPPort); err != nil {
-		logger.Error("Failed to run HTTP server: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + cfg.HTTPPort,
+		Handler: r,
 	}
+	server.RunWithGracefulShutdown(srv, 10*time.Second)
 }

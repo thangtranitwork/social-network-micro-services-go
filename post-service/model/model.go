@@ -45,6 +45,7 @@ type NewsfeedCandidate struct {
 	KeywordScore              int
 	IsFriend                  bool
 	IsSecondDegreeOrRequested bool
+	IsOwnPost                 bool
 }
 
 type Comment struct {

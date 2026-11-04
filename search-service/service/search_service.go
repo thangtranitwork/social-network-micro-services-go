@@ -784,46 +784,52 @@ func (s *SearchService) SearchSimilarByFileID(ctx context.Context, fileID string
 		return nil, errors.New("empty fileID")
 	}
 
-	// 1. Authorization: Verify viewer has permission to view the source post containing fileID
-	if db.Neo4jDriver != nil && currentUserID != "" {
-		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
-		defer session.Close(ctx)
+	// 1. Retrieve existing vector and post info from Elasticsearch
+	vec, sourcePostID, authorID, err := s.ESRepo.GetImageVectorByFileID(ctx, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve image vector from ES: %w", err)
+	}
 
-		resData, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-			query := `
-				MATCH (viewer:User {id: $viewerID})
-				MATCH (author:User)-[:POSTED]->(p:Post)
-				WHERE $fileID IN p.files
-				  AND p.deletedAt IS NULL
-				  AND NOT (viewer)-[:BLOCK]-(author)
-				  AND (
-					p.privacy = 'PUBLIC'
-					OR author.id = viewer.id
-					OR (p.privacy = 'FRIEND' AND EXISTS((viewer)-[:FRIEND]-(author)))
-				  )
-				RETURN p.id AS postID
-			`
-			res, err := tx.Run(ctx, query, map[string]interface{}{
-				"viewerID": currentUserID,
-				"fileID":   fileID,
-			})
-			if err != nil {
-				return nil, err
+	// 2. Authorization: Verify viewer has permission to view the source post
+	if currentUserID != "" {
+		// Check block relationship
+		if blockedIDs, err := s.GetBlockedUserIDs(ctx, currentUserID); err == nil {
+			for _, bid := range blockedIDs {
+				if bid == authorID {
+					return nil, errors.New("SOURCE_FILE_NOT_FOUND_OR_FORBIDDEN")
+				}
 			}
-			if !res.Next(ctx) {
-				return nil, errors.New("forbidden or not found")
-			}
-			return res.Record().Values[0], nil
-		})
-		if err != nil || resData == nil {
-			return nil, errors.New("SOURCE_FILE_NOT_FOUND_OR_FORBIDDEN")
 		}
 	}
 
-	// 2. Retrieve existing vector from Elasticsearch
-	vec, sourcePostID, _, err := s.ESRepo.GetImageVectorByFileID(ctx, fileID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve image vector from ES: %w", err)
+	// Verify privacy via ES post doc
+	if posts, err := s.ESRepo.GetPostsByIDs(ctx, []string{sourcePostID}); err == nil && len(posts) > 0 {
+		srcPost := posts[sourcePostID]
+		if srcPost != nil {
+			switch srcPost.Privacy {
+			case "FRIEND":
+				if currentUserID == "" {
+					return nil, errors.New("SOURCE_FILE_NOT_FOUND_OR_FORBIDDEN")
+				}
+				if currentUserID != srcPost.AuthorID {
+					friends, _ := s.GetViewerFriendIDs(ctx, currentUserID)
+					isFriend := false
+					for _, fid := range friends {
+						if fid == srcPost.AuthorID {
+							isFriend = true
+							break
+						}
+					}
+					if !isFriend {
+						return nil, errors.New("SOURCE_FILE_NOT_FOUND_OR_FORBIDDEN")
+					}
+				}
+			case "PRIVATE":
+				if currentUserID != srcPost.AuthorID {
+					return nil, errors.New("SOURCE_FILE_NOT_FOUND_OR_FORBIDDEN")
+				}
+			}
+		}
 	}
 
 	friendIDs, _ := s.GetViewerFriendIDs(ctx, currentUserID)
@@ -839,7 +845,7 @@ func (s *SearchService) SearchSimilarByFileID(ctx context.Context, fileID string
 	return s.verifyAndEnrichVisualResults(ctx, hits, currentUserID)
 }
 
-// verifyAndEnrichVisualResults performs Neo4j final defense-in-depth and enriches author/files.
+// verifyAndEnrichVisualResults performs defense-in-depth authorization check and enriches author/files.
 func (s *SearchService) verifyAndEnrichVisualResults(ctx context.Context, hits []*model.ImageSearchResult, viewerID string) ([]*model.VisualPostSearchResult, error) {
 	if len(hits) == 0 {
 		return []*model.VisualPostSearchResult{}, nil
@@ -850,78 +856,130 @@ func (s *SearchService) verifyAndEnrichVisualResults(ctx context.Context, hits [
 		candidatePostIDs = append(candidatePostIDs, h.PostID)
 	}
 
-	if db.Neo4jDriver == nil {
-		return []*model.VisualPostSearchResult{}, nil
-	}
-
-	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
-	defer session.Close(ctx)
-
-	resData, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		query := `
-			MATCH (viewer:User {id: $viewerID})
-			MATCH (author:User)-[:POSTED]->(p:Post)
-			WHERE p.id IN $candidatePostIDs
-			  AND p.deletedAt IS NULL
-			  AND NOT (viewer)-[:BLOCK]-(author)
-			  AND (
-				p.privacy = 'PUBLIC'
-				OR author.id = viewer.id
-				OR (p.privacy = 'FRIEND' AND EXISTS((viewer)-[:FRIEND]-(author)))
-			  )
-			RETURN p.id AS postID, author.id AS authorID, p.content AS content,
-			       p.privacy AS privacy, p.files AS files, coalesce(p.likeCount, 0) AS likeCount,
-			       coalesce(p.commentCount, 0) AS commentCount, coalesce(p.shareCount, 0) AS shareCount,
-			       p.createdAt AS createdAt
-		`
-		res, err := tx.Run(ctx, query, map[string]interface{}{
-			"viewerID":         viewerID,
-			"candidatePostIDs": candidatePostIDs,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		postMap := make(map[string]*model.Post)
-		for res.Next(ctx) {
-			rec := res.Record()
-			p := &model.Post{
-				ID:           getStringVal(rec.Values[0]),
-				AuthorID:     getStringVal(rec.Values[1]),
-				Content:      getStringVal(rec.Values[2]),
-				Privacy:      getStringVal(rec.Values[3]),
-				Files:        getStringSliceVal(rec.Values[4]),
-				LikeCount:    getIntVal(rec.Values[5]),
-				CommentCount: getIntVal(rec.Values[6]),
-				ShareCount:   getIntVal(rec.Values[7]),
-				CreatedAt:    getTimeVal(rec.Values[8]),
-			}
-			p.Images = p.Files
-			postMap[p.ID] = p
-		}
-		return postMap, nil
-	})
+	// 1. Retrieve post details from Elasticsearch primary index
+	postMap, err := s.ESRepo.GetPostsByIDs(ctx, candidatePostIDs)
 	if err != nil {
-		return nil, fmt.Errorf("Neo4j defense-in-depth check failed: %w", err)
+		logger.WithContext(ctx).Err(err).Warn("Failed to GetPostsByIDs from ES, will fallback to Neo4j")
+		postMap = make(map[string]*model.Post)
 	}
 
-	postMap := resData.(map[string]*model.Post)
+	// 2. Fallback to Neo4j if some candidate posts are not found in ES
+	missingPostIDs := make([]string, 0)
+	for _, pid := range candidatePostIDs {
+		if _, ok := postMap[pid]; !ok {
+			missingPostIDs = append(missingPostIDs, pid)
+		}
+	}
+
+	if len(missingPostIDs) > 0 && db.Neo4jDriver != nil {
+		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+		defer session.Close(ctx)
+
+		resData, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+			query := `
+				MATCH (author:User)-[:POSTED]->(p:Post)
+				WHERE p.id IN $missingPostIDs AND p.deletedAt IS NULL
+				RETURN p.id AS postID, author.id AS authorID, p.content AS content,
+				       p.privacy AS privacy, p.files AS files, coalesce(p.likeCount, 0) AS likeCount,
+				       coalesce(p.commentCount, 0) AS commentCount, coalesce(p.shareCount, 0) AS shareCount,
+				       p.createdAt AS createdAt
+			`
+			res, err := tx.Run(ctx, query, map[string]interface{}{"missingPostIDs": missingPostIDs})
+			if err != nil {
+				return nil, err
+			}
+			m := make(map[string]*model.Post)
+			for res.Next(ctx) {
+				rec := res.Record()
+				p := &model.Post{
+					ID:           getStringVal(rec.Values[0]),
+					AuthorID:     getStringVal(rec.Values[1]),
+					Content:      getStringVal(rec.Values[2]),
+					Privacy:      getStringVal(rec.Values[3]),
+					Files:        getStringSliceVal(rec.Values[4]),
+					LikeCount:    getIntVal(rec.Values[5]),
+					CommentCount: getIntVal(rec.Values[6]),
+					ShareCount:   getIntVal(rec.Values[7]),
+					CreatedAt:    getTimeVal(rec.Values[8]),
+				}
+				p.Images = p.Files
+				m[p.ID] = p
+			}
+			return m, nil
+		})
+		if err == nil && resData != nil {
+			if neoPosts, ok := resData.(map[string]*model.Post); ok {
+				for k, v := range neoPosts {
+					postMap[k] = v
+				}
+			}
+		}
+	}
+
 	if len(postMap) == 0 {
 		return []*model.VisualPostSearchResult{}, nil
 	}
 
-	// Enrich Authors and Media URLs
-	postsToEnrich := make([]*model.Post, 0, len(postMap))
-	for _, p := range postMap {
+	// 3. Defense-in-depth: Permission and bidirectional Block verification
+	var blockedSet map[string]bool
+	var friendSet map[string]bool
+	if viewerID != "" {
+		if blockedIDs, err := s.GetBlockedUserIDs(ctx, viewerID); err == nil && len(blockedIDs) > 0 {
+			blockedSet = make(map[string]bool, len(blockedIDs))
+			for _, bid := range blockedIDs {
+				blockedSet[bid] = true
+			}
+		}
+		if friendIDs, err := s.GetViewerFriendIDs(ctx, viewerID); err == nil && len(friendIDs) > 0 {
+			friendSet = make(map[string]bool, len(friendIDs))
+			for _, fid := range friendIDs {
+				friendSet[fid] = true
+			}
+		}
+	}
+
+	authorizedPosts := make(map[string]*model.Post)
+	for id, post := range postMap {
+		// Reject if either user has blocked the other
+		if viewerID != "" && blockedSet != nil && blockedSet[post.AuthorID] {
+			continue
+		}
+
+		// Privacy validation
+		switch post.Privacy {
+		case "PUBLIC":
+			authorizedPosts[id] = post
+		case "FRIEND":
+			if viewerID != "" && (viewerID == post.AuthorID || (friendSet != nil && friendSet[post.AuthorID])) {
+				authorizedPosts[id] = post
+			}
+		case "PRIVATE":
+			if viewerID != "" && viewerID == post.AuthorID {
+				authorizedPosts[id] = post
+			}
+		default:
+			if post.Privacy == "" || post.Privacy == "PUBLIC" {
+				authorizedPosts[id] = post
+			}
+		}
+	}
+
+	if len(authorizedPosts) == 0 {
+		return []*model.VisualPostSearchResult{}, nil
+	}
+
+	// 4. Enrich Authors and Media URLs
+	postsToEnrich := make([]*model.Post, 0, len(authorizedPosts))
+	for _, p := range authorizedPosts {
 		postsToEnrich = append(postsToEnrich, p)
 	}
 	s.resolvePostAuthors(ctx, postsToEnrich)
 	s.enrichMediaURLs(nil, postsToEnrich)
 
-	// Combine into final results preserving order from ES hits
+	// 5. Combine into final results preserving order from ES hits
 	finalResults := make([]*model.VisualPostSearchResult, 0, len(hits))
 	for _, hit := range hits {
-		if post, exists := postMap[hit.PostID]; exists {
+		if post, exists := authorizedPosts[hit.PostID]; exists {
 			finalResults = append(finalResults, &model.VisualPostSearchResult{
 				Post:           post,
 				MatchedFileID:  hit.FileID,

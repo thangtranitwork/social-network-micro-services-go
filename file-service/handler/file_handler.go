@@ -4,11 +4,48 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"path/filepath"
 	"social-network-go/file-service/model"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+const MaxUploadSize = 50 * 1024 * 1024 // 50 MB
+
+var allowedExtensions = map[string]bool{
+	".jpg":  true,
+	".jpeg": true,
+	".png":  true,
+	".gif":  true,
+	".webp": true,
+	".mp4":  true,
+	".mov":  true,
+	".webm": true,
+	".avi":  true,
+	".mp3":  true,
+	".wav":  true,
+	".ogg":  true,
+	".m4a":  true,
+	".pdf":  true,
+	".txt":  true,
+	".docx": true,
+	".xlsx": true,
+	".pptx": true,
+}
+
+func isSafeInlineContentType(contentType, ext string) bool {
+	ct := strings.ToLower(contentType)
+	if strings.Contains(ct, "html") || strings.Contains(ct, "javascript") || strings.Contains(ct, "svg") || strings.Contains(ct, "xml") {
+		return false
+	}
+	switch strings.ToLower(ext) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm", ".mp3", ".wav", ".ogg":
+		return true
+	default:
+		return false
+	}
+}
 
 type FileServiceInterface interface {
 	Upload(ctx context.Context, file io.Reader, filename string, contentType string, uploaderID string) (*model.File, error)
@@ -34,6 +71,17 @@ func (h *FileHandler) Upload(c *gin.Context) {
 		return
 	}
 	defer file.Close()
+
+	if header.Size > MaxUploadSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file size exceeds limit"})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if !allowedExtensions[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file format"})
+		return
+	}
 
 	uploaderID := c.GetHeader("X-User-ID")
 	if uploaderID == "" {
@@ -71,6 +119,17 @@ func (h *FileHandler) UploadMultiple(c *gin.Context) {
 
 	var results []interface{}
 	for _, fileHeader := range files {
+		if fileHeader.Size > MaxUploadSize {
+			results = append(results, gin.H{"error": "file size exceeds limit", "filename": fileHeader.Filename})
+			continue
+		}
+
+		ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+		if !allowedExtensions[ext] {
+			results = append(results, gin.H{"error": "unsupported file format", "filename": fileHeader.Filename})
+			continue
+		}
+
 		file, err := fileHeader.Open()
 		if err != nil {
 			results = append(results, gin.H{"error": "failed to open file", "filename": fileHeader.Filename})
@@ -93,6 +152,9 @@ func (h *FileHandler) UploadMultiple(c *gin.Context) {
 func (h *FileHandler) GetPresignedUploadURL(c *gin.Context) {
 	filename := c.Query("filename")
 	contentType := c.Query("contentType")
+	if contentType == "" {
+		contentType = c.Query("content_type")
+	}
 	if filename == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "filename is required"})
 		return
@@ -123,7 +185,23 @@ func (h *FileHandler) Load(c *gin.Context) {
 	}
 	defer reader.Close()
 
-	c.Header("Content-Disposition", "inline; filename=\""+filename+"\"")
+	if queryFilename := c.Query("filename"); queryFilename != "" {
+		filename = queryFilename
+	} else if queryName := c.Query("name"); queryName != "" {
+		filename = queryName
+	}
+
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		ext = filepath.Ext(id)
+	}
+
+	c.Header("X-Content-Type-Options", "nosniff")
+	if isSafeInlineContentType(contentType, ext) {
+		c.Header("Content-Disposition", "inline; filename=\""+filename+"\"")
+	} else {
+		c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	}
 	c.Header("Cache-Control", "public, max-age=3600, immutable")
 	c.DataFromReader(http.StatusOK, size, contentType, reader, nil)
 }

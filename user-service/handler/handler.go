@@ -42,30 +42,55 @@ func getCurrentUser(c *gin.Context) string {
 	return userID
 }
 
-func mapUserToProfileResponse(u *model.User) model.UserProfileResponse {
-	return model.UserProfileResponse{
-		ID:                      u.ID,
-		GivenName:               u.GivenName,
-		FamilyName:              u.FamilyName,
-		Username:                u.Username,
-		Email:                   u.Email,
-		Bio:                     u.Bio,
-		Birthdate:               u.Birthdate,
-		ProfilePictureUrl:       u.ProfilePictureId,
-		FriendCount:             u.FriendCount,
-		BlockCount:              u.BlockCount,
-		RequestSentCount:        u.RequestSentCount,
-		RequestReceivedCount:    u.RequestReceivedCount,
-		NextChangeNameDate:      u.NextChangeNameDate,
-		NextChangeBirthdateDate: u.NextChangeBirthdateDate,
-		NextChangeUsernameDate:  u.NextChangeUsernameDate,
-		CreatedAt:               u.CreatedAt,
-		IsFriend:                u.IsFriend,
-		MutualFriendsCount:      u.MutualFriendsCount,
-		Request:                 u.Request,
-		BlockStatus:             u.BlockStatus,
-		PostCount:               u.PostCount,
+func mapUserToProfileResponse(u *model.User, isSelf bool) model.UserProfileResponse {
+	resp := model.UserProfileResponse{
+		ID:                 u.ID,
+		GivenName:          u.GivenName,
+		FamilyName:         u.FamilyName,
+		Username:           u.Username,
+		Bio:                u.Bio,
+		ProfilePictureUrl:  u.ProfilePictureId,
+		FriendCount:        u.FriendCount,
+		CreatedAt:          u.CreatedAt,
+		IsFriend:           u.IsFriend,
+		MutualFriendsCount: u.MutualFriendsCount,
+		Request:            u.Request,
+		BlockStatus:        u.BlockStatus,
+		PostCount:          u.PostCount,
 	}
+
+	if isSelf {
+		resp.Email = u.Email
+		if !u.Birthdate.IsZero() && u.Birthdate.Year() > 1900 {
+			t := u.Birthdate
+			resp.Birthdate = &t
+		}
+		en := u.EmailNotifications
+		resp.EmailNotifications = &en
+		pn := u.PushNotifications
+		resp.PushNotifications = &pn
+		resp.DigestFrequency = u.DigestFrequency
+		bc := u.BlockCount
+		resp.BlockCount = &bc
+		rsc := u.RequestSentCount
+		resp.RequestSentCount = &rsc
+		rrc := u.RequestReceivedCount
+		resp.RequestReceivedCount = &rrc
+		if !u.NextChangeNameDate.IsZero() && u.NextChangeNameDate.Year() > 1970 {
+			t := u.NextChangeNameDate
+			resp.NextChangeNameDate = &t
+		}
+		if !u.NextChangeBirthdateDate.IsZero() && u.NextChangeBirthdateDate.Year() > 1970 {
+			t := u.NextChangeBirthdateDate
+			resp.NextChangeBirthdateDate = &t
+		}
+		if !u.NextChangeUsernameDate.IsZero() && u.NextChangeUsernameDate.Year() > 1970 {
+			t := u.NextChangeUsernameDate
+			resp.NextChangeUsernameDate = &t
+		}
+	}
+
+	return resp
 }
 
 func mapUsersToCommonInfo(users []*model.User) []model.UserCommonInformationResponse {

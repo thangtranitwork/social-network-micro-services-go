@@ -53,3 +53,4 @@ Thumbs.db
 artifacts/
 *.resolved
 scripts/migrate-accounts.sql
+scripts/backfill_checkpoint.json

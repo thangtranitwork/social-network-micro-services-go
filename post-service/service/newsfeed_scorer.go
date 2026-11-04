@@ -89,7 +89,13 @@ func scoreNewsfeedCandidate(candidate *model.NewsfeedCandidate, now time.Time, w
 	}
 
 	relationship := 0
-	if candidate.IsFriend {
+	if candidate.IsOwnPost {
+		relationship = weights.FriendRelationship
+		if age < 2*time.Hour {
+			// Freshness boost: trong 2 giờ đầu sau khi đăng, boost tối đa 120 điểm giảm dần theo thời gian
+			relationship += int((2*time.Hour - age).Minutes())
+		}
+	} else if candidate.IsFriend {
 		relationship = weights.FriendRelationship
 	} else if candidate.IsSecondDegreeOrRequested {
 		relationship = weights.SecondDegreeOrRequested

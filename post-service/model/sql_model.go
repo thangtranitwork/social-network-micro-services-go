@@ -47,6 +47,7 @@ type CommentEntity struct {
 	UserID     string         `gorm:"type:varchar(64);index:idx_comment_user" json:"userId"`
 	ParentID   string         `gorm:"type:varchar(64);index:idx_comment_parent" json:"parentId,omitempty"`
 	Content    string         `gorm:"type:text" json:"content"`
+	FileID     *string        `gorm:"type:varchar(64)" json:"fileId,omitempty"`
 	LikeCount  int            `gorm:"default:0" json:"likeCount"`
 	ReplyCount int            `gorm:"default:0" json:"replyCount"`
 	CreatedAt  time.Time      `gorm:"autoCreateTime;index:idx_comment_created" json:"createdAt"`

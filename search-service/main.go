@@ -41,6 +41,19 @@ func main() {
 		imageConsumer := consumer.NewPostImageConsumer(cfg, searchSvc.ESRepo)
 		imageConsumer.Start(context.Background())
 		logger.Info("Elasticsearch Real-time Post Image Consumer initialized")
+
+		// Startup check: Ensure users & posts are synced if Elasticsearch is empty or low
+		go func() {
+			time.Sleep(3 * time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			uCount, pCount, err := searchSvc.SyncData(ctx)
+			if err != nil {
+				logger.Err(err).Warn("Startup initial search sync failed")
+			} else {
+				logger.Info("Startup initial search sync completed: %d users, %d posts", uCount, pCount)
+			}
+		}()
 	}
 
 	// 6. Setup REST Server (Gin)

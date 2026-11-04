@@ -45,18 +45,34 @@ func createIndexes() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	indexModel := mongo.IndexModel{
-		Keys: bson.D{
-			{Key: "chat_id", Value: 1},
-			{Key: "timestamp", Value: -1},
+	models := []mongo.IndexModel{
+		{
+			Keys: bson.D{
+				{Key: "chat_id", Value: 1},
+				{Key: "timestamp", Value: -1},
+			},
+			Options: options.Index().SetName("chat_id_timestamp_idx"),
 		},
-		Options: options.Index().SetName("chat_id_timestamp_idx"),
+		{
+			Keys: bson.D{
+				{Key: "chat_id", Value: 1},
+				{Key: "sender_id", Value: 1},
+				{Key: "status", Value: 1},
+			},
+			Options: options.Index().SetName("chat_unread_messages_idx"),
+		},
+		{
+			Keys: bson.D{
+				{Key: "call_id", Value: 1},
+			},
+			Options: options.Index().SetName("call_id_idx").SetSparse(true),
+		},
 	}
 
-	name, err := MsgCollection.Indexes().CreateOne(ctx, indexModel)
+	names, err := MsgCollection.Indexes().CreateMany(ctx, models)
 	if err != nil {
-		logger.Error("Failed to create compound index on messages: %v", err)
+		logger.Error("Failed to create compound indexes on messages: %v", err)
 	} else {
-		logger.Info("Successfully created MongoDB compound index: %s", name)
+		logger.Info("Successfully created MongoDB compound indexes: %v", names)
 	}
 }

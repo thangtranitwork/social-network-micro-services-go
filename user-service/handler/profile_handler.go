@@ -32,7 +32,8 @@ func (h *UserHandler) GetUserProfile(c *gin.Context) {
 		return
 	}
 
-	sendSuccess(c, mapUserToProfileResponse(profile))
+	isSelf := currentUserID != "" && currentUserID == profile.ID
+	sendSuccess(c, mapUserToProfileResponse(profile, isSelf))
 }
 
 func (h *UserHandler) UpdateBio(c *gin.Context) {

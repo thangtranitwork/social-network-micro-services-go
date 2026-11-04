@@ -23,7 +23,7 @@ type MockChatService struct {
 }
 
 func (m *MockChatService) RegisterClient(userID string, conn *websocket.Conn) {}
-func (m *MockChatService) HandleIncomingMessages(userID string)               {}
+func (m *MockChatService) HandleIncomingMessages(userID string) {}
 func (m *MockChatService) GetChatHistory(userID, partnerID string) []*model.Message {
 	return m.Messages
 }
@@ -49,6 +49,15 @@ func (m *MockChatService) SendMessage(senderID, receiverUsername, text string) (
 	}
 	return &service.MessageResponse{ID: "msg-123"}, nil
 }
+func (m *MockChatService) SendMessageToChat(senderID, chatID, text string) (*service.MessageResponse, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if len(m.MessageResps) > 0 {
+		return m.MessageResps[0], nil
+	}
+	return &service.MessageResponse{ID: "msg-123"}, nil
+}
 func (m *MockChatService) SendGif(senderID, receiverUsername, gifURL string) (*service.MessageResponse, error) {
 	if m.Err != nil {
 		return nil, m.Err
@@ -58,7 +67,25 @@ func (m *MockChatService) SendGif(senderID, receiverUsername, gifURL string) (*s
 	}
 	return &service.MessageResponse{ID: "msg-123"}, nil
 }
-func (m *MockChatService) SendFile(senderID, receiverUsername, fileID string) (*service.MessageResponse, error) {
+func (m *MockChatService) SendGifToChat(senderID, chatID, gifURL string) (*service.MessageResponse, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if len(m.MessageResps) > 0 {
+		return m.MessageResps[0], nil
+	}
+	return &service.MessageResponse{ID: "msg-123"}, nil
+}
+func (m *MockChatService) SendFile(senderID, receiverUsername, fileID, fileName, text string) (*service.MessageResponse, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if len(m.MessageResps) > 0 {
+		return m.MessageResps[0], nil
+	}
+	return &service.MessageResponse{ID: "msg-123"}, nil
+}
+func (m *MockChatService) SendFileToChat(senderID, chatID, fileID, fileName, text string) (*service.MessageResponse, error) {
 	if m.Err != nil {
 		return nil, m.Err
 	}
@@ -68,6 +95,15 @@ func (m *MockChatService) SendFile(senderID, receiverUsername, fileID string) (*
 	return &service.MessageResponse{ID: "msg-123"}, nil
 }
 func (m *MockChatService) SendVoice(senderID, receiverUsername, fileID string) (*service.MessageResponse, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if len(m.MessageResps) > 0 {
+		return m.MessageResps[0], nil
+	}
+	return &service.MessageResponse{ID: "msg-123"}, nil
+}
+func (m *MockChatService) SendVoiceToChat(senderID, chatID, fileID string) (*service.MessageResponse, error) {
 	if m.Err != nil {
 		return nil, m.Err
 	}
@@ -249,24 +285,54 @@ func TestSendGif(t *testing.T) {
 func TestSendFile(t *testing.T) {
 	mockSvc := &MockChatService{}
 	r := setupTestRouter(mockSvc)
-	w := httptest.NewRecorder()
 
-	payload := struct {
-		Username string `json:"username"`
-		FileId   string `json:"fileId"`
-	}{
-		Username: "alice",
-		FileId:   "file-123",
-	}
-	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", "/v1/chat/send-file", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", "user-1")
-	r.ServeHTTP(w, req)
+	t.Run("DirectChatWithFileNameAndText", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		payload := struct {
+			Username string `json:"username"`
+			FileId   string `json:"fileId"`
+			FileName string `json:"fileName"`
+			Text     string `json:"text"`
+		}{
+			Username: "alice",
+			FileId:   "file-123",
+			FileName: "report.pdf",
+			Text:     "Báo cáo tài chính tháng này",
+		}
+		body, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/v1/chat/send-file", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-User-ID", "user-1")
+		r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
-	}
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("GroupChatWithFileNameAndText", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		payload := struct {
+			ChatID   string `json:"chatId"`
+			FileId   string `json:"fileId"`
+			FileName string `json:"fileName"`
+			Text     string `json:"text"`
+		}{
+			ChatID:   "group-chat-456",
+			FileId:   "file-789",
+			FileName: "photo.jpg",
+			Text:     "Ảnh chụp tại Đà Lạt",
+		}
+		body, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/v1/chat/send-file", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-User-ID", "user-1")
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
+		}
+	})
 }
 
 func TestSendVoice(t *testing.T) {

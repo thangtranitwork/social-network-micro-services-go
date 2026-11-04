@@ -181,6 +181,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 
 	// File Service Routes
 	r.GET("/v1/files/:id", publicRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
+	r.HEAD("/v1/files/:id", publicRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
 	r.POST("/v1/files/upload", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
 	r.POST("/v1/files/upload-multiple", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
 	r.GET("/v1/files/upload/presigned", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))

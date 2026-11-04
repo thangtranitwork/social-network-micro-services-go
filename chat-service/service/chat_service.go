@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -822,15 +823,24 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 			s.mu.RUnlock()
 		}
 
-		updatedAt := time.Now()
+		var updatedAt time.Time
 		var latestMsgResp *MessageResponse
 		if lastMsg != nil {
 			updatedAt = lastMsg.Timestamp
+			var attachment string
+			if (lastMsg.Type == "FILE" || lastMsg.Type == "VOICE") && lastMsg.Attachment != "" {
+				attachment = "/v1/files/" + lastMsg.Attachment
+			} else if lastMsg.Type == "GIF" {
+				attachment = lastMsg.Attachment
+			}
+
 			latestMsgResp = &MessageResponse{
-				ID:      lastMsg.ID,
-				ChatID:  lastMsg.ChatID,
-				Content: lastMsg.Content,
-				SentAt:  lastMsg.Timestamp,
+				ID:             lastMsg.ID,
+				ChatID:         lastMsg.ChatID,
+				Content:        lastMsg.Content,
+				Attachment:     attachment,
+				AttachmentName: lastMsg.AttachmentName,
+				SentAt:         lastMsg.Timestamp,
 				Sender: &UserCommonInfoResponse{
 					ID: lastMsg.SenderID,
 				},
@@ -1117,6 +1127,50 @@ func (s *ChatService) CreateGroupChat(ctx context.Context, adminID string, name 
 	return chatID, nil
 }
 
+func (s *ChatService) getUserDisplayName(ctx context.Context, userID string) string {
+	if s.UserClient == nil || userID == "" {
+		return "Thành viên"
+	}
+	resp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{UserId: userID})
+	if err != nil || resp == nil {
+		return "Thành viên"
+	}
+	name := strings.TrimSpace(resp.FamilyName + " " + resp.GivenName)
+	if name == "" {
+		name = resp.Username
+	}
+	if name == "" {
+		name = "Thành viên"
+	}
+	return name
+}
+
+func (s *ChatService) CreateAndBroadcastSystemMessage(chatID string, content string) {
+	msg := &model.Message{
+		ID:        uuid.New().String(),
+		ChatID:    chatID,
+		SenderID:  "system",
+		Content:   content,
+		Timestamp: time.Now(),
+		Type:      "SYSTEM",
+		Status:    "READ",
+	}
+	s.SaveMessage(msg)
+	enriched := &MessageResponse{
+		ID:      msg.ID,
+		ChatID:  msg.ChatID,
+		Content: msg.Content,
+		SentAt:  msg.Timestamp,
+		Type:    msg.Type,
+		IsRead:  true,
+		Sender: &UserCommonInfoResponse{
+			ID:       "system",
+			Username: "system",
+		},
+	}
+	s.BroadcastToChat(chatID, enriched)
+}
+
 func (s *ChatService) AddMembersToGroup(ctx context.Context, adminID string, chatID string, memberIDs []string) error {
 	if db.Neo4jDriver == nil {
 		return fmt.Errorf("Neo4j driver is nil")
@@ -1164,7 +1218,29 @@ func (s *ChatService) AddMembersToGroup(ctx context.Context, adminID string, cha
 			"memberIds": memberIDs,
 		})
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Invalidate Redis cache for all members
+	s.InvalidateChatListCache(chatID)
+	if db.RedisClient != nil {
+		for _, m := range memberIDs {
+			_ = db.RedisClient.Del(ctx, "chat:list:"+m).Err()
+		}
+	}
+
+	// Broadcast system message
+	actorName := s.getUserDisplayName(ctx, adminID)
+	var addedNames []string
+	for _, mID := range memberIDs {
+		addedNames = append(addedNames, s.getUserDisplayName(ctx, mID))
+	}
+	if len(addedNames) > 0 {
+		s.CreateAndBroadcastSystemMessage(chatID, fmt.Sprintf("%s đã thêm %s vào nhóm", actorName, strings.Join(addedNames, ", ")))
+	}
+
+	return nil
 }
 
 func (s *ChatService) RemoveMemberFromGroup(ctx context.Context, adminID string, chatID string, userID string) error {
@@ -1218,6 +1294,9 @@ func (s *ChatService) RemoveMemberFromGroup(ctx context.Context, adminID string,
 		return fmt.Errorf("unauthorized: only the group admin can remove members")
 	}
 
+	actorName := s.getUserDisplayName(ctx, adminID)
+	targetName := s.getUserDisplayName(ctx, userID)
+
 	removeQuery := `
 		MATCH (u:User {id: $userId})-[r:IS_MEMBER_OF]->(c:Chat {id: $chatId})
 		DELETE r
@@ -1257,6 +1336,19 @@ func (s *ChatService) RemoveMemberFromGroup(ctx context.Context, adminID string,
 		}
 	}
 
+	// Invalidate Redis cache
+	if db.RedisClient != nil {
+		_ = db.RedisClient.Del(ctx, "chat:list:"+userID).Err()
+	}
+	s.InvalidateChatListCache(chatID)
+
+	// Broadcast system message
+	if adminID == userID {
+		s.CreateAndBroadcastSystemMessage(chatID, fmt.Sprintf("%s đã rời khỏi nhóm", targetName))
+	} else {
+		s.CreateAndBroadcastSystemMessage(chatID, fmt.Sprintf("%s đã xóa %s khỏi nhóm", actorName, targetName))
+	}
+
 	return nil
 }
 
@@ -1271,38 +1363,94 @@ func (s *ChatService) UpdateGroupChat(ctx context.Context, adminID string, chatI
 	checkQuery := `
 		MATCH (u:User {id: $adminId})-[:IS_MEMBER_OF]->(c:Chat {id: $chatId})
 		WHERE c.isGroup = true
-		RETURN count(c) > 0
+		RETURN count(c) > 0, coalesce(c.name, ""), coalesce(c.avatar, "")
 	`
-	isMemberVal, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+	groupInfoVal, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		res, err := tx.Run(ctx, checkQuery, map[string]interface{}{
 			"adminId": adminID,
 			"chatId":  chatID,
 		})
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		if res.Next(ctx) {
-			return res.Record().Values[0].(bool), nil
+			rec := res.Record()
+			isMember, _ := rec.Values[0].(bool)
+			oldName, _ := rec.Values[1].(string)
+			oldAvatar, _ := rec.Values[2].(string)
+			return map[string]interface{}{
+				"isMember":  isMember,
+				"oldName":   oldName,
+				"oldAvatar": oldAvatar,
+			}, nil
 		}
-		return false, nil
+		return nil, nil
 	})
-	if err != nil || !isMemberVal.(bool) {
+	if err != nil || groupInfoVal == nil {
+		if err != nil {
+			return err
+		}
 		return fmt.Errorf("unauthorized or group not found")
+	}
+	infoMap := groupInfoVal.(map[string]interface{})
+	if !infoMap["isMember"].(bool) {
+		return fmt.Errorf("unauthorized or group not found")
+	}
+	oldName := infoMap["oldName"].(string)
+	oldAvatar := infoMap["oldAvatar"].(string)
+
+	trimmedName := strings.TrimSpace(name)
+	trimmedAvatar := strings.TrimSpace(avatar)
+
+	if strings.Contains(trimmedAvatar, "/v1/files/") {
+		parts := strings.Split(trimmedAvatar, "/v1/files/")
+		if len(parts) > 1 {
+			trimmedAvatar = parts[1]
+		}
 	}
 
 	updateQuery := `
 		MATCH (c:Chat {id: $chatId})
-		SET c.name = $name, c.avatar = $avatar
-		RETURN c.id
+		SET c.name = CASE WHEN $name <> "" THEN $name ELSE c.name END,
+		    c.avatar = CASE WHEN $avatar <> "" THEN $avatar ELSE c.avatar END
+		RETURN c.name, c.avatar
 	`
 	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		return tx.Run(ctx, updateQuery, map[string]interface{}{
 			"chatId": chatID,
-			"name":   name,
-			"avatar": avatar,
+			"name":   trimmedName,
+			"avatar": trimmedAvatar,
 		})
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Invalidate Redis cache for all members
+	s.InvalidateChatListCache(chatID)
+
+	// Broadcast group update event to all connected members
+	avatarURL := trimmedAvatar
+	if avatarURL != "" && !strings.HasPrefix(avatarURL, "http://") && !strings.HasPrefix(avatarURL, "https://") {
+		avatarURL = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, avatarURL)
+	}
+	s.BroadcastToChat(chatID, map[string]interface{}{
+		"command": "GROUP_UPDATED",
+		"chatId":  chatID,
+		"name":    trimmedName,
+		"avatar":  avatarURL,
+	})
+
+	// Broadcast system message
+	actorName := s.getUserDisplayName(ctx, adminID)
+	if trimmedName != "" && trimmedName != oldName {
+		s.CreateAndBroadcastSystemMessage(chatID, fmt.Sprintf("%s đã đổi tên nhóm thành \"%s\"", actorName, trimmedName))
+	}
+	if trimmedAvatar != "" && trimmedAvatar != oldAvatar {
+		s.CreateAndBroadcastSystemMessage(chatID, fmt.Sprintf("%s đã thay đổi ảnh nhóm", actorName))
+	}
+
+	return nil
 }
 
 func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*MessageResponse {
@@ -1367,12 +1515,9 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 			}
 		}
 
-		var attachment, attachmentName string
-		if m.Type == "FILE" || m.Type == "VOICE" {
-			attachment = m.Content
-			attachmentName = m.Content
-		} else if m.Type == "GIF" {
-			attachment = m.Content
+		var attachment string
+		if m.Type == "FILE" || m.Type == "VOICE" || m.Type == "GIF" {
+			attachment = m.Attachment
 		}
 
 		response = append(response, &MessageResponse{
@@ -1380,7 +1525,7 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 			ChatID:         m.ChatID,
 			Content:        m.Content,
 			Attachment:     attachment,
-			AttachmentName: attachmentName,
+			AttachmentName: m.AttachmentName,
 			SentAt:         m.Timestamp,
 			Sender:         sender,
 			Type:           m.Type,
@@ -1481,12 +1626,11 @@ func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
 		}
 	}
 
-	var attachment, attachmentName string
-	if msg.Type == "FILE" || msg.Type == "VOICE" {
-		attachment = "/v1/files/" + msg.Content
-		attachmentName = msg.Content
+	var attachment string
+	if (msg.Type == "FILE" || msg.Type == "VOICE") && msg.Attachment != "" {
+		attachment = "/v1/files/" + msg.Attachment
 	} else if msg.Type == "GIF" {
-		attachment = msg.Content
+		attachment = msg.Attachment
 	}
 
 	return &MessageResponse{
@@ -1494,7 +1638,7 @@ func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
 		ChatID:         msg.ChatID,
 		Content:        msg.Content,
 		Attachment:     attachment,
-		AttachmentName: attachmentName,
+		AttachmentName: msg.AttachmentName,
 		SentAt:         msg.Timestamp,
 		Sender:         sender,
 		Type:           msg.Type,
@@ -1652,6 +1796,211 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 	return enriched, nil
 }
 
+func (s *ChatService) SendMessageToChat(senderID, chatID, text string) (*MessageResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if !s.IsMemberOfChat(senderID, chatID) {
+		return nil, fmt.Errorf("unauthorized to send message to this chat")
+	}
+
+	isGroup := s.IsGroupChat(chatID)
+	var recipientID string
+	status := "SENT"
+
+	if !isGroup {
+		members := s.GetChatMembers(chatID)
+		for _, m := range members {
+			if m != senderID {
+				recipientID = m
+				break
+			}
+		}
+		if recipientID != "" && s.UserClient != nil {
+			friendship, err := s.UserClient.CheckFriendship(ctx, &pb.FriendshipRequest{
+				UserIdA: senderID,
+				UserIdB: recipientID,
+			})
+			if err == nil && friendship != nil && friendship.HasBlocked {
+				return nil, fmt.Errorf("BLOCKED")
+			}
+			s.mu.RLock()
+			activeChat, inChat := s.activeChats[recipientID]
+			s.mu.RUnlock()
+			if inChat && activeChat == chatID {
+				status = "READ"
+			}
+		}
+	}
+
+	trimmedText := strings.TrimSpace(text)
+	if trimmedText == "" {
+		return nil, fmt.Errorf("message content cannot be empty")
+	}
+
+	msg := &model.Message{
+		ID:          uuid.New().String(),
+		ChatID:      chatID,
+		SenderID:    senderID,
+		RecipientID: recipientID,
+		Content:     trimmedText,
+		Timestamp:   time.Now(),
+		Type:        "TEXT",
+		Status:      status,
+	}
+
+	s.SaveMessage(msg)
+	enriched := s.EnrichMessage(msg)
+	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
+	s.BroadcastToChat(chatID, enriched)
+
+	if !isGroup && recipientID != "" {
+		if s.NotifPublisher != nil {
+			go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, recipientID, chatID, "CHAT", trimmedText)
+		}
+		if s.FCMClient != nil {
+			go func() {
+				_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
+					ReceiverId: recipientID,
+					Title:      "PocPoc",
+					Body:       trimmedText,
+					Data: map[string]string{
+						"action":   "NEW_MESSAGE",
+						"targetId": chatID,
+					},
+				})
+			}()
+		}
+	}
+
+	return enriched, nil
+}
+
+func (s *ChatService) sendMediaMessageToChat(ctx context.Context, senderID, chatID, content, attachment, attachmentName, msgType string) (*MessageResponse, error) {
+	if !s.IsMemberOfChat(senderID, chatID) {
+		return nil, fmt.Errorf("unauthorized to send message to this chat")
+	}
+
+	isGroup := s.IsGroupChat(chatID)
+	var recipientID string
+	status := "SENT"
+
+	if !isGroup {
+		members := s.GetChatMembers(chatID)
+		for _, m := range members {
+			if m != senderID {
+				recipientID = m
+				break
+			}
+		}
+		if recipientID != "" && s.UserClient != nil {
+			friendship, err := s.UserClient.CheckFriendship(ctx, &pb.FriendshipRequest{
+				UserIdA: senderID,
+				UserIdB: recipientID,
+			})
+			if err == nil && friendship != nil && friendship.HasBlocked {
+				return nil, fmt.Errorf("BLOCKED")
+			}
+			s.mu.RLock()
+			activeChat, inChat := s.activeChats[recipientID]
+			s.mu.RUnlock()
+			if inChat && activeChat == chatID {
+				status = "READ"
+			}
+		}
+	}
+
+	msg := &model.Message{
+		ID:             uuid.New().String(),
+		ChatID:         chatID,
+		SenderID:       senderID,
+		RecipientID:    recipientID,
+		Content:        content,
+		Attachment:     attachment,
+		AttachmentName: attachmentName,
+		Timestamp:      time.Now(),
+		Type:           msgType,
+		Status:         status,
+	}
+
+	s.SaveMessage(msg)
+	enriched := s.EnrichMessage(msg)
+	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
+	s.BroadcastToChat(chatID, enriched)
+
+	if !isGroup && recipientID != "" {
+		notifContent := content
+		switch msgType {
+		case "FILE":
+			if content != "" {
+				notifContent = content
+			} else if attachmentName != "" {
+				notifContent = fmt.Sprintf("[Tệp] %s", attachmentName)
+			} else {
+				notifContent = "[Tệp đính kèm]"
+			}
+		case "VOICE":
+			notifContent = "[Tin nhắn thoại]"
+		case "GIF":
+			notifContent = "[GIF]"
+		}
+
+		if s.NotifPublisher != nil {
+			go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, recipientID, chatID, "CHAT", notifContent)
+		}
+		if s.FCMClient != nil {
+			go func() {
+				_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
+					ReceiverId: recipientID,
+					Title:      "PocPoc",
+					Body:       notifContent,
+					Data: map[string]string{
+						"action":   "NEW_MESSAGE",
+						"targetId": chatID,
+					},
+				})
+			}()
+		}
+	}
+
+	return enriched, nil
+}
+
+func (s *ChatService) SendGifToChat(senderID, chatID, gifURL string) (*MessageResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	trimmed := strings.TrimSpace(gifURL)
+	if trimmed == "" {
+		return nil, fmt.Errorf("url cannot be empty")
+	}
+	return s.sendMediaMessageToChat(ctx, senderID, chatID, "", trimmed, "", "GIF")
+}
+
+func (s *ChatService) SendFileToChat(senderID, chatID, fileID, fileName, text string) (*MessageResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	trimmedFileID := strings.TrimSpace(fileID)
+	if trimmedFileID == "" {
+		return nil, fmt.Errorf("fileId cannot be empty")
+	}
+	trimmedFileName := strings.TrimSpace(fileName)
+	if trimmedFileName == "" {
+		trimmedFileName = trimmedFileID
+	}
+	trimmedText := strings.TrimSpace(text)
+	return s.sendMediaMessageToChat(ctx, senderID, chatID, trimmedText, trimmedFileID, trimmedFileName, "FILE")
+}
+
+func (s *ChatService) SendVoiceToChat(senderID, chatID, fileID string) (*MessageResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	trimmed := strings.TrimSpace(fileID)
+	if trimmed == "" {
+		return nil, fmt.Errorf("fileId cannot be empty")
+	}
+	return s.sendMediaMessageToChat(ctx, senderID, chatID, "", trimmed, "voice.mp3", "VOICE")
+}
+
 func (s *ChatService) SendGif(senderID, receiverUsername, gifURL string) (*MessageResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1666,53 +2015,16 @@ func (s *ChatService) SendGif(senderID, receiverUsername, gifURL string) (*Messa
 		return nil, fmt.Errorf("receiver not found: %w", err)
 	}
 
-	friendship, err := s.UserClient.CheckFriendship(ctx, &pb.FriendshipRequest{
-		UserIdA: senderID,
-		UserIdB: receiverResp.UserId,
-	})
-	if err == nil && friendship != nil && friendship.HasBlocked {
-		return nil, fmt.Errorf("BLOCKED")
-	}
-
 	chatID, err := s.GetOrCreateDirectChat(senderID, receiverResp.UserId)
 	if err != nil {
 		logger.Err(err).Error("Failed to get or create direct chat between %s and %s", senderID, receiverResp.UserId)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
-	s.mu.RLock()
-	activeChat, inChat := s.activeChats[receiverResp.UserId]
-	s.mu.RUnlock()
-
-	status := "SENT"
-	if inChat && activeChat == chatID {
-		status = "READ"
-	}
-
-	msg := &model.Message{
-		ID:          uuid.New().String(),
-		ChatID:      chatID,
-		SenderID:    senderID,
-		RecipientID: receiverResp.UserId,
-		Content:     gifURL,
-		Timestamp:   time.Now(),
-		Type:        "GIF",
-		Status:      status,
-	}
-
-	s.SaveMessage(msg)
-
-	enriched := s.EnrichMessage(msg)
-
-	// Enrich with presigned URLs before broadcasting
-	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
-
-	s.BroadcastToChat(chatID, enriched)
-
-	return enriched, nil
+	return s.SendGifToChat(senderID, chatID, gifURL)
 }
 
-func (s *ChatService) SendFile(senderID, receiverUsername, fileID string) (*MessageResponse, error) {
+func (s *ChatService) SendFile(senderID, receiverUsername, fileID, fileName, text string) (*MessageResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -1726,50 +2038,13 @@ func (s *ChatService) SendFile(senderID, receiverUsername, fileID string) (*Mess
 		return nil, fmt.Errorf("receiver not found: %w", err)
 	}
 
-	friendship, err := s.UserClient.CheckFriendship(ctx, &pb.FriendshipRequest{
-		UserIdA: senderID,
-		UserIdB: receiverResp.UserId,
-	})
-	if err == nil && friendship != nil && friendship.HasBlocked {
-		return nil, fmt.Errorf("BLOCKED")
-	}
-
 	chatID, err := s.GetOrCreateDirectChat(senderID, receiverResp.UserId)
 	if err != nil {
 		logger.Err(err).Error("Failed to get or create direct chat between %s and %s", senderID, receiverResp.UserId)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
-	s.mu.RLock()
-	activeChat, inChat := s.activeChats[receiverResp.UserId]
-	s.mu.RUnlock()
-
-	status := "SENT"
-	if inChat && activeChat == chatID {
-		status = "READ"
-	}
-
-	msg := &model.Message{
-		ID:          uuid.New().String(),
-		ChatID:      chatID,
-		SenderID:    senderID,
-		RecipientID: receiverResp.UserId,
-		Content:     fileID,
-		Timestamp:   time.Now(),
-		Type:        "FILE",
-		Status:      status,
-	}
-
-	s.SaveMessage(msg)
-
-	enriched := s.EnrichMessage(msg)
-
-	// Enrich with presigned URLs before broadcasting
-	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
-
-	s.BroadcastToChat(chatID, enriched)
-
-	return enriched, nil
+	return s.SendFileToChat(senderID, chatID, fileID, fileName, text)
 }
 
 func (s *ChatService) SendVoice(senderID, receiverUsername, fileID string) (*MessageResponse, error) {
@@ -1786,50 +2061,13 @@ func (s *ChatService) SendVoice(senderID, receiverUsername, fileID string) (*Mes
 		return nil, fmt.Errorf("receiver not found: %w", err)
 	}
 
-	friendship, err := s.UserClient.CheckFriendship(ctx, &pb.FriendshipRequest{
-		UserIdA: senderID,
-		UserIdB: receiverResp.UserId,
-	})
-	if err == nil && friendship != nil && friendship.HasBlocked {
-		return nil, fmt.Errorf("BLOCKED")
-	}
-
 	chatID, err := s.GetOrCreateDirectChat(senderID, receiverResp.UserId)
 	if err != nil {
 		logger.Err(err).Error("Failed to get or create direct chat between %s and %s", senderID, receiverResp.UserId)
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
-	s.mu.RLock()
-	activeChat, inChat := s.activeChats[receiverResp.UserId]
-	s.mu.RUnlock()
-
-	status := "SENT"
-	if inChat && activeChat == chatID {
-		status = "READ"
-	}
-
-	msg := &model.Message{
-		ID:          uuid.New().String(),
-		ChatID:      chatID,
-		SenderID:    senderID,
-		RecipientID: receiverResp.UserId,
-		Content:     fileID,
-		Timestamp:   time.Now(),
-		Type:        "VOICE",
-		Status:      status,
-	}
-
-	s.SaveMessage(msg)
-
-	enriched := s.EnrichMessage(msg)
-
-	// Enrich with presigned URLs before broadcasting
-	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
-
-	s.BroadcastToChat(chatID, enriched)
-
-	return enriched, nil
+	return s.SendVoiceToChat(senderID, chatID, fileID)
 }
 
 func (s *ChatService) DeleteMessage(messageID, userID string) error {
@@ -2055,15 +2293,16 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 			s.mu.RUnlock()
 		}
 
-		updatedAt := time.Now()
+		var updatedAt time.Time
 		var latestMsgResp *MessageResponse
 		if lastMsg != nil {
 			updatedAt = lastMsg.Timestamp
 
-			var attachment, attachmentName string
-			if lastMsg.Type == "FILE" || lastMsg.Type == "VOICE" {
-				attachment = "/v1/files/" + lastMsg.Content
-				attachmentName = lastMsg.Content
+			var attachment string
+			if (lastMsg.Type == "FILE" || lastMsg.Type == "VOICE") && lastMsg.Attachment != "" {
+				attachment = "/v1/files/" + lastMsg.Attachment
+			} else if lastMsg.Type == "GIF" {
+				attachment = lastMsg.Attachment
 			}
 
 			latestMsgResp = &MessageResponse{
@@ -2071,7 +2310,7 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 				ChatID:         lastMsg.ChatID,
 				Content:        lastMsg.Content,
 				Attachment:     attachment,
-				AttachmentName: attachmentName,
+				AttachmentName: lastMsg.AttachmentName,
 				SentAt:         lastMsg.Timestamp,
 				Sender: &UserCommonInfoResponse{
 					ID: lastMsg.SenderID,
@@ -2280,11 +2519,14 @@ func (s *ChatService) enrichMessageResponsesWithPresignedURLs(ctx context.Contex
 		return
 	}
 	for _, m := range msgs {
-		// FILE/VOICE: build full URL from Content (raw fileId), skip if already a full URL
-		if (m.Type == "FILE" || m.Type == "VOICE") && m.Content != "" && !strings.HasPrefix(m.Content, "http://") && !strings.HasPrefix(m.Content, "https://") {
-			url := fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Content)
-			m.Attachment = url
-			m.Content = url
+		// FILE/VOICE: build full URL from Attachment, skip if already a full URL
+		if (m.Type == "FILE" || m.Type == "VOICE") && m.Attachment != "" && !strings.HasPrefix(m.Attachment, "http://") && !strings.HasPrefix(m.Attachment, "https://") {
+			rawFileID := strings.TrimPrefix(m.Attachment, "/v1/files/")
+			urlStr := fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, rawFileID)
+			if m.AttachmentName != "" && m.AttachmentName != rawFileID {
+				urlStr = fmt.Sprintf("%s?filename=%s", urlStr, url.QueryEscape(m.AttachmentName))
+			}
+			m.Attachment = urlStr
 		}
 		// GIF: attachment is already set to the external GIF URL (e.g. giphy.com), no processing needed
 		if m.Sender != nil && m.Sender.ProfilePictureUrl != "" && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "http://") && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "https://") {
@@ -2306,10 +2548,13 @@ func (s *ChatService) enrichChatRoomsWithPresignedURLs(ctx context.Context, room
 		}
 		if rooms[i].LatestMessage != nil {
 			m := rooms[i].LatestMessage
-			if (m.Type == "FILE" || m.Type == "VOICE") && m.Content != "" && !strings.HasPrefix(m.Content, "http://") && !strings.HasPrefix(m.Content, "https://") {
-				url := fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Content)
-				m.Attachment = url
-				m.Content = url
+			if (m.Type == "FILE" || m.Type == "VOICE") && m.Attachment != "" && !strings.HasPrefix(m.Attachment, "http://") && !strings.HasPrefix(m.Attachment, "https://") {
+				rawFileID := strings.TrimPrefix(m.Attachment, "/v1/files/")
+				urlStr := fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, rawFileID)
+				if m.AttachmentName != "" && m.AttachmentName != rawFileID {
+					urlStr = fmt.Sprintf("%s?filename=%s", urlStr, url.QueryEscape(m.AttachmentName))
+				}
+				m.Attachment = urlStr
 			}
 		}
 	}

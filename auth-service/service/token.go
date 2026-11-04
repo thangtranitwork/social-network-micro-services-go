@@ -105,6 +105,9 @@ func (m *JWTTokenManager) GenerateToken(userId, email, role string, secret strin
 func (m *JWTTokenManager) ValidateToken(tokenStr string) (*TokenClaims, error) {
 	claims := &TokenClaims{}
 	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
 		return []byte(m.Cfg.JWTSecret), nil
 	})
 	if err != nil || !token.Valid {

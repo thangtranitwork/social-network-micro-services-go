@@ -132,11 +132,19 @@ func StreamLogs(c *gin.Context) {
 	// 2. Continue with the real-time tailing loop for any new writes
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
+	heartbeatTicker := time.NewTicker(15 * time.Second)
+	defer heartbeatTicker.Stop()
 
 	for {
 		select {
 		case <-c.Request.Context().Done():
 			return
+		case <-heartbeatTicker.C:
+			// Send SSE comment as keepalive heartbeat to prevent idle proxy/browser disconnections
+			if _, err := c.Writer.Write([]byte(": keepalive\n\n")); err != nil {
+				return
+			}
+			c.Writer.Flush()
 		case <-ticker.C:
 			for {
 				line, err := reader.ReadString('\n')

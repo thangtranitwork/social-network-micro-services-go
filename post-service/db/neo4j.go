@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"time"
+
 	"social-network-go/post-service/config"
 	"social-network-go/logger"
 
@@ -22,12 +24,24 @@ func InitNeo4j(cfg *config.Config) neo4j.DriverWithContext {
 	}
 
 	// Verify connectivity
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	err = Neo4jDriver.VerifyConnectivity(ctx)
 	if err != nil {
 		logger.Warn("Warning: Neo4j database is unreachable at %s: %v", cfg.Neo4jURI, err)
+		return Neo4jDriver
+	}
+	logger.Info("Successfully connected to Neo4j Graph Database (Post Service)")
+
+	// Warm up Neo4j connection pool and query planner to eliminate cold-start latency
+	warmupCtx, warmupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer warmupCancel()
+	session := Neo4jDriver.NewSession(warmupCtx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(warmupCtx)
+	if _, err := session.Run(warmupCtx, "MATCH (n) RETURN 1 LIMIT 1", nil); err != nil {
+		logger.Warn("Neo4j warmup query failed: %v", err)
 	} else {
-		logger.Info("Successfully connected to Neo4j Graph Database (Post Service)")
+		logger.Info("Neo4j connection and query planner warmed up successfully (Post Service)")
 	}
 
 	return Neo4jDriver

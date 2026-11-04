@@ -2,9 +2,11 @@ package main
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"social-network-go/internal/server"
 	"social-network-go/logger"
 	"social-network-go/notification-service/config"
 	"social-network-go/notification-service/handler"
@@ -66,9 +68,9 @@ func main() {
 	r.PUT("/v1/notifications/read", h.MarkAsRead)
 	r.POST("/v1/notifications/fcm-token", h.SaveFCMToken)
 
-	port := ":" + cfg.HTTPPort
-	logger.Info("🚀 Notification Service listening on port %s", port)
-	if err := r.Run(port); err != nil {
-		logger.Error("Notification Service failed to run: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + cfg.HTTPPort,
+		Handler: r,
 	}
+	server.RunWithGracefulShutdown(srv, 10*time.Second)
 }

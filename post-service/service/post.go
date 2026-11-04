@@ -51,7 +51,7 @@ func (s *PostService) CreatePost(ctx context.Context, authorID, content, privacy
 	}
 
 	if s.KeywordInteractor != nil {
-		_ = s.KeywordInteractor.ExtractPostKeywords(ctx, postID, content, false)
+		_ = s.KeywordInteractor.PublishPostCreated(ctx, postID, authorID, content, privacy, fileIDs)
 	}
 	if s.Notification != nil {
 		_ = s.Notification.SendToFriends(ctx, "POST", authorID, postID, "POST", truncateByWord(content))
@@ -119,7 +119,7 @@ func (s *PostService) SharePost(ctx context.Context, authorID, originalPostID, c
 
 	if s.KeywordInteractor != nil {
 		_ = s.KeywordInteractor.Interact(ctx, originalPostID, authorID, "SHARE_SCORE")
-		_ = s.KeywordInteractor.ExtractPostKeywords(ctx, postID, content, false)
+		_ = s.KeywordInteractor.PublishPostCreated(ctx, postID, authorID, content, privacy, nil)
 	}
 	if s.Notification != nil {
 		_ = s.Notification.Send(ctx, "SHARE", authorID, original.AuthorID, postID, "POST", truncateByWord(content))

@@ -32,8 +32,11 @@ func (h *RecommendationHandler) GetSuggestedFriends(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
 		Success: true,
 		Data:    candidates,
+		Body:    candidates,
+		Message: "OK",
 	})
 }
 
@@ -53,7 +56,10 @@ func (h *RecommendationHandler) GetSuggestedPosts(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.Response{
+		Code:    200,
 		Success: true,
 		Data:    candidates,
+		Body:    candidates,
+		Message: "OK",
 	})
 }

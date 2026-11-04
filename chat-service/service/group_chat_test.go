@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"social-network-go/chat-service/config"
@@ -28,6 +29,12 @@ func TestGroupChat(t *testing.T) {
 
 	if db.Neo4jDriver == nil {
 		t.Skip("Neo4j driver is nil, skipping integration test")
+	}
+
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer checkCancel()
+	if err := db.Neo4jDriver.VerifyConnectivity(checkCtx); err != nil {
+		t.Skipf("Neo4j is unreachable at %s, skipping integration test: %v", cfg.Neo4jURI, err)
 	}
 
 	ctx := context.Background()

@@ -49,29 +49,30 @@ services:
       - mongodb_data:/data/db
     restart: "no"
 
-  # 5. Kafka Event Broker (with Zookeeper)
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
-    container_name: sn-zookeeper
-    environment:
-      - ZOOKEEPER_CLIENT_PORT=2181
-      - ZOOKEEPER_TICK_TIME=2000
-    restart: "no"
-
+  # 5. Kafka Event Broker (KRaft Mode - No ZooKeeper)
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     container_name: sn-kafka-broker
     ports:
-      - "${KAFKA_HOST_PORT:-19092}:9092"
-    depends_on:
-      - zookeeper
+      - "${KAFKA_HOST_PORT:-19092}:${KAFKA_HOST_PORT:-19092}"
     environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:${KAFKA_HOST_PORT:-19092},CONTROLLER://0.0.0.0:29093
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:${KAFKA_HOST_PORT:-19092}
-      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:29093
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
-    restart: "no"
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+      - KAFKA_LOG_DIRS=/var/lib/kafka/data
+      - CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: unless-stopped
 
   # 6. MinIO (Object Storage for Images and Videos)
   minio:
@@ -120,4 +121,5 @@ volumes:
   mongodb_data:
   minio_data:
   elasticsearch_data:
+  kafka_data:
 

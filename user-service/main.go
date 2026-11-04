@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"social-network-go/internal/server"
 	"social-network-go/user-service/config"
 	"social-network-go/user-service/db"
 	usergrpc "social-network-go/user-service/grpc"
@@ -139,8 +140,9 @@ func main() {
 	r.POST("/v1/friend-request/accept/:username", userHandler.AcceptFriendRequest)
 	r.DELETE("/v1/friend-request/delete/:username", userHandler.DeleteFriendRequest)
 
-	logger.Info("User HTTP Server starting on port %s", cfg.HTTPPort)
-	if err := r.Run(":" + cfg.HTTPPort); err != nil {
-		logger.Error("Failed to run HTTP server: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + cfg.HTTPPort,
+		Handler: r,
 	}
+	server.RunWithGracefulShutdown(srv, 10*time.Second)
 }

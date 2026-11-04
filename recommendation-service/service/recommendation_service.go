@@ -23,7 +23,7 @@ func NewRecommendationService(cfg *config.Config) *RecommendationService {
 }
 
 func (s *RecommendationService) GetSuggestedFriends(ctx context.Context, userID string) ([]*model.RecommendedUserCandidate, error) {
-	if s.neo4jDriver == nil {
+	if s.neo4jDriver == nil || userID == "" {
 		return []*model.RecommendedUserCandidate{}, nil
 	}
 
@@ -31,13 +31,19 @@ func (s *RecommendationService) GetSuggestedFriends(ctx context.Context, userID 
 	defer session.Close(ctx)
 
 	resData, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		// 1. Friends-of-friends recommendation (2nd degree)
 		query := `
 			MATCH (u:User {id: $userID})
 			MATCH (u)-[:FRIEND]-(f:User)-[:FRIEND]-(suggested:User)
 			WHERE NOT (u)-[:FRIEND]-(suggested)
 			  AND NOT (u)-[:BLOCK]-(suggested)
 			  AND suggested.id <> $userID
-			RETURN suggested.id AS id, suggested.username AS username, COUNT(f) AS mutualCount
+			RETURN suggested.id AS id, 
+			       suggested.username AS username, 
+			       coalesce(suggested.givenName, '') AS givenName,
+			       coalesce(suggested.familyName, '') AS familyName,
+			       coalesce(suggested.profilePictureUrl, '') AS profilePictureUrl,
+			       COUNT(f) AS mutualCount
 			ORDER BY mutualCount DESC
 			LIMIT 20
 		`
@@ -46,25 +52,111 @@ func (s *RecommendationService) GetSuggestedFriends(ctx context.Context, userID 
 			return nil, err
 		}
 
-		var candidates []*model.RecommendedUserCandidate
+		candidates := make([]*model.RecommendedUserCandidate, 0)
+		seen := make(map[string]bool)
+
 		for res.Next(ctx) {
 			rec := res.Record()
 			idVal, _ := rec.Get("id")
 			userVal, _ := rec.Get("username")
+			givenVal, _ := rec.Get("givenName")
+			familyVal, _ := rec.Get("familyName")
+			picVal, _ := rec.Get("profilePictureUrl")
 			cntVal, _ := rec.Get("mutualCount")
 
-			c := &model.RecommendedUserCandidate{}
+			idStr := ""
 			if idVal != nil {
-				c.UserID = idVal.(string)
+				idStr = idVal.(string)
+			}
+			if idStr == "" || seen[idStr] {
+				continue
+			}
+			seen[idStr] = true
+
+			c := &model.RecommendedUserCandidate{
+				ID:     idStr,
+				UserID: idStr,
 			}
 			if userVal != nil {
 				c.Username = userVal.(string)
+			}
+			if givenVal != nil {
+				c.GivenName = givenVal.(string)
+			}
+			if familyVal != nil {
+				c.FamilyName = familyVal.(string)
+			}
+			if picVal != nil {
+				c.ProfilePictureUrl = picVal.(string)
+				c.Avatar = picVal.(string)
 			}
 			if cntVal != nil {
 				c.MutualFriendsCount = int(cntVal.(int64))
 			}
 			candidates = append(candidates, c)
 		}
+
+		// 2. Fallback: If less than 10 candidates (e.g. new user or disconnected graph), suggest other non-friend users
+		if len(candidates) < 10 {
+			fallbackLimit := 15 - len(candidates)
+			fallbackQuery := `
+				MATCH (suggested:User)
+				WHERE suggested.id <> $userID
+				  AND NOT EXISTS((:User {id: $userID})-[:FRIEND]-(suggested))
+				  AND NOT EXISTS((:User {id: $userID})-[:BLOCK]-(suggested))
+				RETURN suggested.id AS id, 
+				       suggested.username AS username, 
+				       coalesce(suggested.givenName, '') AS givenName,
+				       coalesce(suggested.familyName, '') AS familyName,
+				       coalesce(suggested.profilePictureUrl, '') AS profilePictureUrl,
+				       0 AS mutualCount
+				LIMIT $limit
+			`
+			fres, ferr := tx.Run(ctx, fallbackQuery, map[string]interface{}{
+				"userID": userID,
+				"limit":  fallbackLimit,
+			})
+			if ferr == nil {
+				for fres.Next(ctx) {
+					rec := fres.Record()
+					idVal, _ := rec.Get("id")
+					userVal, _ := rec.Get("username")
+					givenVal, _ := rec.Get("givenName")
+					familyVal, _ := rec.Get("familyName")
+					picVal, _ := rec.Get("profilePictureUrl")
+
+					idStr := ""
+					if idVal != nil {
+						idStr = idVal.(string)
+					}
+					if idStr == "" || seen[idStr] {
+						continue
+					}
+					seen[idStr] = true
+
+					c := &model.RecommendedUserCandidate{
+						ID:                 idStr,
+						UserID:             idStr,
+						MutualFriendsCount: 0,
+					}
+					if userVal != nil {
+						c.Username = userVal.(string)
+					}
+					if givenVal != nil {
+						c.GivenName = givenVal.(string)
+					}
+					if familyVal != nil {
+						c.FamilyName = familyVal.(string)
+					}
+					if picVal != nil {
+						c.ProfilePictureUrl = picVal.(string)
+						c.Avatar = picVal.(string)
+					}
+					candidates = append(candidates, c)
+				}
+			}
+		}
+
 		return candidates, nil
 	})
 

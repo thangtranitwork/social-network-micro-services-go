@@ -72,8 +72,8 @@ func isRetriable(err error) bool {
 
 func (g *GeminiEmbedder) callWithRetry(ctx context.Context, operation string, runReq func() (*http.Response, error)) (*http.Response, error) {
 	baseDelay := 500 * time.Millisecond
-	maxDelay := 4 * time.Second
-	maxRetries := 3
+	maxDelay := 3 * time.Second
+	maxRetries := 2
 
 	var resp *http.Response
 	var err error
