@@ -23,7 +23,7 @@ type MockChatService struct {
 }
 
 func (m *MockChatService) RegisterClient(userID string, conn *websocket.Conn) {}
-func (m *MockChatService) HandleIncomingMessages(userID string) {}
+func (m *MockChatService) HandleIncomingMessages(userID string, conn *websocket.Conn) {}
 func (m *MockChatService) GetChatHistory(userID, partnerID string) []*model.Message {
 	return m.Messages
 }
@@ -129,6 +129,15 @@ func (m *MockChatService) RemoveMemberFromGroup(ctx context.Context, adminID str
 }
 func (m *MockChatService) UpdateGroupChat(ctx context.Context, adminID string, chatID string, name string, avatar string) error {
 	return m.Err
+}
+func (m *MockChatService) SendEncryptedMessageToChat(senderID, chatID, ciphertext string, e2eHeader *model.E2EHeader) (*service.MessageResponse, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if len(m.MessageResps) > 0 {
+		return m.MessageResps[0], nil
+	}
+	return &service.MessageResponse{ID: "e2e-msg-123", IsEncrypted: true}, nil
 }
 func (m *MockChatService) GetChatMembersDetails(chatID string) []*service.ChatUser {
 	return []*service.ChatUser{}

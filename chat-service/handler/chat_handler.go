@@ -21,7 +21,7 @@ import (
 
 type ChatServiceInterface interface {
 	RegisterClient(userID string, conn *websocket.Conn)
-	HandleIncomingMessages(userID string)
+	HandleIncomingMessages(userID string, conn *websocket.Conn)
 	GetChatHistory(userID, partnerID string) []*model.Message
 	GetChatList(userID string) []service.ChatRoom
 	IsMemberOfChat(userID, chatID string) bool
@@ -30,6 +30,7 @@ type ChatServiceInterface interface {
 	SearchChats(userID, searchQuery string) []service.ChatRoom
 	SendMessage(senderID, receiverUsername, text string) (*service.MessageResponse, error)
 	SendMessageToChat(senderID, chatID, text string) (*service.MessageResponse, error)
+	SendEncryptedMessageToChat(senderID, chatID, ciphertext string, e2eHeader *model.E2EHeader) (*service.MessageResponse, error)
 	SendGif(senderID, receiverUsername, gifURL string) (*service.MessageResponse, error)
 	SendGifToChat(senderID, chatID, gifURL string) (*service.MessageResponse, error)
 	SendFile(senderID, receiverUsername, fileID, fileName, text string) (*service.MessageResponse, error)
@@ -129,7 +130,7 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 	}
 
 	h.ChatSvc.RegisterClient(userID, conn)
-	go h.ChatSvc.HandleIncomingMessages(userID)
+	go h.ChatSvc.HandleIncomingMessages(userID, conn)
 }
 
 func (h *ChatHandler) GetChatHistory(c *gin.Context) {
@@ -186,11 +187,11 @@ func (h *ChatHandler) GetChatMessages(c *gin.Context) {
 	skip, _ := strconv.ParseInt(skipStr, 10, 64)
 	limit, _ := strconv.ParseInt(limitStr, 10, 64)
 
-	messages := h.ChatSvc.GetChatMessages(chatID, skip, limit)
-
 	if skip <= limit {
 		h.ChatSvc.MarkMessagesAsRead(chatID, userID)
 	}
+
+	messages := h.ChatSvc.GetChatMessages(chatID, skip, limit)
 
 	sendSuccess(c, messages)
 }
@@ -237,9 +238,11 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 	}
 
 	var req struct {
-		ChatID   string `json:"chatId"`
-		Username string `json:"username"`
-		Text     string `json:"text" binding:"required"`
+		ChatID      string           `json:"chatId"`
+		Username    string           `json:"username"`
+		Text        string           `json:"text" binding:"required"`
+		IsEncrypted bool             `json:"isEncrypted"`
+		E2EHeader   *model.E2EHeader `json:"e2eHeader,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || (req.ChatID == "" && req.Username == "") {
 		exception.SendError(c, exception.InvalidInput)
@@ -248,7 +251,13 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 
 	var resp *service.MessageResponse
 	var err error
-	if req.ChatID != "" {
+	if req.IsEncrypted {
+		if req.ChatID == "" || req.E2EHeader == nil {
+			exception.SendError(c, exception.InvalidInput)
+			return
+		}
+		resp, err = h.ChatSvc.SendEncryptedMessageToChat(userID, req.ChatID, req.Text, req.E2EHeader)
+	} else if req.ChatID != "" {
 		resp, err = h.ChatSvc.SendMessageToChat(userID, req.ChatID, req.Text)
 	} else {
 		resp, err = h.ChatSvc.SendMessage(userID, req.Username, req.Text)

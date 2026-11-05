@@ -160,6 +160,17 @@ func main() {
 	r.PUT("/v1/chat/groups/:chatId", chatHandler.UpdateGroupChat)
 	r.GET("/v1/chat/groups/:chatId/members", chatHandler.GetGroupMembers)
 
+	// E2EE Endpoints
+	r.POST("/v1/chat/e2e/keys/upload", chatHandler.RegisterE2EKeys)
+	r.POST("/v1/chat/e2e/keys/prekeys", chatHandler.AddOneTimePreKeys)
+	r.GET("/v1/chat/e2e/keys/status", chatHandler.GetE2EKeyStatus)
+	r.GET("/v1/chat/e2e/keys/bundle/:targetUserId", chatHandler.GetPreKeyBundle)
+	r.DELETE("/v1/chat/e2e/devices/:deviceId", chatHandler.RevokeDevice)
+	r.PUT("/v1/chat/e2e/backup", chatHandler.SaveKeyBackup)
+	r.GET("/v1/chat/e2e/backup", chatHandler.GetKeyBackup)
+	r.POST("/v1/chat/e2e/groups/:chatId/sender-keys", chatHandler.SaveGroupSenderKeys)
+	r.GET("/v1/chat/e2e/groups/:chatId/sender-keys", chatHandler.GetGroupSenderKeys)
+
 	srv := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
 		Handler: r,

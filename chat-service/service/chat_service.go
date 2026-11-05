@@ -42,9 +42,9 @@ type FileClient interface {
 }
 
 type ChatService struct {
-	// Active connections: userID -> Connection
-	connections    map[string]*websocket.Conn
-	writeMutexes   map[string]*sync.Mutex
+	// Active connections: userID -> map of Connections
+	connections    map[string]map[*websocket.Conn]bool
+	writeMutexes   map[*websocket.Conn]*sync.Mutex
 	activeChats    map[string]string // userID -> chatID
 	mu             sync.RWMutex
 	UserClient     pb.UserServiceClient
@@ -76,8 +76,8 @@ func NewChatService(cfg *config.Config) *ChatService {
 	notifPublisher := fcm.NewNotificationPublisher(cfg.KafkaAddr)
 
 	return &ChatService{
-		connections:    make(map[string]*websocket.Conn),
-		writeMutexes:   make(map[string]*sync.Mutex),
+		connections:    make(map[string]map[*websocket.Conn]bool),
+		writeMutexes:   make(map[*websocket.Conn]*sync.Mutex),
 		activeChats:    make(map[string]string),
 		UserClient:     userClient,
 		FCMClient:      fcmGrpcClient,
@@ -93,28 +93,36 @@ func (s *ChatService) WithIntegrations(fileClient FileClient) *ChatService {
 
 func (s *ChatService) RegisterClient(userID string, conn *websocket.Conn) {
 	s.mu.Lock()
-	s.connections[userID] = conn
-	s.writeMutexes[userID] = &sync.Mutex{}
-	count := len(s.connections)
+	if s.connections[userID] == nil {
+		s.connections[userID] = make(map[*websocket.Conn]bool)
+	}
+	s.connections[userID][conn] = true
+	s.writeMutexes[conn] = &sync.Mutex{}
+	userCount := len(s.connections)
+	connCount := len(s.connections[userID])
 	s.mu.Unlock()
-	logger.Info("User %s connected to WebSocket. Active connections: %d", userID, count)
+	logger.Info("User %s connected to WebSocket. User active conns: %d, total online users: %d", userID, connCount, userCount)
 
 	s.handleRedisOnline(userID)
 }
 
-func (s *ChatService) UnregisterClient(userID string) {
+func (s *ChatService) UnregisterClient(userID string, conn *websocket.Conn) {
 	s.mu.Lock()
-	if conn, ok := s.connections[userID]; ok {
-		conn.Close()
-		delete(s.connections, userID)
-		delete(s.writeMutexes, userID)
-		delete(s.activeChats, userID)
-		count := len(s.connections)
-		s.mu.Unlock()
-		logger.Info("User %s disconnected. Active connections: %d", userID, count)
-
-		s.handleRedisOffline(userID)
-		return
+	if conns, ok := s.connections[userID]; ok {
+		if _, has := conns[conn]; has {
+			conn.Close()
+			delete(conns, conn)
+			delete(s.writeMutexes, conn)
+		}
+		if len(conns) == 0 {
+			delete(s.connections, userID)
+			delete(s.activeChats, userID)
+			userCount := len(s.connections)
+			s.mu.Unlock()
+			logger.Info("User %s completely disconnected from WebSocket. Online users: %d", userID, userCount)
+			s.handleRedisOffline(userID)
+			return
+		}
 	}
 	s.mu.Unlock()
 }
@@ -199,9 +207,11 @@ func (s *ChatService) broadcastOnlineStatus(userID string, online bool) {
 				if memberID == userID {
 					continue
 				}
-				if conn, isOnline := s.connections[memberID]; isOnline {
-					if mu := s.writeMutexes[memberID]; mu != nil {
-						targets = append(targets, targetConn{conn: conn, mu: mu})
+				if conns, isOnline := s.connections[memberID]; isOnline {
+					for c := range conns {
+						if mu := s.writeMutexes[c]; mu != nil {
+							targets = append(targets, targetConn{conn: c, mu: mu})
+						}
 					}
 				}
 			}
@@ -216,16 +226,13 @@ func (s *ChatService) broadcastOnlineStatus(userID string, online bool) {
 	}()
 }
 
-func (s *ChatService) HandleIncomingMessages(userID string) {
-	s.mu.RLock()
-	conn, ok := s.connections[userID]
-	s.mu.RUnlock()
-	if !ok {
+func (s *ChatService) HandleIncomingMessages(userID string, conn *websocket.Conn) {
+	if conn == nil {
 		return
 	}
 
 	defer func() {
-		s.UnregisterClient(userID)
+		s.UnregisterClient(userID, conn)
 	}()
 
 	for {
@@ -322,14 +329,14 @@ func (s *ChatService) HandleIncomingMessages(userID string) {
 			continue
 		}
 
-		if cmd == "SUBSCRIBE" {
+		if cmd == "SUBSCRIBE" || cmd == "READING" {
 			if chatID != "" {
 				s.mu.Lock()
 				s.activeChats[userID] = chatID
 				s.mu.Unlock()
-				logger.Info("User %s subscribed to chat %s", userID, chatID)
+				logger.Info("User %s subscribed/reading chat %s", userID, chatID)
 
-				// Mark messages as read on subscribe!
+				// Mark messages as read
 				s.MarkMessagesAsRead(chatID, userID)
 			}
 			continue
@@ -347,11 +354,23 @@ func (s *ChatService) HandleIncomingMessages(userID string) {
 
 		if cmd == "TYPING" || cmd == "STOP_TYPING" {
 			if chatID != "" {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				displayName := s.getUserDisplayName(ctx, userID)
+				cancel()
 				s.BroadcastToChat(chatID, map[string]interface{}{
 					"command": cmd,
+					"chatId":  chatID,
 					"id":      userID,
+					"name":    displayName,
 				})
 			}
+			continue
+		}
+
+		if cmd == "PING" {
+			s.SendToUser(userID, map[string]interface{}{
+				"command": "PONG",
+			})
 			continue
 		}
 
@@ -363,8 +382,10 @@ func (s *ChatService) HandleIncomingMessages(userID string) {
 
 		// Proceed to parse as regular chat message
 		var req struct {
-			Username string `json:"username"`
-			Text     string `json:"text"`
+			Username    string           `json:"username"`
+			Text        string           `json:"text"`
+			IsEncrypted bool             `json:"isEncrypted"`
+			E2EHeader   *model.E2EHeader `json:"e2eHeader,omitempty"`
 		}
 		_ = json.Unmarshal(messageBytes, &req)
 		effectiveChatID := chatID
@@ -455,16 +476,11 @@ func (s *ChatService) HandleIncomingMessages(userID string) {
 		}
 
 		// Determine status based on active chat subscription and online status
-		status := "SENT"
+		status, readBy := s.computeInitialReadState(effectiveChatID, userID, recipientID, isGroup)
 		if !isGroup {
 			s.mu.RLock()
-			activeChat, inChat := s.activeChats[recipientID]
-			_, online = s.connections[recipientID]
+			online = len(s.connections[recipientID]) > 0
 			s.mu.RUnlock()
-
-			if inChat && activeChat == effectiveChatID {
-				status = "READ"
-			}
 		}
 
 		msg := &model.Message{
@@ -476,6 +492,9 @@ func (s *ChatService) HandleIncomingMessages(userID string) {
 			Timestamp:   time.Now(),
 			Type:        "TEXT",
 			Status:      status,
+			ReadBy:      readBy,
+			IsEncrypted: req.IsEncrypted,
+			E2EHeader:   req.E2EHeader,
 		}
 
 		// Save message
@@ -577,23 +596,27 @@ func (s *ChatService) GetChatHistory(userID, partnerID string) []*model.Message 
 }
 
 type MessageResponse struct {
-	ID             string                  `json:"id"`
-	ChatID         string                  `json:"chatId"`
-	Content        string                  `json:"content"`
-	SentAt         time.Time               `json:"sentAt"`
-	Sender         *UserCommonInfoResponse `json:"sender"`
-	Attachment     string                  `json:"attachment,omitempty"`
-	AttachmentName string                  `json:"attachmentName,omitempty"`
-	Deleted        bool                    `json:"deleted"`
-	Updated        bool                    `json:"updated"`
-	Type           string                  `json:"type"` // TEXT, FILE, GIF, VOICE, CALL
-	CallID         string                  `json:"callId,omitempty"`
-	CallAt         *time.Time              `json:"callAt,omitempty"`
-	AnswerAt       *time.Time              `json:"answerAt,omitempty"`
-	EndAt          *time.Time              `json:"endAt,omitempty"`
-	IsAnswered     *bool                   `json:"isAnswered,omitempty"`
-	IsVideoCall    *bool                   `json:"isVideoCall,omitempty"`
-	IsRead         bool                    `json:"isRead"`
+	ID             string                    `json:"id"`
+	ChatID         string                    `json:"chatId"`
+	Content        string                    `json:"content"`
+	SentAt         time.Time                 `json:"sentAt"`
+	Sender         *UserCommonInfoResponse   `json:"sender"`
+	SenderName     string                    `json:"senderName,omitempty"`
+	Attachment     string                    `json:"attachment,omitempty"`
+	AttachmentName string                    `json:"attachmentName,omitempty"`
+	Deleted        bool                      `json:"deleted"`
+	Updated        bool                      `json:"updated"`
+	Type           string                    `json:"type"` // TEXT, FILE, GIF, VOICE, CALL
+	IsEncrypted    bool                      `json:"isEncrypted"`
+	E2EHeader      *model.E2EHeader          `json:"e2eHeader,omitempty"`
+	CallID         string                    `json:"callId,omitempty"`
+	CallAt         *time.Time                `json:"callAt,omitempty"`
+	AnswerAt       *time.Time                `json:"answerAt,omitempty"`
+	EndAt          *time.Time                `json:"endAt,omitempty"`
+	IsAnswered     *bool                     `json:"isAnswered,omitempty"`
+	IsVideoCall    *bool                     `json:"isVideoCall,omitempty"`
+	IsRead         bool                      `json:"isRead"`
+	ReadBy         []*UserCommonInfoResponse `json:"readBy,omitempty"`
 }
 
 type UserCommonInfoResponse struct {
@@ -782,9 +805,15 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 		// Aggregation for unread counts
 		pipelineUnread := []bson.M{
 			{"$match": bson.M{
-				"chat_id":   bson.M{"$in": chatIDs},
-				"sender_id": bson.M{"$ne": userID},
-				"status":    bson.M{"$ne": "READ"},
+				"chat_id":    bson.M{"$in": chatIDs},
+				"sender_id":  bson.M{"$ne": userID},
+				"type":       bson.M{"$ne": "SYSTEM"},
+				"is_deleted": bson.M{"$ne": true},
+				"read_by":    bson.M{"$ne": userID},
+				"$or": []bson.M{
+					{"recipient_id": ""},
+					{"status": bson.M{"$ne": "READ"}},
+				},
 			}},
 			{"$group": bson.M{
 				"_id":   "$chat_id",
@@ -819,7 +848,7 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 		isOnline := false
 		if !nc.IsGroup && nc.TargetID != "" {
 			s.mu.RLock()
-			_, isOnline = s.connections[nc.TargetID]
+			isOnline = len(s.connections[nc.TargetID]) > 0
 			s.mu.RUnlock()
 		}
 
@@ -846,7 +875,9 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 				},
 				Type:        lastMsg.Type,
 				IsRead:      lastMsg.Status == "READ",
-				Deleted:     lastMsg.Content == "deleted",
+				Deleted:     lastMsg.Content == "deleted" || lastMsg.IsDeleted,
+				IsEncrypted: lastMsg.IsEncrypted,
+				E2EHeader:   lastMsg.E2EHeader,
 				CallID:      lastMsg.CallID,
 				CallAt:      lastMsg.CallAt,
 				AnswerAt:    lastMsg.AnswerAt,
@@ -1043,7 +1074,7 @@ func (s *ChatService) GetChatMembersDetails(chatID string) []*ChatUser {
 
 			isOnline := false
 			s.mu.RLock()
-			_, isOnline = s.connections[id]
+			isOnline = len(s.connections[id]) > 0
 			s.mu.RUnlock()
 
 			members = append(members, &ChatUser{
@@ -1453,6 +1484,46 @@ func (s *ChatService) UpdateGroupChat(ctx context.Context, adminID string, chatI
 	return nil
 }
 
+func (s *ChatService) computeInitialReadState(chatID, senderID, recipientID string, isGroup bool) (string, []string) {
+	status := "SENT"
+	var readBy []string
+	if !isGroup {
+		if recipientID != "" {
+			s.mu.RLock()
+			activeChat, inChat := s.activeChats[recipientID]
+			s.mu.RUnlock()
+			if inChat && activeChat == chatID {
+				status = "READ"
+				readBy = append(readBy, recipientID)
+			}
+		}
+	} else {
+		members := s.GetChatMembers(chatID)
+		s.mu.RLock()
+		for _, mID := range members {
+			if mID != "" && mID != senderID && s.activeChats[mID] == chatID {
+				readBy = append(readBy, mID)
+			}
+		}
+		s.mu.RUnlock()
+		if len(readBy) > 0 {
+			status = "READ"
+		}
+	}
+	return status, readBy
+}
+
+func formatUserDisplayName(u *UserCommonInfoResponse) string {
+	if u == nil {
+		return ""
+	}
+	full := strings.TrimSpace(u.GivenName + " " + u.FamilyName)
+	if full != "" {
+		return full
+	}
+	return u.Username
+}
+
 func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*MessageResponse {
 	if db.MsgCollection == nil {
 		return []*MessageResponse{}
@@ -1479,15 +1550,22 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 		return []*MessageResponse{}
 	}
 
-	senderIDs := make(map[string]bool)
+	userIDs := make(map[string]bool)
 	for _, m := range msgs {
-		senderIDs[m.SenderID] = true
+		if m.SenderID != "" && m.SenderID != "system" {
+			userIDs[m.SenderID] = true
+		}
+		for _, rID := range m.ReadBy {
+			if rID != "" && rID != "system" {
+				userIDs[rID] = true
+			}
+		}
 	}
 
 	userMap := make(map[string]*UserCommonInfoResponse)
-	if s.UserClient != nil && len(senderIDs) > 0 {
+	if s.UserClient != nil && len(userIDs) > 0 {
 		var ids []string
-		for id := range senderIDs {
+		for id := range userIDs {
 			ids = append(ids, id)
 		}
 		resp, err := s.UserClient.GetUsersByIds(ctx, &pb.UsersByIdsRequest{UserIds: ids})
@@ -1515,6 +1593,25 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 			}
 		}
 
+		var readByUsers []*UserCommonInfoResponse
+		seenReader := make(map[string]bool)
+		for _, rID := range m.ReadBy {
+			if rID == "" || rID == m.SenderID || seenReader[rID] {
+				continue
+			}
+			seenReader[rID] = true
+			if rUser, exists := userMap[rID]; exists {
+				// Copy so presigning doesn't mutate shared map entry multiple times
+				uCopy := *rUser
+				readByUsers = append(readByUsers, &uCopy)
+			} else {
+				readByUsers = append(readByUsers, &UserCommonInfoResponse{
+					ID:       rID,
+					Username: rID,
+				})
+			}
+		}
+
 		var attachment string
 		if m.Type == "FILE" || m.Type == "VOICE" || m.Type == "GIF" {
 			attachment = m.Attachment
@@ -1528,9 +1625,13 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 			AttachmentName: m.AttachmentName,
 			SentAt:         m.Timestamp,
 			Sender:         sender,
+			SenderName:     formatUserDisplayName(sender),
 			Type:           m.Type,
-			IsRead:         m.Status == "READ",
-			Deleted:        m.Content == "deleted",
+			IsRead:         m.Status == "READ" || len(readByUsers) > 0,
+			ReadBy:         readByUsers,
+			Deleted:        m.Content == "deleted" || m.IsDeleted,
+			IsEncrypted:    m.IsEncrypted,
+			E2EHeader:      m.E2EHeader,
 			CallID:         m.CallID,
 			CallAt:         m.CallAt,
 			AnswerAt:       m.AnswerAt,
@@ -1546,17 +1647,7 @@ func (s *ChatService) GetChatMessages(chatID string, skip, limit int64) []*Messa
 }
 
 func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
-	if s.IsGroupChat(chatID) {
-		// For Group Chat, we don't update global status to READ since it is shared,
-		// but we still broadcast the READING command to online members for real-time presence.
-		s.BroadcastToChat(chatID, map[string]interface{}{
-			"command": "READING",
-			"id":      userID,
-		})
-		return
-	}
-
-	if db.MsgCollection == nil {
+	if db.MsgCollection == nil || chatID == "" || userID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1565,10 +1656,14 @@ func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
 	filter := bson.M{
 		"chat_id":   chatID,
 		"sender_id": bson.M{"$ne": userID},
-		"status":    bson.M{"$ne": "READ"},
+		"$or": []bson.M{
+			{"read_by": bson.M{"$ne": userID}},
+			{"status": bson.M{"$ne": "READ"}},
+		},
 	}
 	update := bson.M{
-		"$set": bson.M{"status": "READ"},
+		"$addToSet": bson.M{"read_by": userID},
+		"$set":      bson.M{"status": "READ"},
 	}
 
 	_, err := db.MsgCollection.UpdateMany(ctx, filter, update)
@@ -1576,7 +1671,7 @@ func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
 		logger.Err(err).Error("Failed to mark messages as read for chat %s, user %s", chatID, userID)
 	}
 
-	if db.Neo4jDriver != nil {
+	if !s.IsGroupChat(chatID) && db.Neo4jDriver != nil {
 		session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 		defer session.Close(ctx)
 		query := `
@@ -1595,10 +1690,31 @@ func (s *ChatService) MarkMessagesAsRead(chatID, userID string) {
 		}
 	}
 
-	// Broadcast READING command to notify chat members
+	var readerUser *UserCommonInfoResponse
+	if s.UserClient != nil {
+		resp, err := s.UserClient.GetCommonUserInfo(ctx, &pb.UserRequest{UserId: userID})
+		if err == nil && resp != nil {
+			picURL := resp.ProfilePictureId
+			if picURL != "" && !strings.HasPrefix(picURL, "http://") && !strings.HasPrefix(picURL, "https://") {
+				picURL = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, picURL)
+			}
+			readerUser = &UserCommonInfoResponse{
+				ID:                resp.UserId,
+				Username:          resp.Username,
+				GivenName:         resp.GivenName,
+				FamilyName:        resp.FamilyName,
+				ProfilePictureUrl: picURL,
+				Email:             resp.Email,
+			}
+		}
+	}
+
+	// Broadcast READING command to notify chat members with reader's profile info
 	s.BroadcastToChat(chatID, map[string]interface{}{
 		"command": "READING",
 		"id":      userID,
+		"chatId":  chatID,
+		"user":    readerUser,
 	})
 
 	s.InvalidateChatListCache(chatID)
@@ -1609,6 +1725,8 @@ func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
 		ID:       msg.SenderID,
 		Username: msg.SenderID,
 	}
+
+	var readByUsers []*UserCommonInfoResponse
 
 	if s.UserClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1622,6 +1740,25 @@ func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
 				FamilyName:        resp.FamilyName,
 				ProfilePictureUrl: resp.ProfilePictureId,
 				Email:             resp.Email,
+			}
+		}
+
+		if len(msg.ReadBy) > 0 {
+			rResp, rErr := s.UserClient.GetUsersByIds(ctx, &pb.UsersByIdsRequest{UserIds: msg.ReadBy})
+			if rErr == nil && rResp != nil {
+				for _, u := range rResp.Users {
+					if u.UserId == msg.SenderID {
+						continue
+					}
+					readByUsers = append(readByUsers, &UserCommonInfoResponse{
+						ID:                u.UserId,
+						Username:          u.Username,
+						GivenName:         u.GivenName,
+						FamilyName:        u.FamilyName,
+						ProfilePictureUrl: u.ProfilePictureId,
+						Email:             u.Email,
+					})
+				}
 			}
 		}
 	}
@@ -1641,9 +1778,13 @@ func (s *ChatService) EnrichMessage(msg *model.Message) *MessageResponse {
 		AttachmentName: msg.AttachmentName,
 		SentAt:         msg.Timestamp,
 		Sender:         sender,
+		SenderName:     formatUserDisplayName(sender),
 		Type:           msg.Type,
-		IsRead:         msg.Status == "READ",
-		Deleted:        msg.Content == "deleted",
+		IsRead:         msg.Status == "READ" || len(readByUsers) > 0,
+		ReadBy:         readByUsers,
+		Deleted:        msg.Content == "deleted" || msg.IsDeleted,
+		IsEncrypted:    msg.IsEncrypted,
+		E2EHeader:      msg.E2EHeader,
 		CallID:         msg.CallID,
 		CallAt:         msg.CallAt,
 		AnswerAt:       msg.AnswerAt,
@@ -1697,13 +1838,18 @@ func (s *ChatService) BroadcastToChat(chatID string, payload interface{}) {
 	}
 	var targets []targetConn
 	for _, memberID := range members {
-		if conn, online := s.connections[memberID]; online {
-			if mu := s.writeMutexes[memberID]; mu != nil {
-				targets = append(targets, targetConn{conn: conn, mu: mu})
+		if conns, online := s.connections[memberID]; online {
+			for c := range conns {
+				if mu := s.writeMutexes[c]; mu != nil {
+					targets = append(targets, targetConn{conn: c, mu: mu})
+				}
 			}
 		}
 	}
 	s.mu.RUnlock()
+
+	logger.Info("📡 [WS-BE] BroadcastToChat chatID=%s membersCount=%d targetSockets=%d",
+		chatID, len(members), len(targets))
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -1746,14 +1892,7 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 		return nil, fmt.Errorf("failed to create chat: %w", err)
 	}
 
-	s.mu.RLock()
-	activeChat, inChat := s.activeChats[receiverResp.UserId]
-	s.mu.RUnlock()
-
-	status := "SENT"
-	if inChat && activeChat == chatID {
-		status = "READ"
-	}
+	status, readBy := s.computeInitialReadState(chatID, senderID, receiverResp.UserId, false)
 	logger.Info("saving message to DB with content %s", text)
 	msg := &model.Message{
 		ID:          uuid.New().String(),
@@ -1764,6 +1903,7 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 		Timestamp:   time.Now(),
 		Type:        "TEXT",
 		Status:      status,
+		ReadBy:      readBy,
 	}
 
 	s.SaveMessage(msg)
@@ -1806,7 +1946,6 @@ func (s *ChatService) SendMessageToChat(senderID, chatID, text string) (*Message
 
 	isGroup := s.IsGroupChat(chatID)
 	var recipientID string
-	status := "SENT"
 
 	if !isGroup {
 		members := s.GetChatMembers(chatID)
@@ -1824,14 +1963,10 @@ func (s *ChatService) SendMessageToChat(senderID, chatID, text string) (*Message
 			if err == nil && friendship != nil && friendship.HasBlocked {
 				return nil, fmt.Errorf("BLOCKED")
 			}
-			s.mu.RLock()
-			activeChat, inChat := s.activeChats[recipientID]
-			s.mu.RUnlock()
-			if inChat && activeChat == chatID {
-				status = "READ"
-			}
 		}
 	}
+
+	status, readBy := s.computeInitialReadState(chatID, senderID, recipientID, isGroup)
 
 	trimmedText := strings.TrimSpace(text)
 	if trimmedText == "" {
@@ -1847,6 +1982,7 @@ func (s *ChatService) SendMessageToChat(senderID, chatID, text string) (*Message
 		Timestamp:   time.Now(),
 		Type:        "TEXT",
 		Status:      status,
+		ReadBy:      readBy,
 	}
 
 	s.SaveMessage(msg)
@@ -1876,14 +2012,20 @@ func (s *ChatService) SendMessageToChat(senderID, chatID, text string) (*Message
 	return enriched, nil
 }
 
-func (s *ChatService) sendMediaMessageToChat(ctx context.Context, senderID, chatID, content, attachment, attachmentName, msgType string) (*MessageResponse, error) {
+func (s *ChatService) SendEncryptedMessageToChat(senderID, chatID, ciphertext string, e2eHeader *model.E2EHeader) (*MessageResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	if !s.IsMemberOfChat(senderID, chatID) {
 		return nil, fmt.Errorf("unauthorized to send message to this chat")
 	}
 
+	if e2eHeader == nil || e2eHeader.IV == "" || e2eHeader.SenderDeviceID == "" {
+		return nil, fmt.Errorf("invalid e2eHeader: missing required fields")
+	}
+
 	isGroup := s.IsGroupChat(chatID)
 	var recipientID string
-	status := "SENT"
 
 	if !isGroup {
 		members := s.GetChatMembers(chatID)
@@ -1901,14 +2043,86 @@ func (s *ChatService) sendMediaMessageToChat(ctx context.Context, senderID, chat
 			if err == nil && friendship != nil && friendship.HasBlocked {
 				return nil, fmt.Errorf("BLOCKED")
 			}
-			s.mu.RLock()
-			activeChat, inChat := s.activeChats[recipientID]
-			s.mu.RUnlock()
-			if inChat && activeChat == chatID {
-				status = "READ"
+		}
+	}
+
+	status, readBy := s.computeInitialReadState(chatID, senderID, recipientID, isGroup)
+
+	trimmedCiphertext := strings.TrimSpace(ciphertext)
+	if trimmedCiphertext == "" {
+		return nil, fmt.Errorf("message content cannot be empty")
+	}
+
+	msg := &model.Message{
+		ID:          uuid.New().String(),
+		ChatID:      chatID,
+		SenderID:    senderID,
+		RecipientID: recipientID,
+		Content:     trimmedCiphertext,
+		Timestamp:   time.Now(),
+		Type:        "TEXT",
+		Status:      status,
+		ReadBy:      readBy,
+		IsEncrypted: true,
+		E2EHeader:   e2eHeader,
+	}
+
+	s.SaveMessage(msg)
+	enriched := s.EnrichMessage(msg)
+	s.enrichMessageResponsesWithPresignedURLs(ctx, []*MessageResponse{enriched})
+	s.BroadcastToChat(chatID, enriched)
+
+	if !isGroup && recipientID != "" {
+		notifPlaceholder := "🔒 Tin nhắn được mã hóa đầu cuối"
+		if s.NotifPublisher != nil {
+			go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, recipientID, chatID, "CHAT", notifPlaceholder)
+		}
+		if s.FCMClient != nil {
+			go func() {
+				_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
+					ReceiverId: recipientID,
+					Title:      "PocPoc",
+					Body:       notifPlaceholder,
+					Data: map[string]string{
+						"action":   "NEW_MESSAGE",
+						"targetId": chatID,
+					},
+				})
+			}()
+		}
+	}
+
+	return enriched, nil
+}
+
+func (s *ChatService) sendMediaMessageToChat(ctx context.Context, senderID, chatID, content, attachment, attachmentName, msgType string) (*MessageResponse, error) {
+	if !s.IsMemberOfChat(senderID, chatID) {
+		return nil, fmt.Errorf("unauthorized to send message to this chat")
+	}
+
+	isGroup := s.IsGroupChat(chatID)
+	var recipientID string
+
+	if !isGroup {
+		members := s.GetChatMembers(chatID)
+		for _, m := range members {
+			if m != senderID {
+				recipientID = m
+				break
+			}
+		}
+		if recipientID != "" && s.UserClient != nil {
+			friendship, err := s.UserClient.CheckFriendship(ctx, &pb.FriendshipRequest{
+				UserIdA: senderID,
+				UserIdB: recipientID,
+			})
+			if err == nil && friendship != nil && friendship.HasBlocked {
+				return nil, fmt.Errorf("BLOCKED")
 			}
 		}
 	}
+
+	status, readBy := s.computeInitialReadState(chatID, senderID, recipientID, isGroup)
 
 	msg := &model.Message{
 		ID:             uuid.New().String(),
@@ -1921,6 +2135,7 @@ func (s *ChatService) sendMediaMessageToChat(ctx context.Context, senderID, chat
 		Timestamp:      time.Now(),
 		Type:           msgType,
 		Status:         status,
+		ReadBy:         readBy,
 	}
 
 	s.SaveMessage(msg)
@@ -2090,7 +2305,8 @@ func (s *ChatService) DeleteMessage(messageID, userID string) error {
 
 	update := bson.M{
 		"$set": bson.M{
-			"content": "deleted",
+			"content":    "deleted",
+			"is_deleted": true,
 		},
 	}
 	_, err = db.MsgCollection.UpdateOne(ctx, bson.M{"_id": messageID}, update)
@@ -2289,7 +2505,7 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 		isOnline := false
 		if !nc.IsGroup && nc.TargetID != "" {
 			s.mu.RLock()
-			_, isOnline = s.connections[nc.TargetID]
+			isOnline = len(s.connections[nc.TargetID]) > 0
 			s.mu.RUnlock()
 		}
 
@@ -2414,9 +2630,10 @@ func (s *ChatService) GetOrCreateDirectChat(userID, partnerID string) (string, e
 	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
-	// 1. Check if chat already exists
+	// 1. Check if direct chat already exists
 	checkQuery := `
 		MATCH (u1:User {id: $userId})-[:IS_MEMBER_OF]->(chat:Chat)<-[:IS_MEMBER_OF]-(u2:User {id: $partnerId})
+		WHERE (chat.isGroup IS NULL OR chat.isGroup = false)
 		RETURN chat.id
 	`
 	existingChatVal, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
@@ -2532,6 +2749,11 @@ func (s *ChatService) enrichMessageResponsesWithPresignedURLs(ctx context.Contex
 		if m.Sender != nil && m.Sender.ProfilePictureUrl != "" && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "http://") && !strings.HasPrefix(m.Sender.ProfilePictureUrl, "https://") {
 			m.Sender.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.Sender.ProfilePictureUrl)
 		}
+		for _, r := range m.ReadBy {
+			if r != nil && r.ProfilePictureUrl != "" && !strings.HasPrefix(r.ProfilePictureUrl, "http://") && !strings.HasPrefix(r.ProfilePictureUrl, "https://") {
+				r.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, r.ProfilePictureUrl)
+			}
+		}
 	}
 }
 
@@ -2562,13 +2784,22 @@ func (s *ChatService) enrichChatRoomsWithPresignedURLs(ctx context.Context, room
 
 func (s *ChatService) SendToUser(userID string, payload interface{}) {
 	s.mu.RLock()
-	conn, online := s.connections[userID]
-	mu := s.writeMutexes[userID]
-	s.mu.RUnlock()
-
-	if !online || conn == nil || mu == nil {
+	conns, online := s.connections[userID]
+	if !online || len(conns) == 0 {
+		s.mu.RUnlock()
 		return
 	}
+	type targetConn struct {
+		conn *websocket.Conn
+		mu   *sync.Mutex
+	}
+	var targets []targetConn
+	for c := range conns {
+		if mu := s.writeMutexes[c]; mu != nil {
+			targets = append(targets, targetConn{conn: c, mu: mu})
+		}
+	}
+	s.mu.RUnlock()
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -2576,9 +2807,11 @@ func (s *ChatService) SendToUser(userID string, payload interface{}) {
 		return
 	}
 
-	mu.Lock()
-	_ = conn.WriteMessage(websocket.TextMessage, payloadBytes)
-	mu.Unlock()
+	for _, t := range targets {
+		t.mu.Lock()
+		_ = t.conn.WriteMessage(websocket.TextMessage, payloadBytes)
+		t.mu.Unlock()
+	}
 }
 
 func (s *ChatService) IsInCall(ctx context.Context, username string) bool {
