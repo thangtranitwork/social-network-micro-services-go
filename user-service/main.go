@@ -116,6 +116,10 @@ func main() {
 
 	// Profile Management REST APIs
 	r.GET("/v1/users/:username", userHandler.GetUserProfile)
+	r.GET("/v1/users/:username/space", userHandler.GetUserSpace)
+	r.PUT("/v1/users/space", userHandler.UpdateUserSpace)
+	r.POST("/v1/users/:username/space/guestbook", userHandler.AddSpaceGuestbookEntry)
+	r.DELETE("/v1/users/space/guestbook/:entryId", userHandler.DeleteSpaceGuestbookEntry)
 	r.PATCH("/v1/users/update-bio", userHandler.UpdateBio)
 	r.PATCH("/v1/users/update-birthdate", userHandler.UpdateBirthdate)
 	r.PATCH("/v1/users/update-name", userHandler.UpdateName)

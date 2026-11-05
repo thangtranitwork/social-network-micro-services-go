@@ -922,25 +922,28 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 		})
 	}
 
-	// Enrich latest message senders
-	latestMsgSenderIDs := make(map[string]bool)
+	// Enrich latest message senders & 1-1 chat targets from User Service (PostgreSQL source of truth)
+	userIDSet := make(map[string]bool)
 	for _, room := range rooms {
 		if room.LatestMessage != nil && room.LatestMessage.Sender != nil && room.LatestMessage.Sender.ID != "" {
-			latestMsgSenderIDs[room.LatestMessage.Sender.ID] = true
+			userIDSet[room.LatestMessage.Sender.ID] = true
+		}
+		if !room.IsGroup && room.Target != nil && room.Target.ID != "" {
+			userIDSet[room.Target.ID] = true
 		}
 	}
-	if s.UserClient != nil && len(latestMsgSenderIDs) > 0 {
+	if s.UserClient != nil && len(userIDSet) > 0 {
 		var ids []string
-		for id := range latestMsgSenderIDs {
+		for id := range userIDSet {
 			ids = append(ids, id)
 		}
 		grpcCtx, grpcCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer grpcCancel()
 		resp, err := s.UserClient.GetUsersByIds(grpcCtx, &pb.UsersByIdsRequest{UserIds: ids})
 		if err == nil && resp != nil {
-			latestMsgUserMap := make(map[string]*UserCommonInfoResponse)
+			userInfoMap := make(map[string]*UserCommonInfoResponse)
 			for _, u := range resp.Users {
-				latestMsgUserMap[u.UserId] = &UserCommonInfoResponse{
+				userInfoMap[u.UserId] = &UserCommonInfoResponse{
 					ID:                u.UserId,
 					Username:          u.Username,
 					GivenName:         u.GivenName,
@@ -952,8 +955,29 @@ func (s *ChatService) GetChatList(userID string) []ChatRoom {
 			for i := range rooms {
 				if rooms[i].LatestMessage != nil && rooms[i].LatestMessage.Sender != nil {
 					senderID := rooms[i].LatestMessage.Sender.ID
-					if u, exists := latestMsgUserMap[senderID]; exists {
+					if u, exists := userInfoMap[senderID]; exists {
 						rooms[i].LatestMessage.Sender = u
+					}
+				}
+				if !rooms[i].IsGroup && rooms[i].Target != nil {
+					if u, exists := userInfoMap[rooms[i].Target.ID]; exists {
+						if u.Username != "" {
+							rooms[i].Target.Username = u.Username
+						}
+						if u.GivenName != "" {
+							rooms[i].Target.GivenName = u.GivenName
+						}
+						if u.FamilyName != "" {
+							rooms[i].Target.FamilyName = u.FamilyName
+						}
+						if u.ProfilePictureUrl != "" {
+							rooms[i].Target.ProfilePictureUrl = u.ProfilePictureUrl
+							rooms[i].Avatar = u.ProfilePictureUrl
+						}
+						fullName := strings.TrimSpace(rooms[i].Target.GivenName + " " + rooms[i].Target.FamilyName)
+						if fullName != "" {
+							rooms[i].Name = fullName
+						}
 					}
 				}
 			}
@@ -1094,10 +1118,46 @@ func (s *ChatService) GetChatMembersDetails(chatID string) []*ChatUser {
 	}
 
 	members := res.([]*ChatUser)
+	if s.UserClient != nil && len(members) > 0 {
+		memberIDs := make([]string, 0, len(members))
+		for _, m := range members {
+			if m.ID != "" {
+				memberIDs = append(memberIDs, m.ID)
+			}
+		}
+		if len(memberIDs) > 0 {
+			if resp, err := s.UserClient.GetUsersByIds(ctx, &pb.UsersByIdsRequest{UserIds: memberIDs}); err == nil && resp != nil {
+				uMap := make(map[string]*pb.UserCommonInfoResponse, len(resp.Users))
+				for _, u := range resp.Users {
+					uMap[u.UserId] = u
+				}
+				for _, m := range members {
+					if u, ok := uMap[m.ID]; ok {
+						if u.Username != "" {
+							m.Username = u.Username
+						}
+						if u.GivenName != "" {
+							m.GivenName = u.GivenName
+						}
+						if u.FamilyName != "" {
+							m.FamilyName = u.FamilyName
+						}
+						if u.ProfilePictureId != "" {
+							m.ProfilePictureUrl = u.ProfilePictureId
+						}
+					}
+				}
+			}
+		}
+	}
 	for _, m := range members {
-		if m.ProfilePictureUrl != "" && s.FileClient != nil {
-			if presigned, err := s.FileClient.GetPresignedURL(ctx, m.ProfilePictureUrl); err == nil {
-				m.ProfilePictureUrl = presigned
+		if m.ProfilePictureUrl != "" && !strings.HasPrefix(m.ProfilePictureUrl, "http://") && !strings.HasPrefix(m.ProfilePictureUrl, "https://") {
+			if s.FileClient != nil {
+				if presigned, err := s.FileClient.GetPresignedURL(ctx, m.ProfilePictureUrl); err == nil {
+					m.ProfilePictureUrl = presigned
+				}
+			} else if s.cfg != nil && s.cfg.FileServiceURL != "" {
+				m.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, m.ProfilePictureUrl)
 			}
 		}
 	}
@@ -1915,10 +1975,6 @@ func (s *ChatService) SendMessage(senderID, receiverUsername, text string) (*Mes
 
 	s.BroadcastToChat(chatID, enriched)
 
-	if s.NotifPublisher != nil && receiverResp.UserId != "" {
-		go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, receiverResp.UserId, chatID, "CHAT", text)
-	}
-
 	if s.FCMClient != nil && receiverResp.UserId != "" {
 		go func() {
 			_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
@@ -1991,9 +2047,6 @@ func (s *ChatService) SendMessageToChat(senderID, chatID, text string) (*Message
 	s.BroadcastToChat(chatID, enriched)
 
 	if !isGroup && recipientID != "" {
-		if s.NotifPublisher != nil {
-			go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, recipientID, chatID, "CHAT", trimmedText)
-		}
 		if s.FCMClient != nil {
 			go func() {
 				_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
@@ -2074,9 +2127,6 @@ func (s *ChatService) SendEncryptedMessageToChat(senderID, chatID, ciphertext st
 
 	if !isGroup && recipientID != "" {
 		notifPlaceholder := "🔒 Tin nhắn được mã hóa đầu cuối"
-		if s.NotifPublisher != nil {
-			go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, recipientID, chatID, "CHAT", notifPlaceholder)
-		}
 		if s.FCMClient != nil {
 			go func() {
 				_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
@@ -2160,9 +2210,6 @@ func (s *ChatService) sendMediaMessageToChat(ctx context.Context, senderID, chat
 			notifContent = "[GIF]"
 		}
 
-		if s.NotifPublisher != nil {
-			go s.NotifPublisher.Send(context.Background(), "NEW_MESSAGE", senderID, recipientID, chatID, "CHAT", notifContent)
-		}
 		if s.FCMClient != nil {
 			go func() {
 				_, _ = s.FCMClient.SendPushNotification(context.Background(), &pb.SendPushRequest{
@@ -2572,25 +2619,28 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 		})
 	}
 
-	// Enrich latest message senders
-	latestMsgSenderIDs := make(map[string]bool)
+	// Enrich latest message senders & 1-1 chat targets from User Service (PostgreSQL source of truth)
+	userIDSet := make(map[string]bool)
 	for _, room := range rooms {
 		if room.LatestMessage != nil && room.LatestMessage.Sender != nil && room.LatestMessage.Sender.ID != "" {
-			latestMsgSenderIDs[room.LatestMessage.Sender.ID] = true
+			userIDSet[room.LatestMessage.Sender.ID] = true
+		}
+		if !room.IsGroup && room.Target != nil && room.Target.ID != "" {
+			userIDSet[room.Target.ID] = true
 		}
 	}
-	if s.UserClient != nil && len(latestMsgSenderIDs) > 0 {
+	if s.UserClient != nil && len(userIDSet) > 0 {
 		var ids []string
-		for id := range latestMsgSenderIDs {
+		for id := range userIDSet {
 			ids = append(ids, id)
 		}
 		grpcCtx, grpcCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer grpcCancel()
 		resp, err := s.UserClient.GetUsersByIds(grpcCtx, &pb.UsersByIdsRequest{UserIds: ids})
 		if err == nil && resp != nil {
-			latestMsgUserMap := make(map[string]*UserCommonInfoResponse)
+			userInfoMap := make(map[string]*UserCommonInfoResponse)
 			for _, u := range resp.Users {
-				latestMsgUserMap[u.UserId] = &UserCommonInfoResponse{
+				userInfoMap[u.UserId] = &UserCommonInfoResponse{
 					ID:                u.UserId,
 					Username:          u.Username,
 					GivenName:         u.GivenName,
@@ -2602,8 +2652,29 @@ func (s *ChatService) SearchChats(userID, searchQuery string) []ChatRoom {
 			for i := range rooms {
 				if rooms[i].LatestMessage != nil && rooms[i].LatestMessage.Sender != nil {
 					senderID := rooms[i].LatestMessage.Sender.ID
-					if u, exists := latestMsgUserMap[senderID]; exists {
+					if u, exists := userInfoMap[senderID]; exists {
 						rooms[i].LatestMessage.Sender = u
+					}
+				}
+				if !rooms[i].IsGroup && rooms[i].Target != nil {
+					if u, exists := userInfoMap[rooms[i].Target.ID]; exists {
+						if u.Username != "" {
+							rooms[i].Target.Username = u.Username
+						}
+						if u.GivenName != "" {
+							rooms[i].Target.GivenName = u.GivenName
+						}
+						if u.FamilyName != "" {
+							rooms[i].Target.FamilyName = u.FamilyName
+						}
+						if u.ProfilePictureUrl != "" {
+							rooms[i].Target.ProfilePictureUrl = u.ProfilePictureUrl
+							rooms[i].Avatar = u.ProfilePictureUrl
+						}
+						fullName := strings.TrimSpace(rooms[i].Target.GivenName + " " + rooms[i].Target.FamilyName)
+						if fullName != "" {
+							rooms[i].Name = fullName
+						}
 					}
 				}
 			}
@@ -2765,7 +2836,7 @@ func (s *ChatService) enrichChatRoomsWithPresignedURLs(ctx context.Context, room
 		if rooms[i].Target != nil && rooms[i].Target.ProfilePictureUrl != "" && !strings.HasPrefix(rooms[i].Target.ProfilePictureUrl, "http://") && !strings.HasPrefix(rooms[i].Target.ProfilePictureUrl, "https://") {
 			rooms[i].Target.ProfilePictureUrl = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, rooms[i].Target.ProfilePictureUrl)
 		}
-		if rooms[i].IsGroup && rooms[i].Avatar != "" && !strings.HasPrefix(rooms[i].Avatar, "http://") && !strings.HasPrefix(rooms[i].Avatar, "https://") {
+		if rooms[i].Avatar != "" && !strings.HasPrefix(rooms[i].Avatar, "http://") && !strings.HasPrefix(rooms[i].Avatar, "https://") {
 			rooms[i].Avatar = fmt.Sprintf("%s/%s", s.cfg.FileServiceURL, rooms[i].Avatar)
 		}
 		if rooms[i].LatestMessage != nil {

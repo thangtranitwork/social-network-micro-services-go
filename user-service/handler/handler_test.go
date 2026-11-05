@@ -116,6 +116,68 @@ func (m *MockUserRepository) UpdateNotificationPreferences(ctx context.Context, 
 	return m.Err
 }
 
+func (m *MockUserRepository) GetUserSpaceConfig(ctx context.Context, targetUserID string) (*model.UserSpaceConfig, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return &model.UserSpaceConfig{
+		UserID:          targetUserID,
+		IsConfigured:    false,
+		Theme:           "COSMIC_VOID",
+		DefaultViewMode: "SPACE",
+		CustomAccent:    "#6366F1",
+		AllowGuestbook:  true,
+		Nodes: []model.SpatialNode{
+			{
+				ID:         "node_identity_core",
+				Type:       "IDENTITY_CORE",
+				X:          0,
+				Y:          0,
+				Scale:      1.0,
+				Rotation:   0,
+				ZIndex:     10,
+				FrameStyle: "GLASS",
+				Content:    map[string]interface{}{"subtitle": "Hello"},
+			},
+		},
+		GuestbookEntries: []model.SpaceGuestbookEntry{},
+		UpdatedAt:        time.Now(),
+	}, nil
+}
+
+func (m *MockUserRepository) SaveUserSpaceConfig(ctx context.Context, userID string, req model.UpdateSpaceConfigRequest) (*model.UserSpaceConfig, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	allow := true
+	if req.AllowGuestbook != nil {
+		allow = *req.AllowGuestbook
+	}
+	return &model.UserSpaceConfig{
+		UserID:           userID,
+		IsConfigured:     true,
+		Theme:            req.Theme,
+		DefaultViewMode:  req.DefaultViewMode,
+		CustomAccent:     req.CustomAccent,
+		AllowGuestbook:   allow,
+		Nodes:            req.Nodes,
+		GuestbookEntries: []model.SpaceGuestbookEntry{},
+		UpdatedAt:        time.Now(),
+	}, nil
+}
+
+func (m *MockUserRepository) AddSpaceGuestbookEntry(ctx context.Context, entry *model.SpaceGuestbookEntry) (*model.SpaceGuestbookEntry, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	entry.AuthorUsername = "visitor"
+	return entry, nil
+}
+
+func (m *MockUserRepository) DeleteSpaceGuestbookEntry(ctx context.Context, entryID string, actorUserID string) error {
+	return m.Err
+}
+
 func setupTestRouter(repo *MockUserRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -125,6 +187,10 @@ func setupTestRouter(repo *MockUserRepository) *gin.Engine {
 	h := NewUserHandler(svc)
 
 	r.GET("/v1/users/:username", h.GetUserProfile)
+	r.GET("/v1/users/:username/space", h.GetUserSpace)
+	r.PUT("/v1/users/space", h.UpdateUserSpace)
+	r.POST("/v1/users/:username/space/guestbook", h.AddSpaceGuestbookEntry)
+	r.DELETE("/v1/users/space/guestbook/:entryId", h.DeleteSpaceGuestbookEntry)
 	r.PATCH("/v1/users/update-bio", h.UpdateBio)
 	r.PATCH("/v1/users/update-birthdate", h.UpdateBirthdate)
 	r.PATCH("/v1/users/update-name", h.UpdateName)
@@ -408,5 +474,115 @@ func TestDeleteFriendRequest(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
+	}
+}
+
+func TestGetUserSpace(t *testing.T) {
+	mockRepo := &MockUserRepository{}
+	r := setupTestRouter(mockRepo)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/v1/users/testuser/space", nil)
+	req.Header.Set("X-User-ID", "user-1")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUpdateUserSpace_ValidAndInvalid(t *testing.T) {
+	mockRepo := &MockUserRepository{}
+	r := setupTestRouter(mockRepo)
+
+	// 1. Valid payload
+	validPayload := map[string]interface{}{
+		"theme":           "COSMIC_VOID",
+		"defaultViewMode": "SPACE",
+		"customAccent":    "#6366F1",
+		"allowGuestbook":  true,
+		"nodes": []map[string]interface{}{
+			{
+				"id":         "node_identity_core",
+				"type":       "IDENTITY_CORE",
+				"x":          0,
+				"y":          0,
+				"scale":      1.0,
+				"rotation":   0,
+				"zIndex":     10,
+				"frameStyle": "GLASS",
+				"content":    map[string]interface{}{"subtitle": "Curator"},
+			},
+			{
+				"id":         "node_quote_1",
+				"type":       "TEXT_NOTE",
+				"x":          320,
+				"y":          -140,
+				"scale":      1.1,
+				"rotation":   -3,
+				"zIndex":     12,
+				"frameStyle": "SERIF_EDITORIAL",
+				"content":    map[string]interface{}{"text": "Stay curious"},
+			},
+		},
+	}
+	body, _ := json.Marshal(validPayload)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/v1/users/space", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", "user-1")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 for valid space config, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	// 2. Invalid payload (missing IDENTITY_CORE node - strict validation fail-fast)
+	invalidPayload := map[string]interface{}{
+		"theme":           "COSMIC_VOID",
+		"defaultViewMode": "SPACE",
+		"customAccent":    "#6366F1",
+		"allowGuestbook":  true,
+		"nodes":           []map[string]interface{}{},
+	}
+	bodyInvalid, _ := json.Marshal(invalidPayload)
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("PUT", "/v1/users/space", bytes.NewBuffer(bodyInvalid))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("X-User-ID", "user-1")
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400 for missing IDENTITY_CORE, got %d", w2.Code)
+	}
+}
+
+func TestSpaceGuestbookLifecycle(t *testing.T) {
+	mockRepo := &MockUserRepository{}
+	r := setupTestRouter(mockRepo)
+
+	payload := map[string]interface{}{
+		"message":   "Không gian trưng bày tuyệt vời quá!",
+		"cardColor": "AMBER",
+		"posX":      150,
+		"posY":      200,
+	}
+	body, _ := json.Marshal(payload)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/v1/users/testuser/space/guestbook", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", "user-2")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 on guestbook add, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	wDel := httptest.NewRecorder()
+	reqDel, _ := http.NewRequest("DELETE", "/v1/users/space/guestbook/entry-123", nil)
+	reqDel.Header.Set("X-User-ID", "user-1")
+	r.ServeHTTP(wDel, reqDel)
+
+	if wDel.Code != http.StatusOK {
+		t.Errorf("Expected 200 on guestbook delete, got %d", wDel.Code)
 	}
 }

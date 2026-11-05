@@ -67,3 +67,35 @@ type UserBlockEntity struct {
 func (UserBlockEntity) TableName() string {
 	return "user_blocks"
 }
+
+// UserSpaceConfigEntity stores the customized spatial canvas configuration for a user profile
+type UserSpaceConfigEntity struct {
+	UserID          string    `gorm:"primaryKey;type:varchar(64)" json:"userId"`
+	Theme           string    `gorm:"type:varchar(32);not null" json:"theme"`
+	DefaultViewMode string    `gorm:"type:varchar(16);not null" json:"defaultViewMode"`
+	CustomAccent    string    `gorm:"type:varchar(16);not null" json:"customAccent"`
+	AllowGuestbook  bool      `gorm:"not null;default:true" json:"allowGuestbook"`
+	AutoplayNodeID  string    `gorm:"type:varchar(64);default:''" json:"autoplayNodeId"`
+	NodesJSON       string    `gorm:"type:text;not null" json:"nodesJson"`
+	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
+}
+
+func (UserSpaceConfigEntity) TableName() string {
+	return "user_space_configs"
+}
+
+// UserSpaceGuestbookEntity stores visitor notes pinned onto a user's spatial profile
+type UserSpaceGuestbookEntity struct {
+	ID           string    `gorm:"primaryKey;type:varchar(64)" json:"id"`
+	SpaceOwnerID string    `gorm:"type:varchar(64);index:idx_space_owner_created;not null" json:"spaceOwnerId"`
+	AuthorID     string    `gorm:"type:varchar(64);index;not null" json:"authorId"`
+	Message      string    `gorm:"type:varchar(280);not null" json:"message"`
+	CardColor    string    `gorm:"type:varchar(16);not null" json:"cardColor"`
+	PosX         float64   `gorm:"not null" json:"posX"`
+	PosY         float64   `gorm:"not null" json:"posY"`
+	CreatedAt    time.Time `gorm:"autoCreateTime;index:idx_space_owner_created" json:"createdAt"`
+}
+
+func (UserSpaceGuestbookEntity) TableName() string {
+	return "user_space_guestbooks"
+}

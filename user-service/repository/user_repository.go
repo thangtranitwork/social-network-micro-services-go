@@ -2,7 +2,10 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +33,9 @@ var (
 	ErrCannotMakeSelfRequest         = exception.NewAppException(exception.CanNotMakeSelfRequest)
 	ErrSentRequestFailed             = exception.NewAppException(exception.SendFriendRequestFailed)
 	ErrAddFriendRequestReceivedLimit = exception.NewAppException(exception.AddFriendRequestReceivedLimitReached)
+	ErrGuestbookEntryNotFound        = errors.New("guestbook entry not found")
+	ErrGuestbookForbidden            = errors.New("forbidden to delete guestbook entry")
+	ErrGuestbookDisabled             = errors.New("guestbook is disabled for this space")
 )
 
 type UserRepository interface {
@@ -54,22 +60,30 @@ type UserRepository interface {
 	UpdateProfilePicture(ctx context.Context, currentUserID string, fileID string) error
 	RecordProfileView(ctx context.Context, viewerID, targetID string) error
 	UpdateNotificationPreferences(ctx context.Context, currentUserID string, email bool, push bool, digest string) error
+	GetUserSpaceConfig(ctx context.Context, targetUserID string) (*model.UserSpaceConfig, error)
+	SaveUserSpaceConfig(ctx context.Context, userID string, req model.UpdateSpaceConfigRequest) (*model.UserSpaceConfig, error)
+	AddSpaceGuestbookEntry(ctx context.Context, entry *model.SpaceGuestbookEntry) (*model.SpaceGuestbookEntry, error)
+	DeleteSpaceGuestbookEntry(ctx context.Context, entryID string, actorUserID string) error
 }
 
 type Neo4jUserRepository struct {
-	fallbackUsers   map[string]*model.User
-	fallbackFriends map[string][]string
-	fallbackBlocks  map[string][]string
-	fallbackReqs    map[string][]string
-	mu              sync.RWMutex
+	fallbackUsers      map[string]*model.User
+	fallbackFriends    map[string][]string
+	fallbackBlocks     map[string][]string
+	fallbackReqs       map[string][]string
+	fallbackSpaces     map[string]*model.UserSpaceConfig
+	fallbackGuestbooks map[string]*model.SpaceGuestbookEntry
+	mu                 sync.RWMutex
 }
 
 func NewUserRepository() UserRepository {
 	return &Neo4jUserRepository{
-		fallbackUsers:   make(map[string]*model.User),
-		fallbackFriends: make(map[string][]string),
-		fallbackBlocks:  make(map[string][]string),
-		fallbackReqs:    make(map[string][]string),
+		fallbackUsers:      make(map[string]*model.User),
+		fallbackFriends:    make(map[string][]string),
+		fallbackBlocks:     make(map[string][]string),
+		fallbackReqs:       make(map[string][]string),
+		fallbackSpaces:     make(map[string]*model.UserSpaceConfig),
+		fallbackGuestbooks: make(map[string]*model.SpaceGuestbookEntry),
 	}
 }
 
@@ -1254,5 +1268,129 @@ func (r *Neo4jUserRepository) UpdateNotificationPreferences(ctx context.Context,
 		})
 		return err
 	}
+	return nil
+}
+
+func defaultSpaceConfig(userID string) *model.UserSpaceConfig {
+	return &model.UserSpaceConfig{
+		UserID:          userID,
+		IsConfigured:    false,
+		Theme:           "COSMIC_VOID",
+		DefaultViewMode: "SPACE",
+		CustomAccent:    "#6366F1",
+		AllowGuestbook:  true,
+		Nodes: []model.SpatialNode{
+			{
+				ID:         "node_identity_core",
+				Type:       "IDENTITY_CORE",
+				X:          0,
+				Y:          0,
+				Scale:      1.0,
+				Rotation:   0,
+				ZIndex:     10,
+				FrameStyle: "GLASS",
+				Content: map[string]interface{}{
+					"subtitle": "",
+				},
+			},
+		},
+		GuestbookEntries: []model.SpaceGuestbookEntry{},
+		UpdatedAt:        time.Now(),
+	}
+}
+
+func (r *Neo4jUserRepository) GetUserSpaceConfig(ctx context.Context, targetUserID string) (*model.UserSpaceConfig, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var entries []model.SpaceGuestbookEntry
+	for _, g := range r.fallbackGuestbooks {
+		if g.SpaceOwnerID == targetUserID {
+			entries = append(entries, *g)
+		}
+	}
+
+	if cfg, ok := r.fallbackSpaces[targetUserID]; ok {
+		copied := *cfg
+		copied.GuestbookEntries = entries
+		if copied.GuestbookEntries == nil {
+			copied.GuestbookEntries = []model.SpaceGuestbookEntry{}
+		}
+		return &copied, nil
+	}
+
+	def := defaultSpaceConfig(targetUserID)
+	if entries != nil {
+		def.GuestbookEntries = entries
+	}
+	return def, nil
+}
+
+func (r *Neo4jUserRepository) SaveUserSpaceConfig(ctx context.Context, userID string, req model.UpdateSpaceConfigRequest) (*model.UserSpaceConfig, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	allowGuestbook := true
+	if req.AllowGuestbook != nil {
+		allowGuestbook = *req.AllowGuestbook
+	}
+
+	nodesBytes, err := json.Marshal(req.Nodes)
+	if err != nil {
+		return nil, err
+	}
+	var clonedNodes []model.SpatialNode
+	if err := json.Unmarshal(nodesBytes, &clonedNodes); err != nil {
+		return nil, err
+	}
+
+	cfg := &model.UserSpaceConfig{
+		UserID:           userID,
+		IsConfigured:     true,
+		Theme:            req.Theme,
+		DefaultViewMode:  req.DefaultViewMode,
+		CustomAccent:     req.CustomAccent,
+		AllowGuestbook:   allowGuestbook,
+		AutoplayNodeID:   strings.TrimSpace(req.AutoplayNodeID),
+		Nodes:            clonedNodes,
+		GuestbookEntries: []model.SpaceGuestbookEntry{},
+		UpdatedAt:        time.Now(),
+	}
+	r.fallbackSpaces[userID] = cfg
+	return cfg, nil
+}
+
+func (r *Neo4jUserRepository) AddSpaceGuestbookEntry(ctx context.Context, entry *model.SpaceGuestbookEntry) (*model.SpaceGuestbookEntry, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if entry.ID == "" {
+		entry.ID = uuid.New().String()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+	if author, ok := r.fallbackUsers[entry.AuthorID]; ok {
+		entry.AuthorUsername = author.Username
+		entry.AuthorGivenName = author.GivenName
+		entry.AuthorFamilyName = author.FamilyName
+		entry.AuthorAvatarURL = author.ProfilePictureId
+	}
+	r.fallbackGuestbooks[entry.ID] = entry
+	return entry, nil
+}
+
+func (r *Neo4jUserRepository) DeleteSpaceGuestbookEntry(ctx context.Context, entryID string, actorUserID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry, ok := r.fallbackGuestbooks[entryID]
+	if !ok {
+		return ErrGuestbookEntryNotFound
+	}
+	if entry.SpaceOwnerID != actorUserID && entry.AuthorID != actorUserID {
+		return ErrGuestbookForbidden
+	}
+	delete(r.fallbackGuestbooks, entryID)
 	return nil
 }

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type SQLUserRepository struct {
@@ -418,8 +420,8 @@ func (r *SQLUserRepository) UpdateName(ctx context.Context, currentUserID string
 	nTime, _ := time.Parse("2006-01-02", nextDate)
 	return r.db.WithContext(ctx).Model(&model.UserEntity{}).Where("id = ?", currentUserID).
 		Updates(map[string]interface{}{
-			"given_name":             givenName,
-			"family_name":            familyName,
+			"given_name":            givenName,
+			"family_name":           familyName,
 			"next_change_name_date": nTime,
 		}).Error
 }
@@ -428,7 +430,7 @@ func (r *SQLUserRepository) UpdateUsername(ctx context.Context, currentUserID st
 	nTime, _ := time.Parse("2006-01-02", nextDate)
 	return r.db.WithContext(ctx).Model(&model.UserEntity{}).Where("id = ?", currentUserID).
 		Updates(map[string]interface{}{
-			"username":                 username,
+			"username":                  username,
 			"next_change_username_date": nTime,
 		}).Error
 }
@@ -448,6 +450,170 @@ func (r *SQLUserRepository) UpdateNotificationPreferences(ctx context.Context, c
 			"push_notifications":  push,
 			"digest_frequency":    digest,
 		}).Error
+}
+
+func (r *SQLUserRepository) GetUserSpaceConfig(ctx context.Context, targetUserID string) (*model.UserSpaceConfig, error) {
+	var guestbookRows []model.UserSpaceGuestbookEntity
+	err := r.db.WithContext(ctx).
+		Where("space_owner_id = ?", targetUserID).
+		Order("created_at DESC").
+		Limit(model.MaxGuestbookEntries).
+		Find(&guestbookRows).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to load space guestbook entries: %w", err)
+	}
+
+	authorIDs := make([]string, 0, len(guestbookRows))
+	authorSet := make(map[string]bool, len(guestbookRows))
+	for _, row := range guestbookRows {
+		if row.AuthorID != "" && !authorSet[row.AuthorID] {
+			authorSet[row.AuthorID] = true
+			authorIDs = append(authorIDs, row.AuthorID)
+		}
+	}
+
+	authorMap := make(map[string]model.UserEntity, len(authorIDs))
+	if len(authorIDs) > 0 {
+		var authors []model.UserEntity
+		if err := r.db.WithContext(ctx).Where("id IN ?", authorIDs).Find(&authors).Error; err == nil {
+			for _, a := range authors {
+				authorMap[a.ID] = a
+			}
+		}
+	}
+
+	entries := make([]model.SpaceGuestbookEntry, 0, len(guestbookRows))
+	for _, row := range guestbookRows {
+		author := authorMap[row.AuthorID]
+		entries = append(entries, model.SpaceGuestbookEntry{
+			ID:               row.ID,
+			SpaceOwnerID:     row.SpaceOwnerID,
+			AuthorID:         row.AuthorID,
+			AuthorUsername:   author.Username,
+			AuthorGivenName:  author.GivenName,
+			AuthorFamilyName: author.FamilyName,
+			AuthorAvatarURL:  author.ProfilePictureID,
+			Message:          row.Message,
+			CardColor:        row.CardColor,
+			PosX:             row.PosX,
+			PosY:             row.PosY,
+			CreatedAt:        row.CreatedAt,
+		})
+	}
+
+	var entity model.UserSpaceConfigEntity
+	err = r.db.WithContext(ctx).Where("user_id = ?", targetUserID).First(&entity).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		def := defaultSpaceConfig(targetUserID)
+		def.GuestbookEntries = entries
+		return def, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to query space config: %w", err)
+	}
+
+	var nodes []model.SpatialNode
+	if err := json.Unmarshal([]byte(entity.NodesJSON), &nodes); err != nil {
+		return nil, fmt.Errorf("corrupted space nodes json: %w", err)
+	}
+
+	return &model.UserSpaceConfig{
+		UserID:           entity.UserID,
+		IsConfigured:     true,
+		Theme:            entity.Theme,
+		DefaultViewMode:  entity.DefaultViewMode,
+		CustomAccent:     entity.CustomAccent,
+		AllowGuestbook:   entity.AllowGuestbook,
+		AutoplayNodeID:   entity.AutoplayNodeID,
+		Nodes:            nodes,
+		GuestbookEntries: entries,
+		UpdatedAt:        entity.UpdatedAt,
+	}, nil
+}
+
+func (r *SQLUserRepository) SaveUserSpaceConfig(ctx context.Context, userID string, req model.UpdateSpaceConfigRequest) (*model.UserSpaceConfig, error) {
+	nodesBytes, err := json.Marshal(req.Nodes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize space nodes: %w", err)
+	}
+
+	allowGuestbook := true
+	if req.AllowGuestbook != nil {
+		allowGuestbook = *req.AllowGuestbook
+	}
+
+	now := time.Now()
+	entity := model.UserSpaceConfigEntity{
+		UserID:          userID,
+		Theme:           req.Theme,
+		DefaultViewMode: req.DefaultViewMode,
+		CustomAccent:    req.CustomAccent,
+		AllowGuestbook:  allowGuestbook,
+		AutoplayNodeID:  strings.TrimSpace(req.AutoplayNodeID),
+		NodesJSON:       string(nodesBytes),
+		UpdatedAt:       now,
+	}
+
+	err = r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"theme", "default_view_mode", "custom_accent", "allow_guestbook", "autoplay_node_id", "nodes_json", "updated_at"}),
+		}).
+		Create(&entity).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to upsert space config: %w", err)
+	}
+
+	return r.GetUserSpaceConfig(ctx, userID)
+}
+
+func (r *SQLUserRepository) AddSpaceGuestbookEntry(ctx context.Context, entry *model.SpaceGuestbookEntry) (*model.SpaceGuestbookEntry, error) {
+	if entry.ID == "" {
+		entry.ID = uuid.New().String()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+
+	row := model.UserSpaceGuestbookEntity{
+		ID:           entry.ID,
+		SpaceOwnerID: entry.SpaceOwnerID,
+		AuthorID:     entry.AuthorID,
+		Message:      entry.Message,
+		CardColor:    entry.CardColor,
+		PosX:         entry.PosX,
+		PosY:         entry.PosY,
+		CreatedAt:    entry.CreatedAt,
+	}
+
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return nil, fmt.Errorf("failed to create space guestbook entry: %w", err)
+	}
+
+	var author model.UserEntity
+	if err := r.db.WithContext(ctx).Where("id = ?", entry.AuthorID).First(&author).Error; err == nil {
+		entry.AuthorUsername = author.Username
+		entry.AuthorGivenName = author.GivenName
+		entry.AuthorFamilyName = author.FamilyName
+		entry.AuthorAvatarURL = author.ProfilePictureID
+	}
+
+	return entry, nil
+}
+
+func (r *SQLUserRepository) DeleteSpaceGuestbookEntry(ctx context.Context, entryID string, actorUserID string) error {
+	var row model.UserSpaceGuestbookEntity
+	err := r.db.WithContext(ctx).Where("id = ?", entryID).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrGuestbookEntryNotFound
+	} else if err != nil {
+		return err
+	}
+
+	if row.SpaceOwnerID != actorUserID && row.AuthorID != actorUserID {
+		return ErrGuestbookForbidden
+	}
+
+	return r.db.WithContext(ctx).Delete(&model.UserSpaceGuestbookEntity{}, "id = ?", entryID).Error
 }
 
 // Helpers
@@ -495,9 +661,9 @@ func intersectStrings(a, b []string) []string {
 }
 
 // Graph sync helper functions for Neo4j recommendation engine (Async Non-Blocking)
-func (r *SQLUserRepository) syncUserNodeToNeo4j(ctx context.Context, id, username string)   {}
-func (r *SQLUserRepository) addFriendEdgeNeo4j(ctx context.Context, u1, u2 string)         {}
-func (r *SQLUserRepository) removeFriendEdgeNeo4j(ctx context.Context, u1, u2 string)      {}
+func (r *SQLUserRepository) syncUserNodeToNeo4j(ctx context.Context, id, username string) {}
+func (r *SQLUserRepository) addFriendEdgeNeo4j(ctx context.Context, u1, u2 string)        {}
+func (r *SQLUserRepository) removeFriendEdgeNeo4j(ctx context.Context, u1, u2 string)     {}
 func (r *SQLUserRepository) addRequestEdgeNeo4j(ctx context.Context, u1, u2 string)       {}
 func (r *SQLUserRepository) removeRequestEdgeNeo4j(ctx context.Context, u1, u2 string)    {}
 func (r *SQLUserRepository) addBlockEdgeNeo4j(ctx context.Context, u1, u2 string)         {}

@@ -58,6 +58,8 @@ func InitPostgres(cfg *config.Config) *gorm.DB {
 		&model.FriendEntity{},
 		&model.FriendRequestEntity{},
 		&model.UserBlockEntity{},
+		&model.UserSpaceConfigEntity{},
+		&model.UserSpaceGuestbookEntity{},
 	)
 	if err != nil {
 		logger.Warn("Warning: Failed to auto-migrate PostgreSQL schemas in User Service: %v", err)
