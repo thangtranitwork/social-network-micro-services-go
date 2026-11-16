@@ -7,14 +7,15 @@ import (
 )
 
 type Config struct {
-	HTTPPort    string
-	Neo4jURI    string
-	Neo4jUser   string
-	Neo4jPass   string
-	RedisAddr   string
-	RedisPass   string
-	PostgresDSN string
-	KafkaAddr   string
+	HTTPPort     string
+	Neo4jURI     string
+	Neo4jUser    string
+	Neo4jPass    string
+	RedisAddr    string
+	RedisPass    string
+	PostgresDSN  string
+	KafkaAddr    string
+	UserHttpAddr string
 }
 
 func LoadConfig() *Config {
@@ -37,7 +38,8 @@ func LoadConfig() *Config {
 		Neo4jPass:   getEnv("NEO4J_PASS", "password"),
 		RedisAddr:   getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPass:   getEnv("REDIS_PASSWORD", ""),
-		PostgresDSN: getEnv("POSTGRES_DSN", "host=localhost user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable"),
-		KafkaAddr:   getEnv("KAFKA_ADDR", "localhost:9092"),
+		PostgresDSN:  getEnv("POSTGRES_DSN", "host=localhost user=postgres password=postgres dbname=auth_db port=5432 sslmode=disable"),
+		KafkaAddr:    getEnv("KAFKA_ADDR", "localhost:9092"),
+		UserHttpAddr: getEnv("USER_HTTP_ADDR", "http://localhost:10082"),
 	}
 }

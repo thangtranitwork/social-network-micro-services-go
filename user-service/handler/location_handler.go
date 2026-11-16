@@ -98,3 +98,8 @@ func (h *UserHandler) GetDeviceSessions(c *gin.Context) {
 	}
 	sendSuccess(c, sessions)
 }
+
+func (h *UserHandler) GetTelemetryAnalyticsSummary(c *gin.Context) {
+	summary := h.UserSvc.GetTelemetryAnalyticsSummary(c.Request.Context())
+	sendSuccess(c, summary)
+}

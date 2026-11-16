@@ -119,6 +119,7 @@ func (h *AdminHandler) RegisterRoutes(r *gin.Engine) {
 
 	// Runtime Configuration Routes
 	r.GET("/v1/public/client-configs/map", h.GetPublicMapConfig)
+	r.GET("/v1/admin/analytics/telemetry", h.GetTelemetryAnalytics)
 	r.GET("/v1/admin/runtime-configs", h.GetRuntimeConfigs)
 	r.POST("/v1/admin/runtime-configs", h.CreateRuntimeConfig)
 	r.PATCH("/v1/admin/runtime-configs/:key", h.UpdateRuntimeConfig)

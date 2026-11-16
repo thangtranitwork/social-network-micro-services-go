@@ -125,6 +125,7 @@ func main() {
 	r.PUT("/v1/users/me/location", userHandler.UpdateLocation)
 	r.DELETE("/v1/users/me/location", userHandler.ClearLocation)
 	r.GET("/v1/users/me/devices", userHandler.GetDeviceSessions)
+	r.GET("/v1/internal/analytics/telemetry", userHandler.GetTelemetryAnalyticsSummary)
 
 	// Profile Management REST APIs
 	r.GET("/v1/users/:username", userHandler.GetUserProfile)

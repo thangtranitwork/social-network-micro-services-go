@@ -233,6 +233,49 @@ func (s *UserService) GetDeviceSessions(ctx context.Context, userID string) ([]m
 	return sessions, err
 }
 
+type TelemetryBucket struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+}
+
+func (s *UserService) GetTelemetryAnalyticsSummary(ctx context.Context) map[string]interface{} {
+	platforms := []TelemetryBucket{}
+	cities := []TelemetryBucket{}
+	var totalDevices int64
+
+	if db.SQLDB != nil {
+		_ = db.SQLDB.WithContext(ctx).Model(&model.UserDeviceSessionEntity{}).Count(&totalDevices).Error
+		_ = db.SQLDB.WithContext(ctx).
+			Model(&model.UserDeviceSessionEntity{}).
+			Select("COALESCE(NULLIF(platform, ''), 'unknown') AS name, COUNT(*) AS count").
+			Group("name").
+			Order("count DESC").
+			Limit(10).
+			Scan(&platforms).Error
+
+		_ = db.SQLDB.WithContext(ctx).
+			Model(&model.UserLocationSettingsEntity{}).
+			Select("last_city AS name, COUNT(*) AS count").
+			Where("last_city <> ''").
+			Group("last_city").
+			Order("count DESC").
+			Limit(15).
+			Scan(&cities).Error
+	}
+
+	var nearbyActiveCount int64
+	if redis.RedisClient != nil {
+		nearbyActiveCount, _ = redis.RedisClient.ZCard(ctx, NearbyUsersGeoKey).Result()
+	}
+
+	return map[string]interface{}{
+		"totalDeviceSessions": totalDevices,
+		"nearbyActiveUsers":   nearbyActiveCount,
+		"platforms":           platforms,
+		"cities":              cities,
+	}
+}
+
 func (s *UserService) publishTelemetryEvent(ev model.TelemetryEvent) {
 	if s.cfg == nil || s.cfg.KafkaAddr == "" {
 		return
