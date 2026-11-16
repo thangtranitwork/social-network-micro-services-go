@@ -44,6 +44,36 @@ func getCurrentUser(c *gin.Context) string {
 	return userID
 }
 
+func isValidFeedType(t string) bool {
+	switch t {
+	case service.PageTypeRelevant, service.PageTypeTime, service.PageTypeFriendOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+func getNewsfeedPageable(c *gin.Context) (service.Pageable, error) {
+	skipStr := c.DefaultQuery("skip", "0")
+	limitStr := c.DefaultQuery("limit", "20")
+	pageType := c.Query("type")
+	if pageType == "" {
+		pageType = service.PageTypeRelevant
+	} else if !isValidFeedType(pageType) {
+		return service.Pageable{}, fmt.Errorf("invalid feed type: %s", pageType)
+	}
+
+	var skip, limit int
+	fmt.Sscanf(skipStr, "%d", &skip)
+	fmt.Sscanf(limitStr, "%d", &limit)
+
+	return service.Pageable{
+		Skip:  int64(skip),
+		Limit: int64(limit),
+		Type:  pageType,
+	}, nil
+}
+
 func getPageable(c *gin.Context) service.Pageable {
 	skipStr := c.DefaultQuery("skip", "0")
 	limitStr := c.DefaultQuery("limit", "20")

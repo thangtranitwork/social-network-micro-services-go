@@ -153,3 +153,34 @@ func (h *UserHandler) DeleteSpaceGuestbookEntry(c *gin.Context) {
 
 	sendSuccess(c, nil)
 }
+
+func (h *UserHandler) AddSpaceReaction(c *gin.Context) {
+	username := c.Param("username")
+	if username == "" {
+		exception.SendError(c, exception.UsernameRequired)
+		return
+	}
+
+	var req model.AddSpaceReactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Emoji == "" {
+		c.JSON(http.StatusBadRequest, ApiResponse{
+			Code:      http.StatusBadRequest,
+			Message:   "Invalid reaction payload: emoji is required",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+		return
+	}
+
+	reactions, err := h.UserSvc.AddSpaceReaction(c.Request.Context(), username, req.Emoji)
+	if err != nil {
+		logger.WithContext(c.Request.Context()).Err(err).Warn("AddSpaceReaction failed")
+		c.JSON(http.StatusBadRequest, ApiResponse{
+			Code:      http.StatusBadRequest,
+			Message:   err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+		return
+	}
+
+	sendSuccess(c, reactions)
+}

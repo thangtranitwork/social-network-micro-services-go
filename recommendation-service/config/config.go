@@ -7,12 +7,13 @@ import (
 )
 
 type Config struct {
-	Port         string
-	Neo4jURI     string
-	Neo4jUser    string
-	Neo4jPass    string
-	RedisAddr    string
-	KafkaAddr    string
+	Port      string
+	Neo4jURI  string
+	Neo4jUser string
+	Neo4jPass string
+	RedisAddr string
+	RedisPass string
+	KafkaAddr string
 }
 
 func LoadConfig() *Config {
@@ -55,6 +56,7 @@ func LoadConfig() *Config {
 		Neo4jUser: neo4jUser,
 		Neo4jPass: neo4jPass,
 		RedisAddr: redisAddr,
+		RedisPass: os.Getenv("REDIS_PASSWORD"),
 		KafkaAddr: kafkaAddr,
 	}
 }

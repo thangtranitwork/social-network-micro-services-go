@@ -19,8 +19,9 @@ func main() {
 
 	logger.Info("Starting recommendation-service on port %s...", cfg.Port)
 
-	// Initialize Neo4j Graph Database
+	// Initialize Neo4j Graph Database & Redis
 	db.InitNeo4j(cfg)
+	db.InitRedis(cfg)
 
 	// Initialize Service & Handler
 	recService := service.NewRecommendationService(cfg)
@@ -58,6 +59,7 @@ func main() {
 	r.GET("/recommendations/posts", recHandler.GetSuggestedPosts)
 	r.GET("/v1/recommendations/friends", recHandler.GetSuggestedFriends)
 	r.GET("/v1/recommendations/posts", recHandler.GetSuggestedPosts)
+	r.GET("/v1/recommendations/nearby", recHandler.GetNearbyUsers)
 	r.GET("/v1/friends/suggested", recHandler.GetSuggestedFriends)
 
 	serverAddr := fmt.Sprintf(":%s", cfg.Port)

@@ -102,6 +102,26 @@ func (s *UserService) DeleteSpaceGuestbookEntry(ctx context.Context, entryID str
 	return s.UserRepo.DeleteSpaceGuestbookEntry(ctx, entryID, actorUserID)
 }
 
+func (s *UserService) AddSpaceReaction(ctx context.Context, usernameOrID string, emoji string) (map[string]int, error) {
+	validEmojis := map[string]bool{
+		"❤️": true,
+		"🔥": true,
+		"✨": true,
+		"👏": true,
+		"🎉": true,
+	}
+	if !validEmojis[emoji] {
+		return nil, fmt.Errorf("invalid emoji reaction: %s", emoji)
+	}
+
+	targetUser, err := s.UserRepo.GetUserProfile(ctx, usernameOrID, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return s.UserRepo.AddSpaceReaction(ctx, targetUser.ID, emoji)
+}
+
 func (s *UserService) enrichGuestbookAvatars(entries []model.SpaceGuestbookEntry) {
 	if len(entries) == 0 || s.cfg == nil || s.cfg.FileServiceURL == "" {
 		return

@@ -114,6 +114,22 @@ services:
       - elasticsearch
     restart: "no"
 
+  # 8. Cassandra (View History Raw Event Store)
+  cassandra:
+    image: cassandra:4.1
+    container_name: sn-cassandra
+    ports:
+      - "${CASSANDRA_HOST_PORT:-19042}:9042"
+    environment:
+      - CASSANDRA_CLUSTER_NAME=sn_cluster
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - MAX_HEAP_SIZE=512M
+      - HEAP_NEWSIZE=128M
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    restart: "no"
+
 volumes:
   postgres_data:
   neo4j_data:
@@ -122,4 +138,5 @@ volumes:
   minio_data:
   elasticsearch_data:
   kafka_data:
+  cassandra_data:
 

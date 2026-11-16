@@ -333,6 +333,50 @@ func getLimit(c *gin.Context, defaultVal, maxVal int) int {
 	return l
 }
 
+func (h *SearchHandler) RecordCTR(c *gin.Context) {
+	var ev service.SearchCTREvent
+	if err := c.ShouldBindJSON(&ev); err != nil {
+		c.JSON(http.StatusBadRequest, ApiResponse{
+			Code:      400,
+			Message:   "INVALID_CTR_EVENT",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+		return
+	}
+	userID := getCurrentUser(c)
+	if err := h.SearchSvc.RecordSearchCTR(c.Request.Context(), userID, ev); err != nil {
+		c.JSON(http.StatusInternalServerError, ApiResponse{
+			Code:      500,
+			Message:   err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+		return
+	}
+	c.JSON(http.StatusAccepted, ApiResponse{
+		Code:      202,
+		Message:   "ACCEPTED",
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+}
+
+func (h *SearchHandler) GetCTRStats(c *gin.Context) {
+	stats, err := h.SearchSvc.GetSearchCTRStats(c.Request.Context(), c.Query("query"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ApiResponse{
+			Code:      500,
+			Message:   err.Error(),
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, ApiResponse{
+		Code:      200,
+		Message:   "OK",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Body:      stats,
+	})
+}
+
 func getCurrentUser(c *gin.Context) string {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {

@@ -11,6 +11,7 @@ import (
 
 	"social-network-go/internal/moderation"
 	"social-network-go/logger"
+	"social-network-go/post-service/config"
 	"social-network-go/post-service/model"
 	"social-network-go/profiler"
 
@@ -263,6 +264,9 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 	if pageType == "" {
 		pageType = PageTypeRelevant
 	}
+	if pageType != PageTypeRelevant && pageType != PageTypeTime && pageType != PageTypeFriendOnly {
+		return nil, errors.New("invalid page type: " + pageType)
+	}
 
 	limit := s.normalizeLimit(ctx, pageable.Limit)
 	var posts []*model.Post
@@ -279,6 +283,7 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 			"scorer":         "go_rule_based",
 		}).Info("Newsfeed candidates fetched")
 		profiler.TrackExecution("post-service:code newsfeed.rankCandidates", func() {
+			candidates = s.applyEngagementSignalsToCandidates(ctx, currentUserID, candidates)
 			posts = s.postsFromRankedCandidates(ctx, candidates, pageable.Skip, limit, time.Now())
 		})
 	} else {
@@ -307,11 +312,13 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 	})
 
 	if pageType == PageTypeRelevant {
-		postIDs := postIDsForLoaded(validPosts)
-		if _, err := profiler.TrackResult("post-service:query newsfeed.markLoaded", func() (struct{}, error) {
-			return struct{}{}, s.Repo.MarkPostsLoaded(ctx, currentUserID, postIDs)
-		}); err != nil {
-			logger.WithContext(ctx).Err(err).Warn("failed to mark newsfeed posts loaded")
+		if s.newsfeedScoreWeights(ctx).RankingMode != config.RankingModeQualifiedView {
+			postIDs := postIDsForLoaded(validPosts)
+			if _, err := profiler.TrackResult("post-service:query newsfeed.markLoaded", func() (struct{}, error) {
+				return struct{}{}, s.Repo.MarkPostsLoaded(ctx, currentUserID, postIDs)
+			}); err != nil {
+				logger.WithContext(ctx).Err(err).Warn("failed to mark newsfeed posts loaded")
+			}
 		}
 	}
 

@@ -1,9 +1,12 @@
 package repository
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"social-network-go/post-service/config"
 )
 
 func TestSuggestedPostQueriesUseUndirectedFriendRelationships(t *testing.T) {
@@ -135,5 +138,81 @@ func TestNewsfeedCandidateFromRecordMapsPostAndFeatures(t *testing.T) {
 	}
 	if candidate.IsSecondDegreeOrRequested {
 		t.Fatal("expected candidate not to be marked as second-degree/requested")
+	}
+}
+
+func TestNewsfeedCandidateFromRecordMapsLastViewedAt(t *testing.T) {
+	createdAt := time.Date(2026, 7, 5, 10, 0, 0, 0, time.UTC)
+	viewedAt := time.Date(2026, 7, 5, 11, 30, 0, 0, time.UTC)
+	candidate := newsfeedCandidateFromRecord([]interface{}{
+		"post-1", "hello", "PUBLIC", createdAt, nil,
+		"author-1", int64(4), true,
+		[]interface{}{"file-1"}, int64(2), int64(1),
+		nil, nil, true, false,
+		nil, nil, nil, nil, nil,
+		int64(3), int64(2), int64(5), int64(8), true, false,
+		viewedAt,
+	})
+
+	if candidate.LastViewedAt == nil {
+		t.Fatal("expected LastViewedAt to be populated")
+	}
+	if !candidate.LastViewedAt.Equal(viewedAt) {
+		t.Fatalf("expected LastViewedAt %v, got %v", viewedAt, *candidate.LastViewedAt)
+	}
+
+	query := getRelevantNewsfeedCandidateQuery()
+	if !strings.Contains(query, "OPTIONAL MATCH (viewer)-[viewed:VIEWED]->(p)") {
+		t.Fatal("expected query to contain VIEWED relationship match")
+	}
+	if !strings.Contains(query, "viewed.lastViewedAt") {
+		t.Fatal("expected query to return viewed.lastViewedAt")
+	}
+}
+
+func TestGetSuggestedPostsQuerySkipsLoadedWhenConfigured(t *testing.T) {
+	t.Run("FriendOnly mode skips loaded when configured", func(t *testing.T) {
+		queryWithLoaded := getSuggestedPostsQuery(PageTypeFriendOnly, false)
+		if !strings.Contains(queryWithLoaded, "MERGE (viewer)-[l:LOADED]->(p)") {
+			t.Fatal("expected query with loaded to contain MERGE LOADED")
+		}
+
+		queryWithoutLoaded := getSuggestedPostsQuery(PageTypeFriendOnly, true)
+		if strings.Contains(queryWithoutLoaded, "MERGE (viewer)-[l:LOADED]->(p)") {
+			t.Fatal("expected query without loaded NOT to contain MERGE LOADED")
+		}
+	})
+
+	t.Run("Default cypher query skips matching and writing LOADED in qualified view mode", func(t *testing.T) {
+		repoLoaded := &Neo4jPostRepository{RankingMode: config.RankingModeLoaded}
+		queryLoaded := getSuggestedPostsQuery("DEFAULT", repoLoaded.RankingMode == config.RankingModeQualifiedView)
+		if !strings.Contains(queryLoaded, "MATCH (viewer)-[loaded:LOADED]->(p)") {
+			t.Fatal("expected LOADED mode to match loaded:LOADED")
+		}
+		if !strings.Contains(queryLoaded, "MERGE (viewer)-[l:LOADED]->(p)") {
+			t.Fatal("expected LOADED mode to merge loaded:LOADED")
+		}
+
+		repoQualified := &Neo4jPostRepository{RankingMode: config.RankingModeQualifiedView}
+		queryQualified := getSuggestedPostsQuery("DEFAULT", repoQualified.RankingMode == config.RankingModeQualifiedView)
+		if strings.Contains(queryQualified, "MATCH (viewer)-[loaded:LOADED]->(p)") {
+			t.Fatal("expected QUALIFIED_VIEW mode NOT to match loaded:LOADED")
+		}
+		if strings.Contains(queryQualified, "MERGE (viewer)-[l:LOADED]->(p)") {
+			t.Fatal("expected QUALIFIED_VIEW mode NOT to merge loaded:LOADED")
+		}
+		if !strings.Contains(queryQualified, "0 AS loadedScore") {
+			t.Fatal("expected QUALIFIED_VIEW mode to use 0 loadedScore")
+		}
+	})
+}
+
+func TestMarkPostsLoadedNoopInQualifiedViewMode(t *testing.T) {
+	repo := &Neo4jPostRepository{
+		RankingMode: "QUALIFIED_VIEW",
+	}
+	err := repo.MarkPostsLoaded(context.Background(), "user-1", []string{"p1", "p2"})
+	if err != nil {
+		t.Fatalf("expected nil error on noop MarkPostsLoaded, got %v", err)
 	}
 }

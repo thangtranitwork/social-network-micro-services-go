@@ -148,3 +148,113 @@ func TestPostIDsForLoadedSkipsAdsAndDuplicates(t *testing.T) {
 		t.Fatalf("unexpected loaded ids: %v", ids)
 	}
 }
+
+func TestScoreNewsfeedCandidate_QualifiedViewDecay(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	justViewed := now.Add(-1 * time.Minute)
+	halfDecayed := now.Add(-12 * time.Hour)
+	fullyDecayed := now.Add(-25 * time.Hour)
+
+	weights := defaultNewsfeedScoreWeights
+	weights.ViewPenaltyWeight = 40
+	weights.ViewDecayWindow = 24 * time.Hour
+	weights.RankingMode = "QUALIFIED_VIEW"
+
+	basePost := &model.Post{
+		ID:        "post-view-test",
+		CreatedAt: now.Add(-5 * time.Hour),
+	}
+
+	t.Run("just viewed gets full penalty", func(t *testing.T) {
+		candidate := &model.NewsfeedCandidate{
+			Post:         basePost,
+			LastViewedAt: &justViewed,
+		}
+		score := scoreNewsfeedCandidate(candidate, now, weights)
+		if score.ViewPenalty != -39 && score.ViewPenalty != -40 {
+			t.Fatalf("expected viewPenalty around -40, got %d", score.ViewPenalty)
+		}
+	})
+
+	t.Run("12 hours viewed gets half penalty", func(t *testing.T) {
+		candidate := &model.NewsfeedCandidate{
+			Post:         basePost,
+			LastViewedAt: &halfDecayed,
+		}
+		score := scoreNewsfeedCandidate(candidate, now, weights)
+		if score.ViewPenalty != -20 {
+			t.Fatalf("expected viewPenalty -20, got %d", score.ViewPenalty)
+		}
+	})
+
+	t.Run("25 hours viewed gets zero penalty", func(t *testing.T) {
+		candidate := &model.NewsfeedCandidate{
+			Post:         basePost,
+			LastViewedAt: &fullyDecayed,
+		}
+		score := scoreNewsfeedCandidate(candidate, now, weights)
+		if score.ViewPenalty != 0 {
+			t.Fatalf("expected viewPenalty 0, got %d", score.ViewPenalty)
+		}
+	})
+
+	t.Run("never viewed gets zero penalty", func(t *testing.T) {
+		candidate := &model.NewsfeedCandidate{
+			Post:         basePost,
+			LastViewedAt: nil,
+		}
+		score := scoreNewsfeedCandidate(candidate, now, weights)
+		if score.ViewPenalty != 0 {
+			t.Fatalf("expected viewPenalty 0, got %d", score.ViewPenalty)
+		}
+	})
+}
+
+func TestScoreNewsfeedCandidate_Modes(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	viewedTime := now.Add(-12 * time.Hour) // -20 penalty with weight 40
+	candidate := &model.NewsfeedCandidate{
+		Post: &model.Post{
+			ID:        "post-1",
+			CreatedAt: now.Add(-2 * time.Hour), // 220 recency
+		},
+		LoadedTimes:  3, // -60 loaded penalty
+		LastViewedAt: &viewedTime,
+	}
+
+	t.Run("LOADED mode uses loaded penalty", func(t *testing.T) {
+		weights := defaultNewsfeedScoreWeights
+		weights.RankingMode = "LOADED"
+		score := scoreNewsfeedCandidate(candidate, now, weights)
+		if score.Loaded != -60 {
+			t.Fatalf("expected loaded -60, got %d", score.Loaded)
+		}
+		if score.ViewPenalty != -20 {
+			t.Fatalf("expected viewPenalty -20, got %d", score.ViewPenalty)
+		}
+		if score.Total != 220-60 { // recency + loaded
+			t.Fatalf("expected total %d, got %d", 220-60, score.Total)
+		}
+	})
+
+	t.Run("SHADOW mode ranks by loaded but reports viewPenalty", func(t *testing.T) {
+		weights := defaultNewsfeedScoreWeights
+		weights.RankingMode = "SHADOW"
+		score := scoreNewsfeedCandidate(candidate, now, weights)
+		if score.Total != 220-60 {
+			t.Fatalf("expected total %d in SHADOW mode, got %d", 220-60, score.Total)
+		}
+		if score.ViewPenalty != -20 {
+			t.Fatalf("expected viewPenalty -20 in breakdown, got %d", score.ViewPenalty)
+		}
+	})
+
+	t.Run("QUALIFIED_VIEW mode ranks by viewPenalty ignoring loaded", func(t *testing.T) {
+		weights := defaultNewsfeedScoreWeights
+		weights.RankingMode = "QUALIFIED_VIEW"
+		score := scoreNewsfeedCandidate(candidate, now, weights)
+		if score.Total != 220-20 {
+			t.Fatalf("expected total %d in QUALIFIED_VIEW mode, got %d", 220-20, score.Total)
+		}
+	})
+}

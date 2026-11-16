@@ -54,7 +54,13 @@ type UserSpaceConfig struct {
 	AutoplayNodeID   string                `json:"autoplayNodeId"`
 	Nodes            []SpatialNode         `json:"nodes"`
 	GuestbookEntries []SpaceGuestbookEntry `json:"guestbookEntries"`
+	Reactions        map[string]int        `json:"reactions"`
 	UpdatedAt        time.Time             `json:"updatedAt"`
+}
+
+// AddSpaceReactionRequest is the payload for adding an emoji reaction to a user's space
+type AddSpaceReactionRequest struct {
+	Emoji string `json:"emoji" binding:"required"`
 }
 
 // UpdateSpaceConfigRequest is the strict DTO for updating the spatial profile layout

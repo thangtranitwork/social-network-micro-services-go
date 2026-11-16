@@ -60,6 +60,7 @@ func InitPostgres(cfg *config.Config) *gorm.DB {
 		&model.PostLikeEntity{},
 		&model.CommentLikeEntity{},
 		&model.PostShareEntity{},
+		&model.PostNegativeSignalEntity{},
 	)
 	if err != nil {
 		logger.Warn("Warning: Failed to auto-migrate PostgreSQL schemas in Post Service: %v", err)

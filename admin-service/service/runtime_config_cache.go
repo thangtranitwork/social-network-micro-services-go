@@ -168,3 +168,68 @@ func publishRuntimeConfigEvent(ctx context.Context, channel string, payload map[
 	}
 	_ = db.RedisClient.Publish(ctx, channel, encoded).Err()
 }
+
+// GetPublicMapConfig returns non-sensitive client map and location configuration,
+// reading from Redis cache first and falling back to PostgreSQL or defaults.
+func (s *AdminService) GetPublicMapConfig(ctx context.Context) map[string]interface{} {
+	values := map[string]string{
+		"map.provider":                     "carto",
+		"map.style":                        "auto",
+		"map.google_tiles_url":             "https://mt{s}.google.com/vt/lyrs=r&x={x}&y={y}&z={z}&hl=vi",
+		"map.google_api_key":               "",
+		"map.default_center":               `{"lat":10.7769,"lng":106.7009,"zoom":13}`,
+		"location.nearby_enabled":          "true",
+		"location.nearby_max_radius_km":    "10",
+		"location.gps_min_interval_seconds": "30",
+	}
+
+	loadedFromRedis := false
+	if db.RedisClient != nil {
+		if rawMap, err := db.RedisClient.HGetAll(ctx, runtimeConfigScopeKey("client")).Result(); err == nil && len(rawMap) > 0 {
+			for k, raw := range rawMap {
+				var env runtimeConfigCacheEnvelope
+				if jsonErr := json.Unmarshal([]byte(raw), &env); jsonErr == nil {
+					values[k] = env.Value
+					loadedFromRedis = true
+				}
+			}
+		}
+	}
+
+	if !loadedFromRedis && s.runtimeConfigRepo != nil {
+		if items, err := s.runtimeConfigRepo.List(ctx, repository.RuntimeConfigListFilter{Scope: "client"}); err == nil {
+			for _, item := range items {
+				values[item.Key] = item.Value
+			}
+		}
+	}
+
+	var defaultCenter map[string]interface{}
+	if err := json.Unmarshal([]byte(values["map.default_center"]), &defaultCenter); err != nil {
+		defaultCenter = map[string]interface{}{"lat": 10.7769, "lng": 106.7009, "zoom": 13}
+	}
+
+	nearbyEnabled := values["location.nearby_enabled"] == "true"
+	maxRadiusKm := 10
+	if _, err := fmt.Sscanf(values["location.nearby_max_radius_km"], "%d", &maxRadiusKm); err != nil || maxRadiusKm <= 0 {
+		maxRadiusKm = 10
+	}
+	minIntervalSec := 30
+	if _, err := fmt.Sscanf(values["location.gps_min_interval_seconds"], "%d", &minIntervalSec); err != nil || minIntervalSec <= 0 {
+		minIntervalSec = 30
+	}
+
+	res := map[string]interface{}{
+		"provider":              values["map.provider"],
+		"style":                 values["map.style"],
+		"googleTilesUrl":        values["map.google_tiles_url"],
+		"defaultCenter":         defaultCenter,
+		"nearbyEnabled":         nearbyEnabled,
+		"nearbyMaxRadiusKm":     maxRadiusKm,
+		"gpsMinIntervalSeconds": minIntervalSec,
+	}
+	if values["map.provider"] == "google_sdk" && values["map.google_api_key"] != "" {
+		res["googleApiKey"] = values["map.google_api_key"]
+	}
+	return res
+}

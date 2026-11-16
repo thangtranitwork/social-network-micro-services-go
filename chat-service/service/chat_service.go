@@ -46,6 +46,8 @@ type ChatService struct {
 	connections    map[string]map[*websocket.Conn]bool
 	writeMutexes   map[*websocket.Conn]*sync.Mutex
 	activeChats    map[string]string // userID -> chatID
+	spatialRooms   map[string]map[string]bool // spaceKey -> map[userID]bool
+	userSpaceRooms map[string]string          // userID -> spaceKey
 	mu             sync.RWMutex
 	UserClient     pb.UserServiceClient
 	FCMClient      pb.FCMGrpcServiceClient
@@ -79,6 +81,8 @@ func NewChatService(cfg *config.Config) *ChatService {
 		connections:    make(map[string]map[*websocket.Conn]bool),
 		writeMutexes:   make(map[*websocket.Conn]*sync.Mutex),
 		activeChats:    make(map[string]string),
+		spatialRooms:   make(map[string]map[string]bool),
+		userSpaceRooms: make(map[string]string),
 		UserClient:     userClient,
 		FCMClient:      fcmGrpcClient,
 		NotifPublisher: notifPublisher,
@@ -117,8 +121,27 @@ func (s *ChatService) UnregisterClient(userID string, conn *websocket.Conn) {
 		if len(conns) == 0 {
 			delete(s.connections, userID)
 			delete(s.activeChats, userID)
+			oldSpace, inSpace := s.userSpaceRooms[userID]
+			if inSpace {
+				delete(s.userSpaceRooms, userID)
+				if room, ok := s.spatialRooms[oldSpace]; ok {
+					delete(room, userID)
+					if len(room) == 0 {
+						delete(s.spatialRooms, oldSpace)
+					}
+				}
+			}
 			userCount := len(s.connections)
 			s.mu.Unlock()
+
+			if inSpace && oldSpace != "" {
+				s.broadcastToSpace(oldSpace, map[string]interface{}{
+					"command":  "SPATIAL_LEAVE",
+					"spaceKey": oldSpace,
+					"userId":   userID,
+				}, userID)
+			}
+
 			logger.Info("User %s completely disconnected from WebSocket. Online users: %d", userID, userCount)
 			s.handleRedisOffline(userID)
 			return
@@ -371,6 +394,88 @@ func (s *ChatService) HandleIncomingMessages(userID string, conn *websocket.Conn
 			s.SendToUser(userID, map[string]interface{}{
 				"command": "PONG",
 			})
+			continue
+		}
+
+		if cmd == "SPATIAL_JOIN" {
+			spaceKey, _ := raw["spaceKey"].(string)
+			if spaceKey != "" {
+				s.mu.Lock()
+				var oldSpaceToNotify string
+				if oldSpace, hasOld := s.userSpaceRooms[userID]; hasOld && oldSpace != spaceKey {
+					oldSpaceToNotify = oldSpace
+					if oldRoom, ok := s.spatialRooms[oldSpace]; ok {
+						delete(oldRoom, userID)
+						if len(oldRoom) == 0 {
+							delete(s.spatialRooms, oldSpace)
+						}
+					}
+				}
+				s.userSpaceRooms[userID] = spaceKey
+				if s.spatialRooms[spaceKey] == nil {
+					s.spatialRooms[spaceKey] = make(map[string]bool)
+				}
+				s.spatialRooms[spaceKey][userID] = true
+				s.mu.Unlock()
+
+				if oldSpaceToNotify != "" {
+					s.broadcastToSpace(oldSpaceToNotify, map[string]interface{}{
+						"command":  "SPATIAL_LEAVE",
+						"spaceKey": oldSpaceToNotify,
+						"userId":   userID,
+					}, userID)
+				}
+
+				raw["userId"] = userID
+				s.broadcastToSpace(spaceKey, raw, userID)
+
+				if db.RedisClient != nil {
+					counts, err := db.RedisClient.HGetAll(context.Background(), "space:reactions:"+spaceKey).Result()
+					if err == nil && len(counts) > 0 {
+						s.SendToUser(userID, map[string]interface{}{
+							"command":   "SPATIAL_SYNC_REACTIONS",
+							"spaceKey":  spaceKey,
+							"reactions": counts,
+						})
+					}
+				}
+			}
+			continue
+		}
+
+		if cmd == "SPATIAL_CURSOR" || cmd == "SPATIAL_REACTION" {
+			spaceKey, _ := raw["spaceKey"].(string)
+			if spaceKey != "" {
+				raw["userId"] = userID
+				if cmd == "SPATIAL_REACTION" {
+					if emoji, ok := raw["emoji"].(string); ok && emoji != "" && db.RedisClient != nil {
+						_ = db.RedisClient.HIncrBy(context.Background(), "space:reactions:"+spaceKey, emoji, 1).Err()
+					}
+				}
+				s.broadcastToSpace(spaceKey, raw, userID)
+			}
+			continue
+		}
+
+		if cmd == "SPATIAL_LEAVE" {
+			spaceKey, _ := raw["spaceKey"].(string)
+			if spaceKey != "" {
+				s.mu.Lock()
+				delete(s.userSpaceRooms, userID)
+				if room, ok := s.spatialRooms[spaceKey]; ok {
+					delete(room, userID)
+					if len(room) == 0 {
+						delete(s.spatialRooms, spaceKey)
+					}
+				}
+				s.mu.Unlock()
+
+				s.broadcastToSpace(spaceKey, map[string]interface{}{
+					"command":  "SPATIAL_LEAVE",
+					"spaceKey": spaceKey,
+					"userId":   userID,
+				}, userID)
+			}
 			continue
 		}
 
@@ -3179,4 +3284,51 @@ func (s *ChatService) EndCallByMemberUsername(ctx context.Context, username stri
 		return nil
 	}
 	return s.EndCall(ctx, callID)
+}
+
+func (s *ChatService) broadcastToSpace(spaceKey string, payload interface{}, excludeUserID string) {
+	s.mu.RLock()
+	room, exists := s.spatialRooms[spaceKey]
+	if !exists || len(room) == 0 {
+		s.mu.RUnlock()
+		return
+	}
+
+	type targetConn struct {
+		conn *websocket.Conn
+		mu   *sync.Mutex
+	}
+	var targets []targetConn
+
+	for uID := range room {
+		if uID == excludeUserID {
+			continue
+		}
+		conns, online := s.connections[uID]
+		if !online {
+			continue
+		}
+		for c := range conns {
+			if mu := s.writeMutexes[c]; mu != nil {
+				targets = append(targets, targetConn{conn: c, mu: mu})
+			}
+		}
+	}
+	s.mu.RUnlock()
+
+	if len(targets) == 0 {
+		return
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		logger.Err(err).Error("Failed to marshal spatial payload")
+		return
+	}
+
+	for _, t := range targets {
+		t.mu.Lock()
+		_ = t.conn.WriteMessage(websocket.TextMessage, payloadBytes)
+		t.mu.Unlock()
+	}
 }

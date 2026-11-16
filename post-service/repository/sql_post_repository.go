@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"social-network-go/logger"
+	"social-network-go/post-service/config"
 	"social-network-go/post-service/model"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -16,6 +17,11 @@ import (
 type SQLPostRepository struct {
 	db          *gorm.DB
 	neo4jDriver neo4j.DriverWithContext
+	RankingMode string
+}
+
+func (r *SQLPostRepository) SetRankingMode(mode string) {
+	r.RankingMode = mode
 }
 
 func NewSQLPostRepository(db *gorm.DB, neo4jDriver neo4j.DriverWithContext) PostRepository {
@@ -263,6 +269,9 @@ func (r *SQLPostRepository) GetRelevantNewsfeedCandidates(ctx context.Context, c
 }
 
 func (r *SQLPostRepository) MarkPostsLoaded(ctx context.Context, currentUserID string, postIDs []string) error {
+	if r.RankingMode == config.RankingModeQualifiedView {
+		return nil
+	}
 	if r.neo4jDriver == nil {
 		return errors.New("neo4j driver is not initialized or unavailable")
 	}
@@ -288,6 +297,109 @@ func (r *SQLPostRepository) MarkPostsLoaded(ctx context.Context, currentUserID s
 		})
 	})
 	return err
+}
+
+func (r *SQLPostRepository) RecordPostsViewed(ctx context.Context, items []ViewRecordItem) ([]ViewRecordResult, error) {
+	if r.neo4jDriver == nil {
+		return nil, errors.New("neo4j driver is not initialized or unavailable")
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	params := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		params = append(params, map[string]interface{}{
+			"userId":     item.UserID,
+			"postId":     item.PostID,
+			"observedAt": item.ObservedAt.Format(time.RFC3339),
+		})
+	}
+
+	query := `
+		UNWIND $batch AS item
+		OPTIONAL MATCH (u:User {id: item.userId})
+		OPTIONAL MATCH (p:Post {id: item.postId})
+		WITH item, u, p,
+		     CASE
+		       WHEN u IS NULL THEN 'MISSING_USER'
+		       WHEN p IS NULL THEN 'MISSING_POST'
+		       WHEN p.deletedAt IS NOT NULL THEN 'POST_DELETED'
+		       ELSE 'SUCCESS'
+		     END AS status
+		FOREACH (_ IN CASE WHEN status = 'SUCCESS' THEN [1] ELSE [] END |
+		    MERGE (u)-[r:VIEWED]->(p)
+		    ON CREATE SET r.lastViewedAt = datetime(item.observedAt)
+		    ON MATCH SET r.lastViewedAt = CASE
+		        WHEN datetime(item.observedAt) > r.lastViewedAt THEN datetime(item.observedAt)
+		        ELSE r.lastViewedAt
+		    END
+		)
+		RETURN item.userId AS userId, item.postId AS postId, status
+	`
+
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{
+			"batch": params,
+		})
+		if err != nil {
+			return nil, err
+		}
+		var results []ViewRecordResult
+		for result.Next(ctx) {
+			rec := result.Record()
+			results = append(results, ViewRecordResult{
+				UserID: getStringVal(rec.Values[0]),
+				PostID: getStringVal(rec.Values[1]),
+				Status: ViewItemStatus(getStringVal(rec.Values[2])),
+			})
+		}
+		return results, result.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.([]ViewRecordResult), nil
+}
+
+func (r *SQLPostRepository) CleanupExpiredViews(ctx context.Context, cutoff time.Time, batchSize int) (int, error) {
+	if r.neo4jDriver == nil {
+		return 0, errors.New("neo4j driver is not initialized or unavailable")
+	}
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	session := r.neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	query := `
+		MATCH ()-[r:VIEWED]->()
+		WHERE r.lastViewedAt < datetime($cutoff)
+		WITH r LIMIT $batchSize
+		WHERE r.lastViewedAt < datetime($cutoff)
+		DELETE r
+		RETURN count(r)
+	`
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{
+			"cutoff":    cutoff.Format(time.RFC3339),
+			"batchSize": batchSize,
+		})
+		if err != nil {
+			return 0, err
+		}
+		if result.Next(ctx) {
+			return int(result.Record().Values[0].(int64)), nil
+		}
+		return 0, result.Err()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return res.(int), nil
 }
 
 func (r *SQLPostRepository) UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error {
@@ -538,7 +650,8 @@ func (r *SQLPostRepository) GetCommentByID(ctx context.Context, commentID string
 func (r *SQLPostRepository) GetFilesInPostsOfUser(ctx context.Context, username string, skip, limit int64) ([]string, error) {
 	var media []model.PostMediaEntity
 	r.db.WithContext(ctx).Joins("JOIN posts ON posts.id = post_media.post_id").
-		Where("posts.user_id = ?", username).
+		Where("(posts.user_id = ? OR posts.user_id IN (SELECT id FROM users WHERE username = ?)) AND posts.deleted_at IS NULL", username, username).
+		Order("posts.created_at DESC").
 		Offset(int(skip)).Limit(int(limit)).Find(&media)
 
 	res := make([]string, len(media))

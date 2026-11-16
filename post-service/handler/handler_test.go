@@ -12,6 +12,7 @@ import (
 
 	"social-network-go/post-service/config"
 	"social-network-go/post-service/model"
+	"social-network-go/post-service/repository"
 	"social-network-go/post-service/service"
 
 	"github.com/gin-gonic/gin"
@@ -71,6 +72,24 @@ func (m *MockPostRepository) GetRelevantNewsfeedCandidates(ctx context.Context, 
 func (m *MockPostRepository) MarkPostsLoaded(ctx context.Context, currentUserID string, postIDs []string) error {
 	return m.Err
 }
+
+func (m *MockPostRepository) RecordPostsViewed(ctx context.Context, items []repository.ViewRecordItem) ([]repository.ViewRecordResult, error) {
+	var results []repository.ViewRecordResult
+	for _, item := range items {
+		results = append(results, repository.ViewRecordResult{
+			UserID: item.UserID,
+			PostID: item.PostID,
+			Status: repository.ViewStatusSuccess,
+		})
+	}
+	return results, m.Err
+}
+
+func (m *MockPostRepository) CleanupExpiredViews(ctx context.Context, cutoff time.Time, batchSize int) (int, error) {
+	return 0, m.Err
+}
+
+func (m *MockPostRepository) SetRankingMode(mode string) {}
 
 func (m *MockPostRepository) UpdatePrivacy(ctx context.Context, currentUserID, postID, privacy string) error {
 	return m.Err
@@ -166,6 +185,7 @@ func setupTestRouter(repo *MockPostRepository) *gin.Engine {
 
 	// Register Routes
 	r.GET("/v1/posts/newsfeed", h.GetNewsfeed)
+	r.GET("/v1/posts/view-history", h.GetViewHistory)
 	r.GET("/debug/newsfeed/score-breakdown", h.GetNewsfeedScoreBreakdown)
 	r.GET("/v1/posts/of-user/:username", h.GetPostsOfUser)
 	r.GET("/v1/posts/:id", h.GetPost)
@@ -495,4 +515,89 @@ func TestDeleteComment(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected 200, got %d", w.Code)
 	}
+}
+
+func TestGetNewsfeed_FeedTypeValidation(t *testing.T) {
+	mockRepo := &MockPostRepository{
+		Posts: []*model.Post{
+			{ID: "p1", Content: "Hello world", Privacy: "PUBLIC"},
+		},
+	}
+	r := setupTestRouter(mockRepo)
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedCode int
+	}{
+		{
+			name:         "Default type when omitted is RELEVANT and returns 200",
+			query:        "",
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:         "Valid type RELEVANT returns 200",
+			query:        "?type=RELEVANT",
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:         "Valid type TIME returns 200",
+			query:        "?type=TIME",
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:         "Valid type FRIEND_ONLY returns 200",
+			query:        "?type=FRIEND_ONLY",
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:         "Invalid type FOOBAR returns 400 Bad Request",
+			query:        "?type=FOOBAR",
+			expectedCode: http.StatusBadRequest,
+		},
+		{
+			name:         "Invalid type with cypher injection returns 400 Bad Request",
+			query:        "?type=RELEVANT%20MATCH%20(n)%20RETURN%20n",
+			expectedCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/v1/posts/newsfeed"+tt.query, nil)
+			req.Header.Set("X-User-ID", "viewer-1")
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Fatalf("expected HTTP %d, got %d. Body: %s", tt.expectedCode, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestGetViewHistory(t *testing.T) {
+	mockRepo := &MockPostRepository{}
+	r := setupTestRouter(mockRepo)
+
+	t.Run("unauthenticated request returns 401", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/v1/posts/view-history", nil)
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", w.Code)
+		}
+	})
+
+	t.Run("authenticated request returns 200 with empty list when no history service configured", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest("GET", "/v1/posts/view-history", nil)
+		req.Header.Set("X-User-ID", "user-1")
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+	})
 }

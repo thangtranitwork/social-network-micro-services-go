@@ -27,7 +27,12 @@ type UpdateContentRequest struct {
 
 func (h *PostHandler) GetNewsfeed(c *gin.Context) {
 	userID := getCurrentUser(c)
-	pageable := getPageable(c)
+	pageable, err := getNewsfeedPageable(c)
+	if err != nil {
+		logger.WithContext(c.Request.Context()).Warn("invalid feed type in GetNewsfeed: %v", err)
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
 
 	posts, err := h.PostSvc.GetSuggestedPosts(c.Request.Context(), userID, pageable)
 	if err != nil {
@@ -52,7 +57,14 @@ func (h *PostHandler) GetNewsfeedScoreBreakdown(c *gin.Context) {
 		return
 	}
 
-	items, err := h.PostSvc.GetNewsfeedScoreBreakdown(c.Request.Context(), userID, getPageable(c))
+	pageable, err := getNewsfeedPageable(c)
+	if err != nil {
+		logger.WithContext(c.Request.Context()).Warn("invalid feed type in GetNewsfeedScoreBreakdown: %v", err)
+		exception.SendError(c, exception.InvalidInput)
+		return
+	}
+
+	items, err := h.PostSvc.GetNewsfeedScoreBreakdown(c.Request.Context(), userID, pageable)
 	if err != nil {
 		logger.WithContext(c.Request.Context()).Err(err).Error("GetNewsfeedScoreBreakdown failed")
 		exception.SendError(c, exception.FailToGetPost)

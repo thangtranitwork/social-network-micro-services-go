@@ -27,11 +27,16 @@ func main() {
 	// 3. Initialize Redis
 	redis.InitRedis(cfg)
 
-	// 4. Initialize PostgreSQL Database
+	// 4. Initialize PostgreSQL & Cassandra Databases
 	db.InitPostgres(cfg)
+	cassSession := db.InitCassandra(cfg)
+	if cassSession != nil {
+		defer cassSession.Close()
+	}
 
 	// 5. Initialize Core Service & Handler
 	userSvc := service.NewUserService(cfg)
+	service.StartTelemetryConsumer(context.Background(), cfg, cassSession, userSvc.RuntimeCfg)
 
 	// Initialize File Client
 	fileClient, err := service.NewGrpcFileClient(cfg.FileGrpcAddr)
@@ -114,10 +119,18 @@ func main() {
 		})
 	}
 
+	// Location, Nearby Opt-In & Device Telemetry REST APIs
+	r.GET("/v1/users/me/location-settings", userHandler.GetLocationSettings)
+	r.PATCH("/v1/users/me/location-settings", userHandler.UpdateLocationSettings)
+	r.PUT("/v1/users/me/location", userHandler.UpdateLocation)
+	r.DELETE("/v1/users/me/location", userHandler.ClearLocation)
+	r.GET("/v1/users/me/devices", userHandler.GetDeviceSessions)
+
 	// Profile Management REST APIs
 	r.GET("/v1/users/:username", userHandler.GetUserProfile)
 	r.GET("/v1/users/:username/space", userHandler.GetUserSpace)
 	r.PUT("/v1/users/space", userHandler.UpdateUserSpace)
+	r.POST("/v1/users/:username/space/reaction", userHandler.AddSpaceReaction)
 	r.POST("/v1/users/:username/space/guestbook", userHandler.AddSpaceGuestbookEntry)
 	r.DELETE("/v1/users/space/guestbook/:entryId", userHandler.DeleteSpaceGuestbookEntry)
 	r.PATCH("/v1/users/update-bio", userHandler.UpdateBio)

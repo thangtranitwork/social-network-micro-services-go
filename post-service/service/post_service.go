@@ -71,6 +71,8 @@ type PostService struct {
 	Notification      NotificationPublisher
 	KeywordInteractor KeywordInteractor
 	Moderation        ModerationPublisher
+	ViewPublisher     ViewEventPublisher
+	HistorySvc        *ViewHistoryService
 }
 
 func NewPostService(cfg *config.Config, repo repository.PostRepository) *PostService {
@@ -92,6 +94,10 @@ func NewPostService(cfg *config.Config, repo repository.PostRepository) *PostSer
 		DB:       0,
 	})
 
+	if repo != nil && cfg != nil && cfg.RankingViewMode != "" {
+		repo.SetRankingMode(cfg.RankingViewMode)
+	}
+
 	return &PostService{
 		Cfg:        cfg,
 		Redis:      rdb,
@@ -110,6 +116,16 @@ func (s *PostService) WithIntegrations(fileClient FileClient, notification Notif
 
 func (s *PostService) WithModeration(publisher ModerationPublisher) *PostService {
 	s.Moderation = publisher
+	return s
+}
+
+func (s *PostService) WithViewPublisher(publisher ViewEventPublisher) *PostService {
+	s.ViewPublisher = publisher
+	return s
+}
+
+func (s *PostService) WithHistoryService(historySvc *ViewHistoryService) *PostService {
+	s.HistorySvc = historySvc
 	return s
 }
 

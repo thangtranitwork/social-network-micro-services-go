@@ -35,7 +35,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, PATCH")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-ID, X-User-Email, X-User-Role, x-continue-page, X-Trace-ID, X-Request-ID, x-trace-id, x-request-id")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-ID, X-User-Email, X-User-Role, x-continue-page, X-Trace-ID, X-Request-ID, x-trace-id, x-request-id, X-Device-Id, X-Platform, X-App-Version, X-Device-Model, X-OS-Version")
 		c.Writer.Header().Set("Vary", "Origin")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -43,6 +43,8 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 		}
 		c.Next()
 	})
+
+	r.Use(middleware.TelemetryMiddleware())
 
 	// Rate limit definitions
 	publicRateLimit := middleware.RateLimiter(rdb, 100, 1*time.Minute)
@@ -180,6 +182,7 @@ func SetupRoutes(r *gin.Engine, cfg *config.Config, authClient pb.AuthServiceCli
 	// Authenticated Routes (Requires JWT Token)
 
 	// File Service Routes
+	r.GET("/v1/public/client-configs/*any", publicRateLimit, proxy.ProxyTo(cfg.AdminHttpAddr))
 	r.GET("/v1/files/:id", publicRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
 	r.HEAD("/v1/files/:id", publicRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))
 	r.POST("/v1/files/upload", authMiddleware, authRateLimit, proxy.ProxyTo(cfg.FileHttpAddr))

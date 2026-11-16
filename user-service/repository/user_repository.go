@@ -64,6 +64,7 @@ type UserRepository interface {
 	SaveUserSpaceConfig(ctx context.Context, userID string, req model.UpdateSpaceConfigRequest) (*model.UserSpaceConfig, error)
 	AddSpaceGuestbookEntry(ctx context.Context, entry *model.SpaceGuestbookEntry) (*model.SpaceGuestbookEntry, error)
 	DeleteSpaceGuestbookEntry(ctx context.Context, entryID string, actorUserID string) error
+	AddSpaceReaction(ctx context.Context, targetUserID string, emoji string) (map[string]int, error)
 }
 
 type Neo4jUserRepository struct {
@@ -1295,6 +1296,7 @@ func defaultSpaceConfig(userID string) *model.UserSpaceConfig {
 			},
 		},
 		GuestbookEntries: []model.SpaceGuestbookEntry{},
+		Reactions:        map[string]int{"❤️": 12, "🔥": 8, "✨": 5, "👏": 7, "🎉": 4},
 		UpdatedAt:        time.Now(),
 	}
 }
@@ -1354,6 +1356,7 @@ func (r *Neo4jUserRepository) SaveUserSpaceConfig(ctx context.Context, userID st
 		AutoplayNodeID:   strings.TrimSpace(req.AutoplayNodeID),
 		Nodes:            clonedNodes,
 		GuestbookEntries: []model.SpaceGuestbookEntry{},
+		Reactions:        map[string]int{"❤️": 12, "🔥": 8, "✨": 5, "👏": 7, "🎉": 4},
 		UpdatedAt:        time.Now(),
 	}
 	r.fallbackSpaces[userID] = cfg
@@ -1393,4 +1396,19 @@ func (r *Neo4jUserRepository) DeleteSpaceGuestbookEntry(ctx context.Context, ent
 	}
 	delete(r.fallbackGuestbooks, entryID)
 	return nil
+}
+
+func (r *Neo4jUserRepository) AddSpaceReaction(ctx context.Context, targetUserID string, emoji string) (map[string]int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cfg, ok := r.fallbackSpaces[targetUserID]
+	if !ok {
+		cfg = defaultSpaceConfig(targetUserID)
+		r.fallbackSpaces[targetUserID] = cfg
+	}
+	if cfg.Reactions == nil {
+		cfg.Reactions = map[string]int{"❤️": 12, "🔥": 8, "✨": 5, "👏": 7, "🎉": 4}
+	}
+	cfg.Reactions[emoji]++
+	return cfg.Reactions, nil
 }

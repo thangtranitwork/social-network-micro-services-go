@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"time"
 
 	"social-network-go/internal/server"
 	"social-network-go/post-service/config"
+	"social-network-go/post-service/consumer"
 	"social-network-go/post-service/db"
 	"social-network-go/post-service/handler"
 	"social-network-go/post-service/repository"
@@ -33,7 +35,17 @@ func main() {
 	// 3. Initialize PostgreSQL
 	db.InitPostgres(cfg)
 
-	// 4. Initialize Service & Handler
+	// 4. Initialize Cassandra (View History Raw Event Store)
+	cassSession := db.InitCassandra(cfg)
+	if cassSession != nil {
+		defer cassSession.Close()
+	}
+	var historyRepo repository.HistoryRepository
+	if cassSession != nil {
+		historyRepo = repository.NewCassandraHistoryRepository(cassSession)
+	}
+
+	// 5. Initialize Service & Handler
 	var postRepo repository.PostRepository
 	if db.SQLDB != nil {
 		sqlRepo := repository.NewSQLPostRepository(db.SQLDB, neoDriver)
@@ -45,6 +57,8 @@ func main() {
 		postRepo = repository.NewPostRepository()
 	}
 	postSvc := service.NewPostService(cfg, postRepo)
+	viewHistorySvc := service.NewViewHistoryService(historyRepo, postRepo)
+	postSvc.WithHistoryService(viewHistorySvc)
 
 	// Initialize Notification Publisher
 	notifPublisher := service.NewKafkaNotificationPublisher(cfg.KafkaAddr)
@@ -53,6 +67,44 @@ func main() {
 	defer moderationPublisher.Close()
 	keywordPublisher := service.NewKafkaKeywordPublisher(cfg.KafkaAddr)
 	defer keywordPublisher.Close()
+	viewPublisher := service.NewKafkaViewEventPublisher(cfg.KafkaAddr, cfg.KafkaTopicViewEvents)
+	defer viewPublisher.Close()
+	postSvc.WithViewPublisher(viewPublisher)
+
+	rankingConsumer := consumer.NewRankingConsumer(cfg.KafkaAddr, cfg.KafkaTopicViewEvents, consumer.DefaultRankingConsumerGroupID, postRepo)
+	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
+	defer cancelConsumer()
+	defer rankingConsumer.Close()
+	go func() {
+		logger.Info("Starting RankingConsumer on topic %s with group %s", cfg.KafkaTopicViewEvents, consumer.DefaultRankingConsumerGroupID)
+		if err := rankingConsumer.Start(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Err(err).Warn("RankingConsumer stopped")
+		}
+	}()
+
+	// Hook periodic VIEWED cleanup into service lifecycle
+	cleanupCtx, cancelCleanup := context.WithCancel(context.Background())
+	defer cancelCleanup()
+	go func() {
+		logger.Info("Starting ViewRetentionCleaner background worker (window: %v)...", cfg.ViewDecayWindow)
+		service.StartViewRetentionCleaner(cleanupCtx, postRepo, 1*time.Hour, cfg.ViewDecayWindow, 500)
+	}()
+
+	// Start History Consumer if Cassandra is configured
+	var cancelHistory context.CancelFunc
+	if historyRepo != nil {
+		historyConsumer := consumer.NewHistoryConsumer(cfg.KafkaAddr, cfg.KafkaTopicViewEvents, cfg.KafkaGroupIDHistory, historyRepo)
+		var historyCtx context.Context
+		historyCtx, cancelHistory = context.WithCancel(context.Background())
+		defer cancelHistory()
+		defer historyConsumer.Close()
+		go func() {
+			logger.Info("Starting HistoryConsumer on topic %s with group %s", cfg.KafkaTopicViewEvents, cfg.KafkaGroupIDHistory)
+			if err := historyConsumer.Start(historyCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Err(err).Warn("HistoryConsumer stopped")
+			}
+		}()
+	}
 
 	// Initialize File Client
 	fileClient, err := service.NewGrpcFileClient(cfg.FileGrpcAddr)
@@ -149,6 +201,8 @@ func main() {
 
 	// REST APIs (Internal Routes mapped under Gateway)
 	r.GET("/v1/posts/newsfeed", postHandler.GetNewsfeed)
+	r.POST("/v1/posts/view-events", postHandler.RecordViewEvents)
+	r.GET("/v1/posts/view-history", postHandler.GetViewHistory)
 	r.GET("/v1/posts/of-user/:username", postHandler.GetPostsOfUser)
 	r.GET("/v1/posts/:id", postHandler.GetPost)
 	r.POST("/v1/posts/post", postHandler.CreatePost)
@@ -181,9 +235,20 @@ func main() {
 	// User report API
 	r.POST("/v1/reports", reportHandler.SubmitReport)
 
+	// Deep Engagement & Negative Signals APIs
+	r.POST("/v1/posts/engagement/media-watch", postHandler.RecordMediaWatch)
+	r.POST("/v1/posts/engagement/negative", postHandler.RecordNegativeSignal)
+	r.DELETE("/v1/posts/engagement/mute/:authorId", postHandler.UnmuteAuthor)
+
 	srv := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
 		Handler: r,
 	}
-	server.RunWithGracefulShutdown(srv, 10*time.Second)
+	server.RunWithGracefulShutdown(srv, 10*time.Second, func() {
+		cancelConsumer()
+		cancelCleanup()
+		if cancelHistory != nil {
+			cancelHistory()
+		}
+	})
 }

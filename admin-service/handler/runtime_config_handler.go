@@ -89,6 +89,12 @@ func (h *AdminHandler) SyncRuntimeConfigs(c *gin.Context) {
 	sendSuccess(c, result)
 }
 
+func (h *AdminHandler) GetPublicMapConfig(c *gin.Context) {
+	cfg := h.svc.GetPublicMapConfig(c.Request.Context())
+	c.Header("Cache-Control", "public, max-age=60")
+	sendSuccess(c, cfg)
+}
+
 func writeRuntimeConfigError(c *gin.Context, err error, fallbackMessage string) {
 	status := http.StatusInternalServerError
 	message := fallbackMessage

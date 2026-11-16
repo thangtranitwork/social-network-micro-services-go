@@ -178,6 +178,13 @@ func (m *MockUserRepository) DeleteSpaceGuestbookEntry(ctx context.Context, entr
 	return m.Err
 }
 
+func (m *MockUserRepository) AddSpaceReaction(ctx context.Context, targetUserID string, emoji string) (map[string]int, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return map[string]int{emoji: 1}, nil
+}
+
 func setupTestRouter(repo *MockUserRepository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

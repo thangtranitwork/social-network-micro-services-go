@@ -22,8 +22,9 @@ func main() {
 	// 1. Load Configurations
 	cfg := config.LoadConfig()
 
-	// 2. Initialize Neo4j (Graph & Fallback Store)
+	// 2. Initialize Neo4j (Graph & Fallback Store) & Redis
 	db.InitNeo4j(cfg)
+	db.InitRedis(cfg)
 
 	// 3. Initialize Elasticsearch (Primary Full-Text Search Engine)
 	db.InitElasticsearch(cfg)
@@ -125,6 +126,8 @@ func main() {
 
 	// REST APIs (mapped under Gateway)
 	r.GET("/v1/search", searchHandler.Search)
+	r.POST("/v1/search/ctr", searchHandler.RecordCTR)
+	r.GET("/v1/search/ctr/stats", searchHandler.GetCTRStats)
 	r.POST("/v1/search/sync", searchHandler.SyncData)
 	r.POST("/v1/search/reindex", searchHandler.Reindex)
 

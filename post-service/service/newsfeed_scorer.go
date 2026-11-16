@@ -5,18 +5,22 @@ import (
 	"sort"
 	"time"
 
+	"social-network-go/post-service/config"
 	"social-network-go/post-service/model"
 )
 
 type newsfeedScoreWeights struct {
-	FriendRelationship      int `json:"friendRelationship"`
-	SecondDegreeOrRequested int `json:"secondDegreeOrRequested"`
-	ViewForward             int `json:"viewForward"`
-	ViewBackward            int `json:"viewBackward"`
-	Like                    int `json:"like"`
-	Comment                 int `json:"comment"`
-	Share                   int `json:"share"`
-	LoadedPenalty           int `json:"loadedPenalty"`
+	FriendRelationship      int           `json:"friendRelationship"`
+	SecondDegreeOrRequested int           `json:"secondDegreeOrRequested"`
+	ViewForward             int           `json:"viewForward"`
+	ViewBackward            int           `json:"viewBackward"`
+	Like                    int           `json:"like"`
+	Comment                 int           `json:"comment"`
+	Share                   int           `json:"share"`
+	LoadedPenalty           int           `json:"loadedPenalty"`
+	ViewPenaltyWeight       int           `json:"viewPenaltyWeight"`
+	ViewDecayWindow         time.Duration `json:"viewDecayWindow"`
+	RankingMode             string        `json:"rankingMode"`
 }
 
 type NewsfeedScoreBreakdown struct {
@@ -25,6 +29,8 @@ type NewsfeedScoreBreakdown struct {
 	Engagement   int `json:"engagement"`
 	Loaded       int `json:"loaded"`
 	Keyword      int `json:"keyword"`
+	AuthorSignal int `json:"authorSignal"`
+	ViewPenalty  int `json:"viewPenalty"`
 	Total        int `json:"total"`
 }
 
@@ -37,6 +43,9 @@ var defaultNewsfeedScoreWeights = newsfeedScoreWeights{
 	Comment:                 3,
 	Share:                   5,
 	LoadedPenalty:           -20,
+	ViewPenaltyWeight:       40,
+	ViewDecayWindow:         24 * time.Hour,
+	RankingMode:             config.RankingModeLoaded,
 }
 
 func rankNewsfeedCandidates(candidates []*model.NewsfeedCandidate, now time.Time) []*model.NewsfeedCandidate {
@@ -70,6 +79,17 @@ func ScoreNewsfeedCandidate(candidate *model.NewsfeedCandidate, now time.Time) N
 
 func (s *PostService) newsfeedScoreWeights(ctx context.Context) newsfeedScoreWeights {
 	weights := defaultNewsfeedScoreWeights
+	if s != nil && s.Cfg != nil {
+		if s.Cfg.RankingViewMode != "" {
+			weights.RankingMode = s.Cfg.RankingViewMode
+		}
+		if s.Cfg.ViewPenaltyWeight > 0 {
+			weights.ViewPenaltyWeight = s.Cfg.ViewPenaltyWeight
+		}
+		if s.Cfg.ViewDecayWindow > 0 {
+			weights.ViewDecayWindow = s.Cfg.ViewDecayWindow
+		}
+	}
 	if s == nil || s.RuntimeCfg == nil {
 		return weights
 	}
@@ -107,7 +127,37 @@ func scoreNewsfeedCandidate(candidate *model.NewsfeedCandidate, now time.Time, w
 		candidate.Post.ShareCount*weights.Share
 	loaded := candidate.LoadedTimes * weights.LoadedPenalty
 
-	total := recency + relationship + engagement + loaded + candidate.KeywordScore
+	viewPenalty := 0
+	if candidate.LastViewedAt != nil && weights.ViewPenaltyWeight > 0 {
+		decayWindow := weights.ViewDecayWindow
+		if decayWindow <= 0 {
+			decayWindow = 24 * time.Hour
+		}
+		timeSinceView := now.Sub(*candidate.LastViewedAt)
+		if timeSinceView < 0 {
+			timeSinceView = 0
+		}
+		if timeSinceView < decayWindow {
+			decayRatio := 1.0 - (float64(timeSinceView) / float64(decayWindow))
+			if decayRatio > 1.0 {
+				decayRatio = 1.0
+			}
+			viewPenalty = -int(float64(weights.ViewPenaltyWeight) * decayRatio)
+		}
+	}
+
+	total := recency + relationship + engagement + candidate.KeywordScore + candidate.AuthorSignalScore
+	switch weights.RankingMode {
+	case config.RankingModeQualifiedView:
+		total += viewPenalty
+	case config.RankingModeShadow:
+		// Shadow mode: rank using legacy loaded penalty, record viewPenalty in breakdown for observability
+		total += loaded
+	case config.RankingModeLoaded:
+		fallthrough
+	default:
+		total += loaded
+	}
 
 	return NewsfeedScoreBreakdown{
 		Recency:      recency,
@@ -115,6 +165,8 @@ func scoreNewsfeedCandidate(candidate *model.NewsfeedCandidate, now time.Time, w
 		Engagement:   engagement,
 		Loaded:       loaded,
 		Keyword:      candidate.KeywordScore,
+		AuthorSignal: candidate.AuthorSignalScore,
+		ViewPenalty:  viewPenalty,
 		Total:        total,
 	}
 }

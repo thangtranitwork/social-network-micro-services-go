@@ -43,9 +43,11 @@ type NewsfeedCandidate struct {
 	ViewBackward              int
 	LoadedTimes               int
 	KeywordScore              int
+	AuthorSignalScore         int
 	IsFriend                  bool
 	IsSecondDegreeOrRequested bool
 	IsOwnPost                 bool
+	LastViewedAt              *time.Time
 }
 
 type Comment struct {

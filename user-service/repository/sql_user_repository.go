@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"social-network-go/user-service/model"
+	red "social-network-go/user-service/redis"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -140,6 +142,10 @@ func (r *SQLUserRepository) GetUserProfile(ctx context.Context, usernameOrID str
 	var reqRecv int64
 	r.db.WithContext(ctx).Model(&model.FriendRequestEntity{}).Where("receiver_id = ? AND status = 'PENDING'", user.ID).Count(&reqRecv)
 	m.RequestReceivedCount = int(reqRecv)
+
+	var postCount int64
+	r.db.WithContext(ctx).Table("posts").Where("user_id = ? AND deleted_at IS NULL", user.ID).Count(&postCount)
+	m.PostCount = int(postCount)
 
 	return m, nil
 }
@@ -516,6 +522,24 @@ func (r *SQLUserRepository) GetUserSpaceConfig(ctx context.Context, targetUserID
 		return nil, fmt.Errorf("corrupted space nodes json: %w", err)
 	}
 
+	reactions := make(map[string]int)
+	if entity.ReactionsJSON != "" {
+		_ = json.Unmarshal([]byte(entity.ReactionsJSON), &reactions)
+	}
+	if red.RedisClient != nil {
+		redisCounts, err := red.RedisClient.HGetAll(ctx, "space:reactions:"+targetUserID).Result()
+		if err == nil && len(redisCounts) > 0 {
+			for k, vStr := range redisCounts {
+				if val, err := strconv.Atoi(vStr); err == nil && val > reactions[k] {
+					reactions[k] = val
+				}
+			}
+		}
+	}
+	if len(reactions) == 0 {
+		reactions = map[string]int{"❤️": 12, "🔥": 8, "✨": 5, "👏": 7, "🎉": 4}
+	}
+
 	return &model.UserSpaceConfig{
 		UserID:           entity.UserID,
 		IsConfigured:     true,
@@ -526,6 +550,7 @@ func (r *SQLUserRepository) GetUserSpaceConfig(ctx context.Context, targetUserID
 		AutoplayNodeID:   entity.AutoplayNodeID,
 		Nodes:            nodes,
 		GuestbookEntries: entries,
+		Reactions:        reactions,
 		UpdatedAt:        entity.UpdatedAt,
 	}, nil
 }
@@ -614,6 +639,63 @@ func (r *SQLUserRepository) DeleteSpaceGuestbookEntry(ctx context.Context, entry
 	}
 
 	return r.db.WithContext(ctx).Delete(&model.UserSpaceGuestbookEntity{}, "id = ?", entryID).Error
+}
+
+func (r *SQLUserRepository) AddSpaceReaction(ctx context.Context, targetUserID string, emoji string) (map[string]int, error) {
+	if red.RedisClient != nil {
+		_ = red.RedisClient.HIncrBy(ctx, "space:reactions:"+targetUserID, emoji, 1).Err()
+	}
+
+	var entity model.UserSpaceConfigEntity
+	err := r.db.WithContext(ctx).Where("user_id = ?", targetUserID).First(&entity).Error
+
+	reactions := make(map[string]int)
+	if err == nil && entity.ReactionsJSON != "" {
+		_ = json.Unmarshal([]byte(entity.ReactionsJSON), &reactions)
+	}
+	if len(reactions) == 0 {
+		reactions = map[string]int{"❤️": 12, "🔥": 8, "✨": 5, "👏": 7, "🎉": 4}
+	}
+	reactions[emoji]++
+
+	reactionsBytes, err := json.Marshal(reactions)
+	if err != nil {
+		return reactions, err
+	}
+
+	now := time.Now()
+	if errors.Is(err, gorm.ErrRecordNotFound) || entity.UserID == "" {
+		nodesBytes, _ := json.Marshal(defaultSpaceConfig(targetUserID).Nodes)
+		entity = model.UserSpaceConfigEntity{
+			UserID:          targetUserID,
+			Theme:           "COSMIC_VOID",
+			DefaultViewMode: "SPACE",
+			CustomAccent:    "#6366F1",
+			AllowGuestbook:  true,
+			NodesJSON:       string(nodesBytes),
+			ReactionsJSON:   string(reactionsBytes),
+			UpdatedAt:       now,
+		}
+		_ = r.db.WithContext(ctx).Create(&entity).Error
+	} else {
+		_ = r.db.WithContext(ctx).Model(&entity).Updates(map[string]interface{}{
+			"reactions_json": string(reactionsBytes),
+			"updated_at":     now,
+		}).Error
+	}
+
+	if red.RedisClient != nil {
+		redisCounts, err := red.RedisClient.HGetAll(ctx, "space:reactions:"+targetUserID).Result()
+		if err == nil && len(redisCounts) > 0 {
+			for k, vStr := range redisCounts {
+				if val, err := strconv.Atoi(vStr); err == nil && val > reactions[k] {
+					reactions[k] = val
+				}
+			}
+		}
+	}
+
+	return reactions, nil
 }
 
 // Helpers

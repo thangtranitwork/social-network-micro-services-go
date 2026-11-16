@@ -15,10 +15,13 @@ The system uses an API Gateway as the public entry point, then routes traffic to
 - Real-time chat, group chat, voice messages, WebRTC call signaling, and call history.
 - File upload/download through MinIO, including presigned access.
 - Admin statistics, user/post moderation, ads, announcements, and operational controls.
-- Graph recommendation algorithms ("People You May Know", "Personalized Newsfeed Ranking") backed by Neo4j.
+- Graph recommendation algorithms ("People You May Know", "Personalized Newsfeed Ranking") backed by Neo4j, enhanced with deep engagement (media watch progress) and negative signals (hide, not interested, quick skip, mute author).
+- Opt-in "People Nearby" discovery backed by Redis GEO (`nearby:users`) with coordinate fuzzing, rounded distance display, and Neo4j block/friend filtering.
+- Dynamic Map UI (`maplibre-gl`) configurable at runtime via Admin Runtime Configs (`google_tiles`, `google_sdk`, `carto`, `osm`, `disabled`).
+- Persistent GPS, IP, and Device telemetry pipeline (`api-gateway` → `user-service` → Kafka → Cassandra), device session tracking in PostgreSQL, and Search CTR tracking in `search-service`.
 - API Gateway rate limiting, CORS, JWT validation through gRPC, and admin-only observability APIs.
 - Log, container, profiler, and service health dashboards exposed by the gateway.
-- Next.js UI with home feed, chats, profile, admin dashboard, settings, ads, localization, and CAPTCHA bot protection.
+- Next.js UI with home feed, chats, profile, nearby map, admin dashboard, settings, ads, localization, `/privacy`, `/terms`, and CAPTCHA bot protection.
 
 ## Architecture
 
@@ -335,6 +338,14 @@ Admin-only APIs are protected by JWT and `ADMIN` role checks.
 ## WebRTC Calling
 
 The chat service coordinates WebRTC signaling over WebSocket and stores call state in Redis/MongoDB. See `docs/calling_system.md` for packet formats, Redis keys, MongoDB call documents, and 1-to-1/group call sequence diagrams.
+
+## Location, People Nearby & Dynamic Map Configuration
+
+- **People Nearby (`/nearby`)**: Strictly opt-in (`discoverableNearby` in `user_location_settings`). Active coordinates are fuzzed (`location.privacy_fuzz_meters`), stored in Redis GEO (`nearby:users`) with a heartbeat TTL (`location.nearby_ttl_seconds`), and queried via `GET /v1/recommendations/nearby` with Neo4j block/friend filtering and rounded distances.
+- **Persistent Telemetry**: `api-gateway` normalizes `X-Client-IP`, `X-Device-Id`, `X-Platform`, and `X-App-Version`. `user-service` records device sessions in PostgreSQL (`user_device_sessions`) and streams GPS/IP/device events over Kafka (`user.telemetry.events`) to Cassandra (`user_telemetry_events`, `location_analytics_by_city_day`) with configurable retention (`telemetry.retention_days`).
+- **Admin Map Runtime Config**: Configure `map.provider` (`carto`, `google_tiles`, `google_sdk`, `osm`, `disabled`), `map.style`, `map.google_tiles_url`, `location.*`, and `telemetry.*` in `/admin/dashboard/runtime-configs`. Clients fetch active non-sensitive settings from `GET /v1/public/client-configs/map`.
+- **Deep Engagement, Negative Signals & Search CTR**: `post-service` records media watch progress (`POST /v1/posts/engagement/media-watch`), negative signals (`POST /v1/posts/engagement/negative`: `hide_post`, `not_interested`, `quick_skip`, `mute_author`), and feeds them into `newsfeed_scorer.go` (filtering hidden/muted items and adjusting `AuthorSignal`). `search-service` tracks search impressions/clicks via `POST /v1/search/ctr` and `GET /v1/search/ctr/stats`.
+- **Legal & Privacy Controls**: Updated `/privacy`, added `/terms`, and added opt-in location toggles + instant clear (`DELETE /v1/users/me/location`) in `/settings/privacy`. See `plans/location_telemetry_and_map_config_plan.md` for full details.
 
 ## Generated and Local Files
 

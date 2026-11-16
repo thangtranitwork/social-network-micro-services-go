@@ -77,6 +77,7 @@ type UserSpaceConfigEntity struct {
 	AllowGuestbook  bool      `gorm:"not null;default:true" json:"allowGuestbook"`
 	AutoplayNodeID  string    `gorm:"type:varchar(64);default:''" json:"autoplayNodeId"`
 	NodesJSON       string    `gorm:"type:text;not null" json:"nodesJson"`
+	ReactionsJSON   string    `gorm:"type:text;default:'{}'" json:"reactionsJson"`
 	UpdatedAt       time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"social-network-go/post-service/config"
 	"social-network-go/post-service/db"
 	"social-network-go/post-service/model"
 	"social-network-go/profiler"
@@ -25,7 +26,31 @@ const (
 	PageTypeTime       = "TIME"
 )
 
+type ViewItemStatus string
+
+const (
+	ViewStatusSuccess     ViewItemStatus = "SUCCESS"
+	ViewStatusPostDeleted ViewItemStatus = "POST_DELETED"
+	ViewStatusMissingPost ViewItemStatus = "MISSING_POST"
+	ViewStatusMissingUser ViewItemStatus = "MISSING_USER"
+)
+
+type ViewRecordItem struct {
+	UserID     string    `json:"userId"`
+	PostID     string    `json:"postId"`
+	ObservedAt time.Time `json:"observedAt"`
+}
+
+type ViewRecordResult struct {
+	UserID string         `json:"userId"`
+	PostID string         `json:"postId"`
+	Status ViewItemStatus `json:"status"`
+}
+
 type PostRepository interface {
+	RecordPostsViewed(ctx context.Context, items []ViewRecordItem) ([]ViewRecordResult, error)
+	CleanupExpiredViews(ctx context.Context, cutoff time.Time, batchSize int) (int, error)
+	SetRankingMode(mode string)
 	CreatePost(ctx context.Context, postID, authorID, content, privacy string, fileIDs []string) error
 	SharePost(ctx context.Context, authorID, originalPostID, content, privacy string, postID string) error
 	GetPost(ctx context.Context, postID string, currentUserID string) (*model.Post, error)
@@ -54,7 +79,13 @@ type PostRepository interface {
 	GetFilesInPostsOfUser(ctx context.Context, username string, skip, limit int64) ([]string, error)
 }
 
-type Neo4jPostRepository struct{}
+type Neo4jPostRepository struct {
+	RankingMode string
+}
+
+func (r *Neo4jPostRepository) SetRankingMode(mode string) {
+	r.RankingMode = mode
+}
 
 func NewPostRepository() PostRepository {
 	return &Neo4jPostRepository{}
@@ -257,7 +288,8 @@ func (r *Neo4jPostRepository) GetAllPosts(ctx context.Context, skip, limit int64
 }
 
 func (r *Neo4jPostRepository) GetSuggestedPosts(ctx context.Context, currentUserID string, pageType string, skip, limit int64) ([]*model.Post, error) {
-	query := getSuggestedPostsQuery(pageType)
+	skipLoaded := r.RankingMode == config.RankingModeQualifiedView
+	query := getSuggestedPostsQuery(pageType, skipLoaded)
 
 	return profiler.TrackResult(fmt.Sprintf("post-service:query newsfeed.neo4j.%s", pageType), func() ([]*model.Post, error) {
 		return r.queryPosts(ctx, currentUserID, query, map[string]interface{}{
@@ -301,8 +333,9 @@ func getRelevantNewsfeedCandidateQuery() string {
 
 			OPTIONAL MATCH (viewer)-[liked:LIKED]->(p)
 			OPTIONAL MATCH (viewer)-[loaded:LOADED]->(p)
+			OPTIONAL MATCH (viewer)-[viewed:VIEWED]->(p)
 
-			WITH viewer, p, author, friendship, loaded,
+			WITH viewer, p, author, friendship, loaded, viewed,
 				 coalesce(vu.times, 0) AS viewForward,
 				 coalesce(uv.times, 0) AS viewBackward,
 				 origin, originAuthor, block, originFriendship,
@@ -326,11 +359,15 @@ func getRelevantNewsfeedCandidateQuery() string {
 			       origin.content, origin.createdAt, origin.updatedAt, origin.privacy, origin.files,
 			       viewForward, viewBackward, coalesce(loaded.times, 0), keywordScore,
 			       friendship IS NOT NULL AS isFriendCandidate,
-			       EXISTS((viewer)-[:FRIEND]-()-[:FRIEND]-(author)) OR EXISTS((viewer)-[:REQUEST]-(author))
+			       EXISTS((viewer)-[:FRIEND]-()-[:FRIEND]-(author)) OR EXISTS((viewer)-[:REQUEST]-(author)),
+			       viewed.lastViewedAt
 	`
 }
 
 func (r *Neo4jPostRepository) MarkPostsLoaded(ctx context.Context, currentUserID string, postIDs []string) error {
+	if r.RankingMode == config.RankingModeQualifiedView {
+		return nil
+	}
 	if currentUserID == "" || len(postIDs) == 0 {
 		return nil
 	}
@@ -349,6 +386,103 @@ func (r *Neo4jPostRepository) MarkPostsLoaded(ctx context.Context, currentUserID
 	return err
 }
 
+func (r *Neo4jPostRepository) RecordPostsViewed(ctx context.Context, items []ViewRecordItem) ([]ViewRecordResult, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	params := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		params = append(params, map[string]interface{}{
+			"userId":     item.UserID,
+			"postId":     item.PostID,
+			"observedAt": item.ObservedAt.Format(time.RFC3339),
+		})
+	}
+
+	query := `
+		UNWIND $batch AS item
+		OPTIONAL MATCH (u:User {id: item.userId})
+		OPTIONAL MATCH (p:Post {id: item.postId})
+		WITH item, u, p,
+		     CASE
+		       WHEN u IS NULL THEN 'MISSING_USER'
+		       WHEN p IS NULL THEN 'MISSING_POST'
+		       WHEN p.deletedAt IS NOT NULL THEN 'POST_DELETED'
+		       ELSE 'SUCCESS'
+		     END AS status
+		FOREACH (_ IN CASE WHEN status = 'SUCCESS' THEN [1] ELSE [] END |
+		    MERGE (u)-[r:VIEWED]->(p)
+		    ON CREATE SET r.lastViewedAt = datetime(item.observedAt)
+		    ON MATCH SET r.lastViewedAt = CASE
+		        WHEN datetime(item.observedAt) > r.lastViewedAt THEN datetime(item.observedAt)
+		        ELSE r.lastViewedAt
+		    END
+		)
+		RETURN item.userId AS userId, item.postId AS postId, status
+	`
+
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{
+			"batch": params,
+		})
+		if err != nil {
+			return nil, err
+		}
+		var results []ViewRecordResult
+		for result.Next(ctx) {
+			rec := result.Record()
+			results = append(results, ViewRecordResult{
+				UserID: getStringVal(rec.Values[0]),
+				PostID: getStringVal(rec.Values[1]),
+				Status: ViewItemStatus(getStringVal(rec.Values[2])),
+			})
+		}
+		return results, result.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.([]ViewRecordResult), nil
+}
+
+func (r *Neo4jPostRepository) CleanupExpiredViews(ctx context.Context, cutoff time.Time, batchSize int) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	session := db.Neo4jDriver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	query := `
+		MATCH ()-[r:VIEWED]->()
+		WHERE r.lastViewedAt < datetime($cutoff)
+		WITH r LIMIT $batchSize
+		WHERE r.lastViewedAt < datetime($cutoff)
+		DELETE r
+		RETURN count(r)
+	`
+	res, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, query, map[string]interface{}{
+			"cutoff":    cutoff.Format(time.RFC3339),
+			"batchSize": batchSize,
+		})
+		if err != nil {
+			return 0, err
+		}
+		if result.Next(ctx) {
+			return int(result.Record().Values[0].(int64)), nil
+		}
+		return 0, result.Err()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return res.(int), nil
+}
+
 func getMarkPostsLoadedQuery() string {
 	return `
 		MATCH (viewer:User {id: $currentUserID})
@@ -361,7 +495,44 @@ func getMarkPostsLoadedQuery() string {
 	`
 }
 
-func getSuggestedPostsQuery(pageType string) string {
+func getSuggestedPostsQuery(pageType string, skipLoaded ...bool) string {
+	shouldSkipLoaded := len(skipLoaded) > 0 && skipLoaded[0]
+
+	friendOnlyLoadedMerge := `
+			WITH p, author, viewer, liked, origin, originAuthor, originCanView
+
+			MERGE (viewer)-[l:LOADED]->(p)
+			ON CREATE SET l.times = 1
+			ON MATCH SET l.times = coalesce(l.times, 0) + 1
+	`
+	if shouldSkipLoaded {
+		friendOnlyLoadedMerge = `
+			WITH p, author, viewer, liked, origin, originAuthor, originCanView
+		`
+	}
+
+	defaultLoadedMerge := `
+			WITH p, author, viewer, friendship, origin, originAuthor, originCanView, liked IS NOT NULL AS isLikedByMe
+
+			MERGE (viewer)-[l:LOADED]->(p)
+			ON CREATE SET l.times = 1
+			ON MATCH SET l.times = coalesce(l.times, 0) + 1
+	`
+	if shouldSkipLoaded {
+		defaultLoadedMerge = `
+			WITH p, author, viewer, friendship, origin, originAuthor, originCanView, liked IS NOT NULL AS isLikedByMe
+		`
+	}
+
+	loadedMatch := "OPTIONAL MATCH (viewer)-[loaded:LOADED]->(p)"
+	loadedWith := "loaded,"
+	loadedScoreCalc := "CASE WHEN loaded IS NOT NULL THEN loaded.times * (-20) ELSE 0 END AS loadedScore"
+	if shouldSkipLoaded {
+		loadedMatch = ""
+		loadedWith = ""
+		loadedScoreCalc = "0 AS loadedScore"
+	}
+
 	switch pageType {
 	case PageTypeFriendOnly:
 		return `
@@ -388,13 +559,7 @@ func getSuggestedPostsQuery(pageType string) string {
 
 			ORDER BY p.createdAt DESC
 			SKIP $skip LIMIT $limit
-
-			WITH p, author, viewer, liked, origin, originAuthor, originCanView
-
-			MERGE (viewer)-[l:LOADED]->(p)
-			ON CREATE SET l.times = 1
-			ON MATCH SET l.times = coalesce(l.times, 0) + 1
-
+` + friendOnlyLoadedMerge + `
 			RETURN p.id, p.content, p.privacy, p.createdAt, p.updatedAt,
 			       author.id, coalesce(p.likeCount, 0), liked IS NOT NULL,
 			       p.files, coalesce(p.commentCount, 0), coalesce(p.shareCount, 0),
@@ -463,9 +628,9 @@ func getSuggestedPostsQuery(pageType string) string {
 			OPTIONAL MATCH (viewer)-[inter:INTERACT_WITH]->(keyword)
 			
 			OPTIONAL MATCH (viewer)-[liked:LIKED]->(p)
-			OPTIONAL MATCH (viewer)-[loaded:LOADED]->(p)
+			` + loadedMatch + `
 
-				WITH viewer, p, author, friendship, loaded,
+				WITH viewer, p, author, friendship, ` + loadedWith + `
 					 coalesce(vu.times, 0) AS viewForward,
 					 coalesce(uv.times, 0) AS viewBackward,
 				 origin, originAuthor, block, originFriendship,
@@ -488,7 +653,7 @@ func getSuggestedPostsQuery(pageType string) string {
 				 coalesce(p.likeCount, 0) * 2 AS likeScore,
 				 coalesce(p.commentCount, 0) * 3 AS commentScore,
 				 coalesce(p.shareCount, 0) * 5 AS shareScore,
-				 CASE WHEN loaded IS NOT NULL THEN loaded.times * (-20) ELSE 0 END AS loadedScore
+				 ` + loadedScoreCalc + `
 
 				WITH p, author, viewer, origin, originAuthor, liked,
 					 originCanView, viewForward, viewBackward, newPostScore, likeScore, commentScore, shareScore, friendship, loadedScore, keywordScore,
@@ -506,13 +671,7 @@ func getSuggestedPostsQuery(pageType string) string {
 
 			ORDER BY totalScore DESC, p.createdAt DESC
 			SKIP $skip LIMIT $limit
-
-			WITH p, author, viewer, friendship, origin, originAuthor, originCanView, liked IS NOT NULL AS isLikedByMe
-
-			MERGE (viewer)-[l:LOADED]->(p)
-			ON CREATE SET l.times = 1
-			ON MATCH SET l.times = coalesce(l.times, 0) + 1
-
+` + defaultLoadedMerge + `
 			RETURN p.id, p.content, p.privacy, p.createdAt, p.updatedAt,
 			       author.id, coalesce(p.likeCount, 0), isLikedByMe,
 			       p.files, coalesce(p.commentCount, 0), coalesce(p.shareCount, 0),
@@ -1215,7 +1374,9 @@ func (r *Neo4jPostRepository) GetFilesInPostsOfUser(ctx context.Context, usernam
 
 	res, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		result, err := tx.Run(ctx, `
-			MATCH (author:User {username: $username})-[:POSTED]->(p:Post)
+			MATCH (author:User)
+			WHERE (author.username = $username OR author.id = $username)
+			MATCH (author)-[:POSTED]->(p:Post)
 			WHERE p.deletedAt IS NULL
 			UNWIND coalesce(p.files, []) AS fileID
 			RETURN fileID
@@ -1375,7 +1536,30 @@ func newsfeedCandidateFromRecord(vals []interface{}) *model.NewsfeedCandidate {
 			candidate.IsSecondDegreeOrRequested = v
 		}
 	}
+	if len(vals) > 26 && vals[26] != nil {
+		candidate.LastViewedAt = getTimeVal(vals[26])
+	}
 	return candidate
+}
+
+func getTimeVal(val interface{}) *time.Time {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case dbtype.LocalDateTime:
+		t := time.Time(v)
+		return &t
+	case time.Time:
+		return &v
+	case *time.Time:
+		return v
+	case string:
+		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+			return &parsed
+		}
+	}
+	return nil
 }
 
 func postFromRecord(vals []interface{}) *model.Post {
