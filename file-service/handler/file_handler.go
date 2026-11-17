@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"social-network-go/file-service/model"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -52,6 +53,9 @@ type FileServiceInterface interface {
 	GetPresignedUploadURL(ctx context.Context, filename string, contentType string) (string, string, error)
 	Load(ctx context.Context, id string) (io.ReadCloser, string, string, int64, error)
 	GetPresignedURL(ctx context.Context, id string) (string, error)
+	EnqueueHLS(ctx context.Context, id string) error
+	GetHLSStatus(ctx context.Context, id string) string
+	LoadHLSAsset(ctx context.Context, id, relPath string) (io.ReadCloser, string, int64, error)
 	DeleteFileForUser(ctx context.Context, id, userID string, isAdmin bool) error
 	DeleteFilesForUser(ctx context.Context, ids []string, userID string, isAdmin bool) error
 }
@@ -203,6 +207,76 @@ func (h *FileHandler) Load(c *gin.Context) {
 		c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	}
 	c.Header("Cache-Control", "public, max-age=3600, immutable")
+	c.Header("Accept-Ranges", "bytes")
+	if contentType != "" {
+		c.Header("Content-Type", contentType)
+	}
+	if rs, ok := reader.(io.ReadSeeker); ok {
+		http.ServeContent(c.Writer, c.Request, filename, time.Time{}, rs)
+		return
+	}
+	c.DataFromReader(http.StatusOK, size, contentType, reader, nil)
+}
+
+func (h *FileHandler) TriggerHLS(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.fileSvc.EnqueueHLS(c.Request.Context(), id); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no such key") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"fileId":    id,
+		"status":    h.fileSvc.GetHLSStatus(c.Request.Context(), id),
+		"masterUrl": "/v1/files/" + id + "/hls/master.m3u8",
+	})
+}
+
+func (h *FileHandler) GetHLSStatus(c *gin.Context) {
+	id := c.Param("id")
+	status := h.fileSvc.GetHLSStatus(c.Request.Context(), id)
+	c.JSON(http.StatusOK, gin.H{
+		"fileId":    id,
+		"status":    status,
+		"masterUrl": "/v1/files/" + id + "/hls/master.m3u8",
+	})
+}
+
+func (h *FileHandler) ServeHLS(c *gin.Context) {
+	id := c.Param("id")
+	relPath := strings.TrimPrefix(c.Param("filepath"), "/")
+	if relPath == "" {
+		relPath = "master.m3u8"
+	}
+
+	reader, contentType, size, err := h.fileSvc.LoadHLSAsset(c.Request.Context(), id, relPath)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no such key") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "hls asset not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer reader.Close()
+
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Accept-Ranges", "bytes")
+	if strings.HasSuffix(strings.ToLower(relPath), ".m3u8") {
+		c.Header("Cache-Control", "public, max-age=60")
+	} else {
+		c.Header("Cache-Control", "public, max-age=3600, immutable")
+	}
+	if contentType != "" {
+		c.Header("Content-Type", contentType)
+	}
+	if rs, ok := reader.(io.ReadSeeker); ok {
+		http.ServeContent(c.Writer, c.Request, filepath.Base(relPath), time.Time{}, rs)
+		return
+	}
 	c.DataFromReader(http.StatusOK, size, contentType, reader, nil)
 }
 

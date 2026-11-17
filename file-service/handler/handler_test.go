@@ -40,13 +40,34 @@ func (m *MockFileService) GetPresignedUploadURL(ctx context.Context, filename st
 	return m.UploadID, m.UploadURL, nil
 }
 
+type nopReadSeekCloser struct {
+	*bytes.Reader
+}
+
+func (nopReadSeekCloser) Close() error { return nil }
+
 func (m *MockFileService) Load(ctx context.Context, id string) (io.ReadCloser, string, string, int64, error) {
 	if m.Err != nil {
 		return nil, "", "", 0, m.Err
 	}
 	content := []byte("dummy file content")
-	reader := io.NopCloser(bytes.NewReader(content))
-	return reader, "test.jpg", "image/jpeg", int64(len(content)), nil
+	return nopReadSeekCloser{bytes.NewReader(content)}, "test.jpg", "image/jpeg", int64(len(content)), nil
+}
+
+func (m *MockFileService) EnqueueHLS(ctx context.Context, id string) error {
+	return m.Err
+}
+
+func (m *MockFileService) GetHLSStatus(ctx context.Context, id string) string {
+	return "ready"
+}
+
+func (m *MockFileService) LoadHLSAsset(ctx context.Context, id, relPath string) (io.ReadCloser, string, int64, error) {
+	if m.Err != nil {
+		return nil, "", 0, m.Err
+	}
+	content := []byte("#EXTM3U\n#EXT-X-VERSION:3\n")
+	return nopReadSeekCloser{bytes.NewReader(content)}, "application/vnd.apple.mpegurl", int64(len(content)), nil
 }
 
 func (m *MockFileService) GetPresignedURL(ctx context.Context, id string) (string, error) {
@@ -83,7 +104,12 @@ func setupTestRouter(svc *MockFileService) *gin.Engine {
 		v1.POST("/upload-multiple", h.UploadMultiple)
 		v1.GET("/upload/presigned", h.GetPresignedUploadURL)
 		v1.GET("/:id", h.Load)
+		v1.HEAD("/:id", h.Load)
 		v1.GET("/:id/presigned", h.GetPresignedURL)
+		v1.POST("/:id/hls", h.TriggerHLS)
+		v1.GET("/:id/hls-status", h.GetHLSStatus)
+		v1.GET("/:id/hls/*filepath", h.ServeHLS)
+		v1.HEAD("/:id/hls/*filepath", h.ServeHLS)
 		v1.DELETE("/:id", h.Delete)
 		v1.POST("/delete-multiple", h.DeleteMultiple)
 	}
@@ -262,5 +288,57 @@ func TestDeleteMultiple(t *testing.T) {
 
 	if w.Code != http.StatusNoContent {
 		t.Errorf("Expected 204, got %d", w.Code)
+	}
+}
+
+func TestLoad_RangeStreaming(t *testing.T) {
+	mockSvc := &MockFileService{}
+	r := setupTestRouter(mockSvc)
+	w := httptest.NewRecorder()
+
+	req, _ := http.NewRequest("GET", "/v1/files/video.mp4", nil)
+	req.Header.Set("Range", "bytes=0-4")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("Expected 206 Partial Content, got %d", w.Code)
+	}
+	if w.Body.String() != "dummy" {
+		t.Fatalf("Expected body 'dummy', got %q", w.Body.String())
+	}
+	if got := w.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("Expected Accept-Ranges: bytes, got %q", got)
+	}
+	if got := w.Header().Get("Content-Range"); got == "" {
+		t.Fatal("Expected Content-Range header to be set")
+	}
+}
+
+func TestHLS_Endpoints(t *testing.T) {
+	mockSvc := &MockFileService{}
+	r := setupTestRouter(mockSvc)
+
+	w1 := httptest.NewRecorder()
+	req1, _ := http.NewRequest("POST", "/v1/files/vid-1.mp4/hls", nil)
+	r.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusAccepted {
+		t.Fatalf("Expected 202 Accepted, got %d", w1.Code)
+	}
+
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("GET", "/v1/files/vid-1.mp4/hls-status", nil)
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", w2.Code)
+	}
+
+	w3 := httptest.NewRecorder()
+	req3, _ := http.NewRequest("GET", "/v1/files/vid-1.mp4/hls/master.m3u8", nil)
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("Expected 200 OK for master.m3u8, got %d", w3.Code)
+	}
+	if got := w3.Header().Get("Content-Type"); got != "application/vnd.apple.mpegurl" {
+		t.Fatalf("Expected application/vnd.apple.mpegurl, got %q", got)
 	}
 }

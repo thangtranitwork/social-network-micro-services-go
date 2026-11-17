@@ -97,6 +97,10 @@ func main() {
 		v1.GET("/:id", fileHandler.Load)
 		v1.HEAD("/:id", fileHandler.Load)
 		v1.GET("/:id/presigned", fileHandler.GetPresignedURL)
+		v1.POST("/:id/hls", fileHandler.TriggerHLS)
+		v1.GET("/:id/hls-status", fileHandler.GetHLSStatus)
+		v1.GET("/:id/hls/*filepath", fileHandler.ServeHLS)
+		v1.HEAD("/:id/hls/*filepath", fileHandler.ServeHLS)
 		v1.DELETE("/:id", fileHandler.Delete)
 		v1.POST("/delete-multiple", fileHandler.DeleteMultiple)
 	}

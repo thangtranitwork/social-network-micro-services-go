@@ -22,6 +22,7 @@ import (
 type FileService struct {
 	cfg         *config.Config
 	minioClient *minio.Client
+	hls         *HLSTranscoder
 }
 
 var ErrForbiddenFileDelete = errors.New("forbidden file delete")
@@ -51,6 +52,7 @@ func NewFileService(cfg *config.Config) *FileService {
 	return &FileService{
 		cfg:         cfg,
 		minioClient: client,
+		hls:         NewHLSTranscoder(client, cfg.MinioBucket),
 	}
 }
 
@@ -87,6 +89,10 @@ func (s *FileService) Upload(ctx context.Context, file io.Reader, filename strin
 	if err != nil {
 		logger.Err(err).Error("Failed to upload file %s to minio", filename)
 		return nil, fmt.Errorf("failed to upload to minio: %w", err)
+	}
+
+	if IsVideo(contentType, filename) && s.hls != nil {
+		s.hls.Enqueue(fileID)
 	}
 
 	return &model.File{
@@ -132,6 +138,38 @@ func (s *FileService) Load(ctx context.Context, id string) (io.ReadCloser, strin
 	}
 
 	return obj, originalName, info.ContentType, info.Size, nil
+}
+
+func (s *FileService) EnqueueHLS(ctx context.Context, id string) error {
+	info, err := s.minioClient.StatObject(ctx, s.cfg.MinioBucket, id, minio.StatObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("file not found: %w", err)
+	}
+	originalName := info.UserMetadata["Original-Name"]
+	if originalName == "" {
+		originalName = id
+	}
+	if !IsVideo(info.ContentType, originalName) {
+		return fmt.Errorf("file is not a video")
+	}
+	if s.hls != nil {
+		s.hls.Enqueue(id)
+	}
+	return nil
+}
+
+func (s *FileService) GetHLSStatus(ctx context.Context, id string) string {
+	if s.hls == nil {
+		return "not_ready"
+	}
+	return s.hls.Status(ctx, id)
+}
+
+func (s *FileService) LoadHLSAsset(ctx context.Context, id, relPath string) (io.ReadCloser, string, int64, error) {
+	if s.hls == nil {
+		return nil, "", 0, fmt.Errorf("hls transcoder not initialized")
+	}
+	return s.hls.LoadAsset(ctx, id, relPath)
 }
 
 func (s *FileService) GetPresignedURL(ctx context.Context, id string) (string, error) {
