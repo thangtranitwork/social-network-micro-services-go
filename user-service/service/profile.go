@@ -4,16 +4,44 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+	"social-network-go/internal/bloom"
 	"social-network-go/logger"
 	"social-network-go/user-service/model"
 	"social-network-go/user-service/util/validation"
 )
 
 func (s *UserService) EnsureProfile(ctx context.Context, id, email, givenName, familyName, birthdate string) (*model.User, error) {
-	return s.UserRepo.EnsureProfile(ctx, id, email, givenName, familyName, birthdate)
+	user, err := s.UserRepo.EnsureProfile(ctx, id, email, givenName, familyName, birthdate)
+	if err != nil {
+		return nil, err
+	}
+	if user != nil {
+		if s.UserIDBloom != nil && user.ID != "" {
+			if addErr := s.UserIDBloom.Add(ctx, user.ID); addErr != nil {
+				logger.WithContext(ctx).Warn("Failed to add user ID %s to Bloom filter: %v", user.ID, addErr)
+			}
+		}
+		if s.UsernameBloom != nil && user.Username != "" {
+			if addErr := s.UsernameBloom.Add(ctx, bloom.NormalizeUsername(user.Username)); addErr != nil {
+				logger.WithContext(ctx).Warn("Failed to add username %s to Bloom filter: %v", user.Username, addErr)
+			}
+		}
+	}
+	return user, nil
 }
 
 func (s *UserService) GetUserProfile(ctx context.Context, usernameOrID string, currentUserID string) (*model.User, error) {
+	if _, err := uuid.Parse(usernameOrID); err == nil {
+		if !bloom.MightExist(ctx, s.UserIDBloom, usernameOrID) {
+			return nil, ErrUserNotFound
+		}
+	} else {
+		if !bloom.MightExist(ctx, s.UsernameBloom, bloom.NormalizeUsername(usernameOrID)) {
+			return nil, ErrUserNotFound
+		}
+	}
+
 	user, err := s.UserRepo.GetUserProfile(ctx, usernameOrID, currentUserID)
 	if err != nil {
 		return nil, err
@@ -84,6 +112,11 @@ func (s *UserService) UpdateUsername(ctx context.Context, currentUserID string, 
 	err := s.UserRepo.UpdateUsername(ctx, currentUserID, username, nextDate)
 	if err != nil {
 		return err
+	}
+	if s.UsernameBloom != nil {
+		if addErr := s.UsernameBloom.Add(ctx, bloom.NormalizeUsername(username)); addErr != nil {
+			logger.WithContext(ctx).Warn("Failed to add username %s to Bloom filter: %v", username, addErr)
+		}
 	}
 	s.clearCache(ctx, currentUserID)
 	return nil

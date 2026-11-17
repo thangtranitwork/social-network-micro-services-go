@@ -8,6 +8,7 @@ import (
 	"social-network-go/auth-service/model"
 	red "social-network-go/auth-service/redis"
 	"social-network-go/exception"
+	"social-network-go/internal/bloom"
 	"social-network-go/logger"
 	"social-network-go/pb"
 	"social-network-go/profiler"
@@ -21,12 +22,15 @@ import (
 // Java equivalent: RegisterServiceImpl
 func (s *AuthService) Register(email, password, givenName, familyName, birthdate, clientIP string) (*model.VerifyCode, error) {
 	ctx := context.Background()
-	existingAccount, err := s.AccountRepo.FindByEmail(ctx, email)
-	if err == nil {
-		if existingAccount.IsVerified {
-			return nil, exception.NewAppException(exception.AccountAlreadyExists)
+	normalizedEmail := bloom.NormalizeEmail(email)
+	if bloom.MightExist(ctx, s.EmailBloom, normalizedEmail) {
+		existingAccount, err := s.AccountRepo.FindByEmail(ctx, email)
+		if err == nil {
+			if existingAccount.IsVerified {
+				return nil, exception.NewAppException(exception.AccountAlreadyExists)
+			}
+			return nil, exception.NewAppException(exception.EmailNotVerified)
 		}
-		return nil, exception.NewAppException(exception.EmailNotVerified)
 	}
 
 	// 1. Check IP rate limit before sending email
@@ -69,6 +73,11 @@ func (s *AuthService) Register(email, password, givenName, familyName, birthdate
 	}
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
+	}
+	if s.EmailBloom != nil {
+		if err := s.EmailBloom.Add(ctx, normalizedEmail); err != nil {
+			logger.Field("email", normalizedEmail).Field("error", err).Warn("Failed to add email to Bloom filter")
+		}
 	}
 
 	// 2. Save verify code to Redis

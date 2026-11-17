@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"social-network-go/exception"
+	"social-network-go/internal/bloom"
 	"social-network-go/internal/runtimeconfig"
 	config "social-network-go/user-service/config"
 	"social-network-go/user-service/db"
@@ -35,10 +36,12 @@ type FileClient interface {
 }
 
 type UserService struct {
-	FileClient FileClient
-	UserRepo   repository.UserRepository
-	RuntimeCfg *runtimeconfig.Provider
-	cfg        *config.Config
+	FileClient    FileClient
+	UserRepo      repository.UserRepository
+	RuntimeCfg    *runtimeconfig.Provider
+	UserIDBloom   bloom.Filter
+	UsernameBloom bloom.Filter
+	cfg           *config.Config
 }
 
 func NewUserService(cfg *config.Config) *UserService {
@@ -49,10 +52,26 @@ func NewUserService(cfg *config.Config) *UserService {
 		repo = repository.NewUserRepository()
 	}
 
+	var userIDBloom, usernameBloom bloom.Filter
+	if red.RedisClient != nil {
+		userIDBloom = bloom.NewRedisBloomFilter(red.RedisClient, bloom.Config{
+			Key:       "bf:users:id",
+			ErrorRate: 0.001,
+			Capacity:  100000,
+		})
+		usernameBloom = bloom.NewRedisBloomFilter(red.RedisClient, bloom.Config{
+			Key:       "bf:users:username",
+			ErrorRate: 0.001,
+			Capacity:  100000,
+		})
+	}
+
 	return &UserService{
-		UserRepo:   repo,
-		RuntimeCfg: runtimeconfig.NewProvider(red.RedisClient),
-		cfg:        cfg,
+		UserRepo:      repo,
+		RuntimeCfg:    runtimeconfig.NewProvider(red.RedisClient),
+		UserIDBloom:   userIDBloom,
+		UsernameBloom: usernameBloom,
+		cfg:           cfg,
 	}
 }
 

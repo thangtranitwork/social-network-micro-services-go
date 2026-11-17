@@ -11,6 +11,8 @@ import (
 	"social-network-go/auth-service/model"
 	red "social-network-go/auth-service/redis"
 	"social-network-go/exception"
+	"social-network-go/internal/bloom"
+	"social-network-go/logger"
 	"social-network-go/profiler"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -227,6 +229,49 @@ func (s *AuthService) RefreshTokenForRole(tokenStr, expectedRole string) (string
 	return s.GenerateToken(account.ID.String(), account.Email, account.Role, s.Cfg.JWTSecret, s.Cfg.AccessTokenDuration)
 }
 
+const (
+	blacklistKeyPrefix     = "auth:blacklist:"
+	blacklistPubSubChannel = "auth:blacklist:events"
+)
+
+func (s *AuthService) initBlacklistBloom() {
+	if red.RedisClient == nil || s.BlacklistBloom == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	var cursor uint64
+	for {
+		keys, nextCursor, err := red.RedisClient.Scan(ctx, cursor, blacklistKeyPrefix+"*", 500).Result()
+		if err != nil {
+			cancel()
+			logger.Field("error", err).Warn("Failed to warmup blacklist Bloom filter from Redis")
+			return
+		}
+		tokens := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if tok := strings.TrimPrefix(k, blacklistKeyPrefix); tok != "" {
+				tokens = append(tokens, tok)
+			}
+		}
+		_ = s.BlacklistBloom.AddBatch(ctx, tokens)
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	_ = s.BlacklistBloom.MarkReady(ctx)
+	cancel()
+
+	pubsub := red.RedisClient.Subscribe(context.Background(), blacklistPubSubChannel)
+	ch := pubsub.Channel()
+	for msg := range ch {
+		if msg != nil && msg.Payload != "" {
+			_ = s.BlacklistBloom.Add(context.Background(), msg.Payload)
+		}
+	}
+}
+
 func (s *AuthService) BlacklistToken(tokenStr string) error {
 	if tokenStr == "" || red.RedisClient == nil {
 		return nil
@@ -245,15 +290,25 @@ func (s *AuthService) BlacklistToken(tokenStr string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	key := fmt.Sprintf("auth:blacklist:%s", tokenStr)
-	return red.RedisClient.Set(ctx, key, "revoked", ttl).Err()
+	key := blacklistKeyPrefix + tokenStr
+	if err := red.RedisClient.Set(ctx, key, "revoked", ttl).Err(); err != nil {
+		return err
+	}
+	if s.BlacklistBloom != nil {
+		_ = s.BlacklistBloom.Add(ctx, tokenStr)
+	}
+	_ = red.RedisClient.Publish(ctx, blacklistPubSubChannel, tokenStr).Err()
+	return nil
 }
 
 func (s *AuthService) IsTokenBlacklisted(ctx context.Context, tokenStr string) bool {
 	if tokenStr == "" || red.RedisClient == nil {
 		return false
 	}
-	key := fmt.Sprintf("auth:blacklist:%s", tokenStr)
+	if s.BlacklistBloom != nil && !bloom.MightExist(ctx, s.BlacklistBloom, tokenStr) {
+		return false
+	}
+	key := blacklistKeyPrefix + tokenStr
 	exists, err := red.RedisClient.Exists(ctx, key).Result()
 	return err == nil && exists > 0
 }

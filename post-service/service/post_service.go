@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"social-network-go/internal/bloom"
 	"social-network-go/internal/runtimeconfig"
 	"social-network-go/logger"
 	"social-network-go/pb"
@@ -60,12 +61,19 @@ type KeywordInteractor interface {
 	PublishPostPrivacyUpdated(ctx context.Context, postID string, authorID string, privacy string) error
 }
 
+type SeenPostStore interface {
+	MarkSeen(ctx context.Context, scope string, items []string) error
+	SeenSet(ctx context.Context, scope string, items []string) map[string]bool
+}
+
 type PostService struct {
 	Cfg        *config.Config
 	Redis      *redis.Client
 	UserClient pb.UserServiceClient
-	Repo       repository.PostRepository
-	RuntimeCfg *runtimeconfig.Provider
+	Repo        repository.PostRepository
+	RuntimeCfg  *runtimeconfig.Provider
+	PostIDBloom bloom.Filter
+	SeenBloom   SeenPostStore
 
 	FileClient        FileClient
 	Notification      NotificationPublisher
@@ -98,12 +106,31 @@ func NewPostService(cfg *config.Config, repo repository.PostRepository) *PostSer
 		repo.SetRankingMode(cfg.RankingViewMode)
 	}
 
+	var postIDBloom bloom.Filter
+	var seenBloom SeenPostStore
+	if rdb != nil {
+		postIDBloom = bloom.NewRedisBloomFilter(rdb, bloom.Config{
+			Key:       "bf:posts:id",
+			ErrorRate: 0.001,
+			Capacity:  500000,
+		})
+		seenBloom = bloom.NewRotatingStore(rdb, bloom.RotatingConfig{
+			Prefix:       "bf:seen",
+			ErrorRate:    0.01,
+			Capacity:     5000,
+			TTL:          7 * 24 * time.Hour,
+			LookbackDays: 3,
+		})
+	}
+
 	return &PostService{
-		Cfg:        cfg,
-		Redis:      rdb,
-		UserClient: userClient,
-		Repo:       repo,
-		RuntimeCfg: runtimeconfig.NewProvider(rdb),
+		Cfg:         cfg,
+		Redis:       rdb,
+		UserClient:  userClient,
+		Repo:        repo,
+		RuntimeCfg:  runtimeconfig.NewProvider(rdb),
+		PostIDBloom: postIDBloom,
+		SeenBloom:   seenBloom,
 	}
 }
 

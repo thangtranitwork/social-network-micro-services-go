@@ -38,6 +38,18 @@ func (s *PostService) ProcessViewEvents(ctx context.Context, currentUserID strin
 		}
 	}
 
+	if s.SeenBloom != nil && len(req.Events) > 0 {
+		postIDs := make([]string, 0, len(req.Events))
+		for _, ev := range req.Events {
+			if ev.PostID != "" {
+				postIDs = append(postIDs, ev.PostID)
+			}
+		}
+		if err := s.SeenBloom.MarkSeen(ctx, currentUserID, postIDs); err != nil {
+			logger.WithContext(ctx).Warn("failed to record seen posts in bloom filter: %v", err)
+		}
+	}
+
 	return &dto.ViewEventsBatchResponse{
 		AcceptedCount: len(req.Events),
 	}, nil

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"social-network-go/internal/bloom"
 	"social-network-go/internal/moderation"
 	"social-network-go/logger"
 	"social-network-go/post-service/config"
@@ -49,6 +50,11 @@ func (s *PostService) CreatePost(ctx context.Context, authorID, content, privacy
 	err := s.Repo.CreatePost(ctx, postID, authorID, content, privacy, fileIDs)
 	if err != nil {
 		return nil, err
+	}
+	if s.PostIDBloom != nil {
+		if addErr := s.PostIDBloom.Add(ctx, postID); addErr != nil {
+			logger.WithContext(ctx).Warn("Failed to add post ID %s to Bloom filter: %v", postID, addErr)
+		}
 	}
 
 	if s.KeywordInteractor != nil {
@@ -117,6 +123,11 @@ func (s *PostService) SharePost(ctx context.Context, authorID, originalPostID, c
 	if err != nil {
 		return nil, err
 	}
+	if s.PostIDBloom != nil {
+		if addErr := s.PostIDBloom.Add(ctx, postID); addErr != nil {
+			logger.WithContext(ctx).Warn("Failed to add shared post ID %s to Bloom filter: %v", postID, addErr)
+		}
+	}
 
 	if s.KeywordInteractor != nil {
 		_ = s.KeywordInteractor.Interact(ctx, originalPostID, authorID, "SHARE_SCORE")
@@ -131,6 +142,10 @@ func (s *PostService) SharePost(ctx context.Context, authorID, originalPostID, c
 }
 
 func (s *PostService) GetPost(ctx context.Context, postID string, currentUserID string) (*model.Post, error) {
+	if !bloom.MightExist(ctx, s.PostIDBloom, postID) {
+		return nil, errors.New("POST_NOT_FOUND")
+	}
+
 	post, err := s.Repo.GetPost(ctx, postID, currentUserID)
 	if err != nil {
 		return nil, err
@@ -284,7 +299,9 @@ func (s *PostService) GetSuggestedPosts(ctx context.Context, currentUserID strin
 		}).Info("Newsfeed candidates fetched")
 		profiler.TrackExecution("post-service:code newsfeed.rankCandidates", func() {
 			candidates = s.applyEngagementSignalsToCandidates(ctx, currentUserID, candidates)
-			posts = s.postsFromRankedCandidates(ctx, candidates, pageable.Skip, limit, time.Now())
+			ranked := rankNewsfeedCandidatesWithWeights(candidates, time.Now(), s.newsfeedScoreWeights(ctx))
+			ranked = s.partitionBySeen(ctx, currentUserID, ranked)
+			posts = postsFromRankedCandidatesSlice(ranked, pageable.Skip, limit)
 		})
 	} else {
 		var err error
@@ -446,6 +463,38 @@ func (s *PostService) GetNewsfeedScoreBreakdown(ctx context.Context, currentUser
 func (s *PostService) postsFromRankedCandidates(ctx context.Context, candidates []*model.NewsfeedCandidate, skip, limit int64, now time.Time) []*model.Post {
 	ranked := rankNewsfeedCandidatesWithWeights(candidates, now, s.newsfeedScoreWeights(ctx))
 	return postsFromRankedCandidatesSlice(ranked, skip, limit)
+}
+
+func (s *PostService) partitionBySeen(ctx context.Context, userID string, ranked []*model.NewsfeedCandidate) []*model.NewsfeedCandidate {
+	if s.SeenBloom == nil || userID == "" || len(ranked) == 0 {
+		return ranked
+	}
+
+	ids := make([]string, 0, len(ranked))
+	for _, c := range ranked {
+		if c != nil && c.Post != nil && c.Post.ID != "" {
+			ids = append(ids, c.Post.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return ranked
+	}
+
+	seenMap := s.SeenBloom.SeenSet(ctx, userID, ids)
+	if len(seenMap) == 0 {
+		return ranked
+	}
+
+	unseen := make([]*model.NewsfeedCandidate, 0, len(ranked))
+	seen := make([]*model.NewsfeedCandidate, 0, len(seenMap))
+	for _, c := range ranked {
+		if c != nil && c.Post != nil && seenMap[c.Post.ID] {
+			seen = append(seen, c)
+		} else {
+			unseen = append(unseen, c)
+		}
+	}
+	return append(unseen, seen...)
 }
 
 func postsFromRankedCandidates(candidates []*model.NewsfeedCandidate, skip, limit int64, now time.Time) []*model.Post {

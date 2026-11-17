@@ -33,7 +33,7 @@ services:
       - sn_network
 
   redis:
-    image: redis:7.2-alpine
+    image: redis:8-alpine
     container_name: dev-redis
     ports:
       - "6379:6379"

@@ -9,6 +9,7 @@ import (
 	red "social-network-go/auth-service/redis"
 	"social-network-go/auth-service/repository"
 	"social-network-go/exception"
+	"social-network-go/internal/bloom"
 	"social-network-go/pb"
 	"social-network-go/profiler"
 
@@ -25,6 +26,8 @@ type AuthService struct {
 	AccountRepo    repository.AccountRepository
 	VerifyCodeRepo repository.VerifyCodeRepository
 	ResetTokenRepo repository.PasswordResetTokenRepository
+	EmailBloom     bloom.Filter
+	BlacklistBloom *bloom.MemoryBloomFilter
 }
 
 func (s *AuthService) checkEmailRateLimit(ctx context.Context, clientIP string) error {
@@ -67,7 +70,21 @@ func NewAuthService(cfg *config.Config, userClient pb.UserServiceClient, gormDB 
 	verifyCodeRepo := repository.NewVerifyCodeRepository(gormDB)
 	resetTokenRepo := repository.NewPasswordResetTokenRepository(gormDB)
 
-	return &AuthService{
+	var emailBloom bloom.Filter
+	if red.RedisClient != nil {
+		emailBloom = bloom.NewRedisBloomFilter(red.RedisClient, bloom.Config{
+			Key:       "bf:accounts:email",
+			ErrorRate: 0.001,
+			Capacity:  100000,
+		})
+	}
+
+	blacklistBloom := bloom.NewMemoryBloomFilter(bloom.Config{
+		Capacity:  100000,
+		ErrorRate: 0.001,
+	})
+
+	svc := &AuthService{
 		Cfg:            cfg,
 		UserClient:     userClient,
 		EmailSender:    emailSender,
@@ -76,7 +93,13 @@ func NewAuthService(cfg *config.Config, userClient pb.UserServiceClient, gormDB 
 		AccountRepo:    accountRepo,
 		VerifyCodeRepo: verifyCodeRepo,
 		ResetTokenRepo: resetTokenRepo,
+		EmailBloom:     emailBloom,
+		BlacklistBloom: blacklistBloom,
 	}
+	if red.RedisClient != nil {
+		go svc.initBlacklistBloom()
+	}
+	return svc
 }
 
 func (s *AuthService) ValidateToken(tokenStr string) (*TokenClaims, error) {

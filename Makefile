@@ -227,3 +227,7 @@ seed-data:
 	@echo "====== Generating Sample Test Data for PostgreSQL & Neo4j ======"
 	go run scripts/gen_test_data/main.go
 
+warmup-bloom:
+	@echo "====== Warming Up RedisBloom Filters ======"
+	go run ./scripts/warmup-bloom
+
